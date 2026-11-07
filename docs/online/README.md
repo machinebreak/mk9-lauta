@@ -49,7 +49,14 @@ bash tools\online\build_all.sh          # o por pasos: host, gen, glsl, pc
 ```
 
 Tiempos en esta PC (Ryzen 5 8600G, 31 GB): traductor ~1 min, traducción del juego ~7 min (517 archivos, 274 MB de
-C++), glslang 20 s, el juego (1.326 pasos) ver abajo.
+C++), glslang 20 s; el juego: los 255 archivos generados ~4 s cada uno (~15 min con 3-4 en paralelo), la traducción
+de los 19.092 shaders de Renut ~30 min con 6 hilos (sólo la primera vez o si cambia el traductor), el enlace ~1 min.
+`out\pc\mk9.exe` pesa 120 MB (+146 MB de símbolos en `mk9.pdb`).
+
+**Ojo con el traductor de shaders:** depende del ejecutable de XenosRecomp, que se recompila cada vez que cambia su
+código (`BUILD_ALWAYS`): un cambio en `reblue-XenosRecomp` vuelve a traducir los 19.092 shaders (~30 min). Si sólo
+fue un comentario: `touch out/pc/renut_gpu/shader_cache.cpp*` y `ninja -C out/pc -t restat` antes de compilar
+(ninja compara la fecha que anotó en su registro, no la del archivo).
 
 Lo que hubo que arreglar para Windows (todo en esta rama):
 
@@ -57,10 +64,10 @@ Lo que hubo que arreglar para Windows (todo en esta rama):
   que salió mk9-nx). Ahora usan `mk9_manifest.toml`, `out\pc\mk9.exe`, las opciones `mk9_*` y corren
   `post_codegen.py` (el flavour optimised).
 - El traductor de shaders de Renut (`app/thirdparty/reblue-XenosRecomp/XenosRecomp/main.cpp`):
-  - escribía la caché comprimida (DXIL + SPIR-V de 19.092 shaders) como una lista de números en C++: unos 200
-    millones de elementos que Clang guarda como un nodo cada uno (más de 10 GB para ese archivo). Ahora la escribe en
-    `shader_cache.cpp.dxil.zst` / `.spirv.zst` y la incluye con `#embed` (`XENOS_RECOMP_BYTE_LISTS=1` vuelve al
-    formato viejo);
+  - escribía la caché comprimida (DXIL 16,6 MB + SPIR-V 14 MB de 19.092 shaders) como una lista de números en C++:
+    110 MB de texto y 30 millones de elementos, que Clang guarda como un nodo cada uno (gigas de RAM para ese
+    archivo). Ahora la escribe en `shader_cache.cpp.dxil.zst` / `.spirv.zst` y la incluye con `#embed`
+    (`XENOS_RECOMP_BYTE_LISTS=1` vuelve al formato viejo);
   - usaba todos los núcleos, con un DXC por hilo (~7 GB con 12 hilos). `XENOS_RECOMP_JOBS=<n>` limita los hilos;
     `build_all.sh` pone 6.
 
@@ -98,14 +105,32 @@ vivo), `renut_shadow_resolution` (Resolution, 1x-4x), `renut_ambient_occlusion` 
 `renut_anisotropic_filtering` (Game, 2x-16x), `renut_post_process_precision` (Game, High), `renut_aspect_ratio`
 (Auto, 16:9, 21:9, 32:9), `renut_vsync`.
 
+## Medido (2026-11-07, Ryzen 5 8600G + Radeon 760M integrada)
+
+Del arranque a una pelea del Arcade Ladder con el guion de arriba: logos, menús, selección, pelea con HUD, todo bien
+dibujado. Sin errores en el log fuera de los esperados (`UPDATE:` no existe: no hay actualización de título).
+
+| Renderer | Resolución | Pelea | Por cuadro |
+|---|---|---|---|
+| Renut + Vulkan | 720p | 60 fps | juego 3 ms, hilo de render 2,3 ms, GPU ~2,2 ms por envío (2 por cuadro) |
+| Renut + D3D12 | 720p | 60 fps | hilo de render 1,7-2,4 ms, GPU ~4,4 ms |
+| Renut + Vulkan | 1080p | 60 fps | GPU ~4,4 ms por envío (~9 ms por cuadro) |
+
+Latencia medida por el propio renderer: mando -> pantalla ~24 ms. Tirones: algunos cuadros de 0,3-1 s en cargas y
+en el primer uso de pipelines nuevos. Dos shaders que faltaban quedaron en `out\pc\shader_capture` y el próximo
+build los suma solo.
+
 ## Estado
 
 | Fase | Estado |
 |---|---|
-| F0 preparación | en curso: build de Windows hecho hasta los shaders de Renut; falta terminar el build, correrlo y medir |
-| F1 mapa del motor | avanzado: bucle principal, lectura de mandos, interfaz de captura, línea de comandos, fenceposts, GMalloc, rand (ver engine-map.md) |
-| F2 determinismo | pendiente: grabar/reproducir con el objeto de captura `0x8342D01C`, hash por cuadro |
-| F3 online con retraso | pendiente |
+| F0 preparación | **hecha**: build de Windows reproducible, el juego corre nativo a 60 fps (Vulkan y D3D12, 720p y 1080p) |
+| F1 mapa del motor | avanzado: bucle principal, lectura de mandos, interfaz de captura (Práctica y online), línea de comandos, fenceposts, GMalloc, rand, info de la partida (ver engine-map.md) |
+| F2 determinismo | herramientas hechas y probadas: `mk9_input_record` / `mk9_input_replay` (una corrida reproducida sin guion llega sola a la pelea), `mk9_state_hash` (+`_pages`). Falta: fijar la semilla (el rival del Ladder cambia entre arranques) y encontrar las páginas deterministas |
+| F3 online con retraso | diseñado (netplay-design.md, camino A); pendiente |
 | F4 instantáneas + SyncTest | pendiente (el gate) |
 | F5 rollback | pendiente |
-| F6 pulido, F7 launcher/beta | pendiente |
+| F6 pulido, F7 launcher/beta | pendiente; ya están los íconos de Xbox y la configuración para jugar (`app/mk9.toml`) |
+
+Para jugar a mano: abrir `out\pc\mk9.exe` (la configuración `out\pc\mk9.toml` ya trae Renut, sonido e íconos de
+Xbox). Un mando de Xbox o el teclado.

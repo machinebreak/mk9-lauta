@@ -63,17 +63,26 @@ Tekken 6 Native Online).
 | Lectura de los 4 mandos por cuadro | `sub_829D5230` | llama a `XInputGetState` por usuario; estados crudos desde `0x83425368`, bloques por usuario desde `0x83426F70` |
 | Segunda lectura (otros dispositivos) | `sub_829D7748` -> `sub_829D7230` | también llama a `XInputGetState` |
 
-**Interfaz de captura de entradas** (sin usar en el juego retail):
+**Interfaz de captura de entradas** (la grabación de la Práctica y los mandos del online):
 
-- `sub_82A1C550(tag, data, size, user)` llama al método `+4` de un objeto global en `0x8342D01C` si existe. La
+- `sub_82A1C550(tag, data, size, user)` llama al método `+4` de un objeto global en `0x8342D01C` si hay uno. La
   lectura de mandos la llama con `0x00FF0003` (resultado de `XInputGetState`, 4 bytes), `0x00FF0002` (el estado crudo,
-  16 bytes) y `0x00FF0001` (12 bytes procesados), por usuario. 32 lugares la llaman (`--calls 82A1C550`), casi todos
-  en el código de entrada (`sub_823D8ED8`, `sub_823D9130`, `sub_823D98D8`, `sub_823DB1C0`).
+  16 bytes) y `0x00FF0001` (12 bytes procesados), por usuario, y después vuelve a leer el bloque: el objeto puede
+  reemplazarlo. 32 lugares la llaman (`--calls 82A1C550`).
 - vtable del objeto: `+0` destructor, `+4` capturar bloque, `+8` capturar valor (`sub_82A1C5C0`), `+20` cerrar,
   `+28` ¿grabando? (`sub_82A1C700`), `+32` ¿reproduciendo? (`sub_82A1C750`); `sub_82A1C640` lo destruye y pone 0.
-- Nada del juego guarda un objeto ahí (sólo el 0 del destructor): es un grabador / reproductor de entradas de
-  desarrollo que quedó sin crear. Para F2 alcanza con poner un objeto nuestro (nativo) en `0x8342D01C`: graba o
-  reemplaza cada bloque que el juego lee, cuadro a cuadro.
+- Lo instala `sub_82A1C6D8` (`lis r11,-31933; stw r3,-12260(r11); blr`, hoja sin `.pdata`: `ppc_xref` no ve su
+  referencia, sí la llamada). La llaman tres lugares:
+  - `sub_823D98D8`: el **modo Práctica**. La zona `0x823D8000-0x823DC000` es la Práctica (textos `ui_i_recorder`,
+    `RecorderStop`, `PlaybackStop`, `player.record.SetProgress`, `ResetForPractice`, `practice_reset_camera`): el
+    objeto es el grabador que graba y reproduce al muñeco.
+  - `sub_823DB1C0`: la selección de personaje (`PlayerSelect`, `%s/%s vs %s/%s %s`).
+  - `sub_824088A0`: **el online** (MKOnline, al lado de `MKOnline_SetupGamepads` y del volcado de
+    `m_LocalGamepads`/`m_RemoteGamepads`). Reserva un objeto de 12 bytes con GMalloc y lo instala: el online del
+    juego mete los mandos del rival reemplazando los bloques del jugador remoto en la lectura de cada cuadro.
+- Para nosotros: el hook nativo de `sub_82A1C550` (F2, `app/src/online/mk9_capture.cpp`) corre antes que el objeto
+  del juego. Graba lo que dieron los mandos o lo reemplaza (reproducción, y en F3 la entrada remota del usuario 1),
+  igual que hace el online del juego.
 
 El SDK implementa `XamInputGetState` (xam `0x191`) en `sdk/src/kernel/xam/xam_input.cpp` y lo pasa a los drivers del
 `input_system()`. `app/src/mk9_script_input.cpp` (mk9-nx) ya registra un driver propio para el mando por guion de las
