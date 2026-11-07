@@ -3,13 +3,13 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\win\play.ps1            native Vulkan renderer
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\win\play.ps1 -Emulated  ReXGlue's emulated GPU
-#   ... -Exe out\pc\usf4.exe   another build
+#   ... -Exe out\pc\mk9.exe   another build
 #
 # The native renderer needs sa2_shaders.mesp + sa2_shaders.mesp.idx next to the exe. The log (with "[fps]" lines
 # every 5 s) is written to logs\ next to the exe; the end of it is printed when the game is closed.
 param(
     [switch]$Emulated,
-    [string]$Exe = 'out\pc\usf4.exe'
+    [string]$Exe = 'out\pc\mk9.exe'
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $exePath = (Resolve-Path (Join-Path $root $Exe)).Path
