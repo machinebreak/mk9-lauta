@@ -94,6 +94,7 @@ set(MK9_SOURCES
     src/online/loading.cpp
     src/online/guest_memory.cpp
     src/online/snapshot.cpp
+    src/online/write_trace.cpp
     src/online/seed.cpp
 )
 if(NOT REXGLUE_PLATFORM_SWITCH)

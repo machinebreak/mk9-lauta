@@ -636,6 +636,7 @@ REX_HOOK_RAW(sub_82A23D50) {
 extern "C" REX_FUNC(__imp__sub_82A1C5C0);
 REX_HOOK_RAW(sub_82A1C5C0) {
   mk9::netplay::OnCheck(ctx.r3.u32, ctx.r4.u32);
+  mk9::snapshot::OnCheck(ctx.r3.u32, ctx.r4.u32);
   mk9::online::CaptureCheck(ctx.r3.u32, ctx.r4.u32);
   __imp__sub_82A1C5C0(ctx, base);
 }
