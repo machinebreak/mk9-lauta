@@ -1,12 +1,20 @@
 # Settings read at startup (ReXGlue cvars). The build copies this file next to the executable when there is none
 # there yet; edit the copy. Any cvar can also be given on the command line (--name=value) or as REX_<NAME>.
 
-# GPU: stage 3 draws with ReXGlue's emulated Xenos GPU (Vulkan on Linux).
+# The SDK's GPU plugin (the emulated Xenos GPU); sa2_renderer below chooses what draws the game.
 gpu_plugin = "xenos"
+
+# mk9-nx online (PC): Renut's Direct3D-level renderer, 60 fps with its own graphics options, on D3D12 by default
+# (renut_gpu_backend = "vulkan" works too). "xenos" = the emulated GPU (slow; the reference image).
+sa2_renderer = "renut"
+# Internal resolution: "480p", "720p" (the console's), "1080p", "1440p" or "4K". Other options: docs/online/README.md.
+renut_resolution = "720p"
+
+# The game's button prompts: the Xbox controller's ("switch" draws Switch buttons).
+mk9_button_icons = "xbox"
 
 log_level = "info"
 
-# Development defaults: launch muted and minimized, so test runs do not take over the desktop or the speakers.
-# Set both to false to play.
-audio_mute = true
-window_start_minimized = true
+# Test runs (tools/online/run_game.ps1, tools/win/boot_test.ps1) mute the game and minimize its window themselves.
+audio_mute = false
+window_start_minimized = false

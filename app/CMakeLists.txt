@@ -85,6 +85,9 @@ set(MK9_SOURCES
     # Switchable enhancements (sa2-nx docs/enhancements.md): masters sa2_cpu_enhancements / sa2_noncpu_enhancements.
     src/cpu/sa2_enhancements.cpp
     src/cpu/sa2_gpu_boost.cpp
+    # Online (docs/online): the gamepad capture interface (record / replay frame by frame) and per-frame state hashes
+    # for the determinism tests (F2).
+    src/online/mk9_capture.cpp
 )
 if(NOT REXGLUE_PLATFORM_SWITCH)
     # Switch profiler counters the native renderer calls (no-ops on PC).
