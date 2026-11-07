@@ -1,0 +1,51 @@
+// MK9 online: the two-player session at the game's frame boundary (docs/online/netplay-design.md, path A).
+//
+// The game reads its gamepads once per frame in sub_829D5230; at its entry (mk9_capture.cpp) OnFrame exchanges this
+// frame's inputs with the peer and, in lockstep, waits for theirs. The capture interface's blocks of users 0 and 1
+// (sub_82A1C550, also hooked there) then get the session's inputs: player 1 is the host's pad, player 2 the guest's,
+// on both machines alike; users 2 and 3 read as disconnected.
+//
+// Some things the game polls end on each machine's own clock (a full-screen movie playing, a scene getting ready);
+// they travel with the inputs as flags, and the game sees them end at the same frame on both machines (Busy, Ready).
+
+#pragma once
+
+#include <cstdint>
+
+namespace mk9::netplay {
+
+// Things the game polls that end on each machine's own clock: one bit each in the inputs.
+enum BusyFlag : uint8_t {
+  kBusyMovie = 1 << 0,  // a full-screen movie is playing (sub_829CE600)
+};
+
+// Readiness polls (0 = not yet) that end on each machine's own clock: one bit each in the inputs.
+enum ReadyFlag : uint8_t {
+  kReadyScene = 1 << 0,  // the scripts' last wait before a fight starts (native 824a5268, sub_82A30588)
+};
+
+// A session is configured (mk9_net_host / mk9_net_join).
+bool Active();
+// The frame boundary (game thread). game_frame: the game's frame number (1-based, mk9_capture.cpp).
+void OnFrame(uint8_t* base, uint64_t game_frame);
+// What the game gets from a busy poll this frame (game thread): local, what the poll gave on this machine. While the
+// session runs, it stays busy until neither machine was busy at the frame whose inputs this frame plays (and this
+// machine is not now): the same on both.
+uint32_t Busy(BusyFlag flag, uint32_t local);
+// What the game gets from a readiness poll this frame (game thread): local, what the poll gave on this machine. While
+// the session runs, it reads ready only once both machines' polls said ready in the frame before this frame's inputs
+// left (s - delay - 1), and not ready otherwise: the same on both.
+uint32_t Ready(ReadyFlag flag, uint32_t local);
+// A barrier both machines reach (game thread, during a frame; what: for the log): the generators are reseeded on the
+// spot with the next epoch's seed, and the next frame boundary waits for the other machine (netplay.cpp).
+void Barrier(uint8_t* base, const char* what);
+// A check of the game's own (sub_82A1C5C0: tag, value; game thread): this frame's go into the sync hash both players
+// compare.
+void OnCheck(uint32_t tag, uint32_t value);
+// Once, at the session's first frame: the seed both players start the game's random number generators from (seed.h).
+bool TakeSessionSeed(uint32_t* seed);
+// A capture block (sub_82A1C550's arguments; r1: the caller's stack pointer). Replaces the players' raw gamepad
+// blocks while the session runs.
+void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1);
+
+}  // namespace mk9::netplay

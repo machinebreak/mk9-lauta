@@ -151,6 +151,53 @@ arman la misma pelea: CRC (`sub_82A96678`) del escenario y de los personajes, pa
 - `GFGGameInfo` (clase del modo de pelea): `sub_8237D358` (texto `820038BC`).
 - `GameSpeed`: `sub_828D6F18` (texto `82138AB8`); en el .exe de PC MK9Hook escribe la velocidad en un float global.
 
+## Aleatorios
+
+| Generador | Estado | Quién lo usa | Semilla original |
+|---|---|---|---|
+| El del juego: LCG `Seed * 196314165 + 907633515` (`sub_826D91C0` entero, `sub_826D91E8` flotante; reciben (archivo, línea) del llamador: rastreo de depuración de NRS) | `0x834161D8` | los scripts (nativas de `UtilsCore.cpp:2497`, IA, escalera) y el tick de `MK9Game.cpp` (un sorteo por cuadro, línea 628) | `sub_826D3088`, que pasa la semilla por la interfaz de captura (tag `0x00FF0004`) antes de guardarla: así el online de NRS daba la misma a las dos consolas. La llama `sub_82395B48` con el contador de ciclos |
+| `appSRand` de UE3 (el mismo LCG, ~70 copias en línea) | `GSRandSeed` `0x833ED6FC` | motor (partículas, sonido) | pre-init `sub_82365A40` con el contador de ciclos (o 0 con `BENCHMARK`) |
+| `GRandom` de Scaleform (multiply-with-carry de Marsaglia, 8 palabras, acarreo 362436) | `0x833AFA84` (+32 acarreo, +36 índice) | ActionScript `random` | init estático `sub_83367A08` con el tick count; `sub_82F89198` = SeedRandom |
+| `rand()` del CRT | por hilo | sólo middleware (audio y otros), no el juego | `srand` sólo desde el init del audio |
+
+`app/src/online/seed.cpp` los siembra a todos con un valor (la semilla de la sesión, o `mk9_seed`) y reemplaza la
+semilla de cada modo que pasa por el tag 4 por la siguiente de una secuencia derivada.
+
+## El canal de sincronía de NRS (la interfaz de captura)
+
+`sub_82A1C550(tag, data, size, user)` = vtable+4 del objeto en `0x8342D01C` (Práctica, el online del juego);
+`sub_82A1C5C0(tag, valor)` = vtable+8 (valores a comparar entre consolas); `sub_82A1C6B0` = vtable+24 (inicio de
+cuadro); `sub_82A1C610(x)` = vtable+16. Tags: 1-3 mandos; 4 semilla de modo; 6 (`sub_82728510`); 7 (`sub_829FB5C8`);
+8, 9, 10 los chequeos por cuadro del tick de `MK9Game.cpp` (`sub_82382E40`): 9 y 8 = info de la partida +108/+112
+(cuadros desde el arranque y desde el inicio del modo; el 8 vuelve a 0 en cada cambio de modo), 10 = un sorteo del
+RNG del juego; 11 y 13 al instalar un grabador (`sub_823D98D8`, `sub_823DB1C0`: datos de cada jugador +3092). Los
+scripts también la usan con la nativa `8247cd50` (`sub_8247CD50`) y chequean con `sub_8247CD70`.
+
+## Scripts MKO
+
+- La VM: contexto en `[0x8342CDF0]` (pc en +60, registro de resultado de una nativa en +28). `sub_82A12118` = llamar
+  a una nativa (su dirección está en el bytecode, después de la instrucción). `sub_82A164C8` corre las 21 ranuras de
+  scripts cada cuadro desde el tick de `MK9Game.cpp`; `sub_82A15FC8` ejecuta una fibra.
+- El C++ arranca funciones de script por nombre: `sub_82A259C0(script, nombre)` = `sub_82A10380` (buscar en la tabla
+  del script: +32 cantidad, +140 entradas, cada una con su nombre en +0) + `sub_82A23D50(script, número, ...)`.
+- Nativas útiles: `8246ec38` = `IsAsyncLoading` (`sub_8270BF88`: `GObjAsyncPackages.Num > 0`); `824747c0` =
+  `IsMoviePlaying` (`sub_829CE600`: `GFullScreenMovie` en `0x834246A8`, +20 y la bandera de `0x834246B4`);
+  `824730b8` = la máquina de estados de carga de la pelea (`sub_82464410`, estado en `0x833CF9E8`); `824a5268` = "la
+  escena está lista" (`sub_82A30588`); `82495660` = carga `Toasty.mko` y corre `toasty_init` al empezar cada pelea;
+  `824705F8` = random del script.
+
+## Cargas
+
+`UObject::LoadPackageAsync` = `sub_82730F70` (agrega a `GObjAsyncPackages`, TArray en `0x834162A4`, elementos de 96
+bytes); `UObject::ProcessAsyncLoading(bUseTimeLimit, TimeLimit)` = `sub_82728848`; `UObject::FlushAsyncLoading` =
+`sub_8272EC30`; `IsAsyncLoading` = `sub_8270BF88`. Los cargadores propios de MK9 (`sub_82A20DD8`, `sub_82A20F00`)
+también usan `LoadPackageAsync`. `GIOManager` en `0x833DD540`.
+
+Flujo de la carga de una pelea (un cuadro = 1/60 s; Ladder, una corrida): el modo empieza (tag 8 vuelve a 0) ->
+espera `IsAsyncLoading` -> pantalla VS -> espera la máquina de estados `824730b8` (~50 cuadros) -> `IsAsyncLoading`
+-> espera `824a5268` (~20 cuadros, con la nativa de captura cada cuadro) -> `IsAsyncLoading` -> `82495660`
+(`toasty_init`, `entry`, `level1_activate`): empieza la pelea (~150 cuadros después del inicio del modo).
+
 ## Pendiente (F1)
 
 1. Dentro de `FEngineLoop::Tick`: dónde avanza la pelea (un tick por cuadro) y qué hace el hilo de render.

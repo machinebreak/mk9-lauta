@@ -49,12 +49,33 @@ Plan: A primero (F3 jugable con lockstep, después rollback), B como mejora si v
   directa. Es la misma infraestructura que usan BT3, Tekken, Def Jam y Tazita.
 - Alternativa: UDP propio con hole punching vía el VPS y relay.
 
-## Determinismo (F2, antes de todo lo demás)
+## Determinismo (F2) — logrado en lockstep (2026-11-07)
 
-- Grabar una pelea (`mk9_input_record`) y reproducirla (`mk9_input_replay`) en dos instancias, con
-  `mk9_state_hash` + `mk9_state_hash_pages` para ver qué páginas divergen; sacar de la cuenta lo que no es estado de
-  la pelea (tiempos, contadores de cuadros del motor, punteros).
-- Buscar el hash de estado que ya calcula el online del juego (el registro `7f 01 08 <hash>` del lockstep en Vita) y
-  usarlo como chequeo.
-- RNG: `rand()` del CRT (`sub_82B2CFB0`, estado por hilo) y el del script. Si lo cosmético comparte el RNG de la pelea
-  (como pasaba en TTT2), separarlo.
+Dos instancias en lockstep desde el arranque (`tools/online/pair_test.ps1`) llegan al mismo cuadro de inicio de pelea
+y pelean 20 s (Scorpion contra la IA, que sortea todo el tiempo) sin una sola diferencia en los chequeos del juego,
+cinco corridas de cinco. Lo que hizo falta, en orden de aparición:
+
+1. **Semillas** (`seed.cpp`): las del juego, UE3 y Scaleform salen del reloj; la sesión las fija con la semilla del
+   host (HELLO) y reemplaza la semilla de cada modo (tag 4 de la interfaz de captura).
+2. **Cargas** (`loading.cpp`): un paquete termina de cargar en un cuadro que depende del disco y la CPU de cada
+   máquina, y los scripts lo esperan. En sesión, al empezar cada cuadro se terminan las cargas pendientes
+   (`FlushAsyncLoading`): lo que pide un cuadro está listo en el siguiente en las dos. Cuesta poco (un arranque hasta
+   la pelea: 13 vaciados, 37 paquetes, 663 ms en total, el más largo 142 ms).
+3. **Películas** (Bink): duran tiempo real. `IsMoviePlaying` viaja como bandera "ocupado" con las entradas: el juego
+   la ve terminar cuando terminó en las dos máquinas (`Busy`).
+4. **"La escena está lista"** (nativa `824a5268`): bandera "listo" por consenso: el juego la ve lista sólo cuando las
+   dos máquinas dijeron listo en el cuadro anterior a la salida de las entradas (`Ready`, ~3 cuadros de espera).
+5. **Barrera al empezar la pelea** (`Barrier`, nativa `82495660`): nueva época de la sesión, resiembra y cuenta de
+   cuadros desde 0; si una máquina llega antes espera a la otra, que sigue con mandos neutros. Es el lugar del
+   `GAME_START_GO_REQUEST` del online de NRS; con lo anterior las dos llegan en el mismo cuadro.
+
+El chequeo de desync es el del propio juego: los valores de los tags 8, 9 y 10 de cada cuadro (y opcionalmente
+rangos de memoria, `mk9_net_sync_ranges`) van hasheados con las entradas; un cuadro distinto se avisa (`DESYNC`).
+
+Herramientas para encontrar la próxima fuente de diferencia: `mk9_rand_log` (cada sorteo con su pila;
+`tools/online/rand_report.py A --other B` dice el primero distinto), `mk9_check_log`, `mk9_script_log` (funciones de
+script que arranca el C++), `mk9_native_log` + `mk9_native_log_frames` (nativas de una ventana de cuadros con su
+resultado: la primera que da distinto en las dos máquinas es la culpable), `tools/online/func_strings.py`.
+
+Pendiente: la sesión de verdad no empieza en el arranque sino en un menú (las dos máquinas con historias distintas):
+barrera al entrar a la selección del versus; probar con dos personas apretando; Tag; peleas largas.

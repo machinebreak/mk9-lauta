@@ -23,6 +23,7 @@
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
 #include "mk9_old_nro.h"
+#include "profiler/sa2_cpu_profile_pc.h"
 #include "thorhax_intro.h"  // app/thorhax_intro (from usf4-nx)
 
 // mk9-nx (2026-10-20): Renut's Direct3D-level renderer (src/renut_engine/gpu, from reNut by masterspike52 through
@@ -151,6 +152,9 @@ class Mk9App : public rex::ReXApp {
   // Test snapshots of the game image (mk9_snapshot_s), read from the presenter's guest output.
   void OnPostSetup() override {
     mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
+    // mk9-nx online (2026-11-07): the PC sampling profiler and stack dumper (sa2_cpu_profile_from_s, sa2_stack_dump_s)
+    // were built but never started.
+    nfsmw::perfil_pc::Arrancar();
     // Every 10 s: how often each active enhancement was used (a log shows they really ran).
     sa2::enh::StartReport();
     // Short video recordings of the game image (sa2_video_s; sa2-nx's recorder, lockstep with vblank_per_swap): raw
@@ -176,6 +180,7 @@ class Mk9App : public rex::ReXApp {
   }
 
   void OnShutdown() override {
+    nfsmw::perfil_pc::Parar();
 #if SA2_RENUT_RENDERER
     if (banjo::renut_gpu::Active()) renut::gpu::ShutdownRenderer();
 #endif

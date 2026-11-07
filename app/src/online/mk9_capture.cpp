@@ -4,13 +4,27 @@
 // The game reads its four gamepads once per frame in sub_829D5230: GuardedMain (sub_823667E8) calls it before
 // FEngineLoop::Tick, on the game thread. Every block it reads goes to sub_82A1C550(tag, data, size, user): 0x00FF0003
 // the XInputGetState result (4 bytes), 0x00FF0002 the raw XINPUT_STATE (16 bytes), 0x00FF0001 the processed buttons
-// (12 bytes), per user. The callers read the block again after the call, so it can be replaced in place. The game's
-// own object behind it (0x8342D01C, installed by sub_82A1C6D8) is Practice's recorder or the online's gamepads (the
-// remote player's blocks replaced with the network's); this hook runs before it.
+// (12 bytes), per user; and, outside the gamepad read, 0x00FF0004 the random seed of a mode starting (4 bytes, user
+// 0; seed.h). The callers read the block again after the call, so it can be replaced in place. The game's own object
+// behind it (0x8342D01C, installed by sub_82A1C6D8) is Practice's recorder or the online's gamepads (the remote
+// player's blocks replaced with the network's); this hook runs before it. Its sibling sub_82A1C5C0(tag, value) hands
+// that object values to compare between the two machines: MK9Game.cpp's tick (sub_82382E40) gives tags 9 and 8 (two
+// frame counters) and 10 (a draw of the game's random number generator) every frame.
 //
 //   mk9_input_record=<file>   every block of every frame, to a file (format below)
 //   mk9_input_replay=<file>   the blocks of such a file replace what the controllers gave, frame by frame; the
 //                             controllers count again after its last frame
+//   mk9_check_log=<file>      per frame: "<frame> <tag>=<value> ..." of those checks (hex)
+//   mk9_rand_log=<file>       every draw of the game's random number generator (seed.h): "<frame> <thread> <source
+//                             file>:<line> <result> <host stack offsets...>" (g = the game thread; the source line is
+//                             the one the game passes along; tools/online/rand_report.py names the stacks and compares
+//                             two machines' draws)
+//   mk9_script_log=<file>     every script function the game's C++ starts (NetherRealm's MKO scripts, sub_82A23D50):
+//                             "<frame> <thread> <name>", the flow of menus and fights
+//   mk9_native_log=<file>     the script natives called in the frames of mk9_native_log_frames (a-b): "<frame> <native
+//                             address> <the VM's result register after it>", one per call (the MKO VM's native call,
+//                             sub_82A12118: the native is the word after the instruction, VM at [0x8342CDF0], its pc
+//                             at +60, the result register at +28)
 //   mk9_state_hash=<file>     per frame: "<frame> <xxh3 of each range>" for mk9_state_ranges; with
 //                             mk9_state_hash_pages one hash per 4 KB page instead (two runs' files say which pages
 //                             differ: the way to find the state that is deterministic)
@@ -21,18 +35,29 @@
 //
 // New hooks need tools/direct_calls.py --redo (docs/online/README.md, "Enganchar funciones del juego").
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/xmemory.h>
+
+#include "online/host_stack.h"
+#include "online/loading.h"
+#include "online/netplay.h"
+#include "online/seed.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -41,13 +66,38 @@ REXCVAR_DEFINE_STRING(mk9_input_record, "", "MK9 Online",
                       "Record every gamepad block the game reads (sub_82A1C550), frame by frame, to this file");
 REXCVAR_DEFINE_STRING(mk9_input_replay, "", "MK9 Online",
                       "Replay a mk9_input_record file: its blocks replace the controllers' frame by frame");
+REXCVAR_DEFINE_STRING(mk9_check_log, "", "MK9 Online",
+                      "Write the game's own per-frame sync checks (sub_82A1C5C0: tag and value) to this file, one line "
+                      "per frame");
+REXCVAR_DEFINE_STRING(mk9_rand_log, "", "MK9 Online",
+                      "Write every draw of the game's random number generator to this file (frame, thread, the source "
+                      "line the game passes, the result and the host call stack)");
+REXCVAR_DEFINE_STRING(mk9_script_log, "", "MK9 Online",
+                      "Write every MKO script function the game's C++ starts (frame, thread, name) to this file");
+REXCVAR_DEFINE_STRING(mk9_native_log, "", "MK9 Online",
+                      "Write the MKO script natives called in the frames of mk9_native_log_frames to this file");
+REXCVAR_DEFINE_STRING(mk9_native_log_frames, "", "MK9 Online", "mk9_native_log: the frames, a-b");
 REXCVAR_DEFINE_STRING(mk9_state_hash, "", "MK9 Online",
                       "Write one line per frame to this file: the frame and an xxh3 of each mk9_state_ranges range");
 REXCVAR_DEFINE_STRING(mk9_state_ranges, "83380000-834D0000", "MK9 Online",
-                      "Guest ranges for mk9_state_hash, comma-separated hex lo-hi (default: the image's .data/.bss)");
+                      "Guest ranges for mk9_state_hash, comma-separated hex lo-hi (default: the image's .data/.bss), "
+                      "or \"auto\": every committed writable region of the game's heaps when the hashing starts");
 REXCVAR_DEFINE_BOOL(mk9_state_hash_pages, false, "MK9 Online",
                     "mk9_state_hash: one hash per 4 KB page of the ranges instead of one per range");
 REXCVAR_DEFINE_INT32(mk9_state_hash_every, 1, "MK9 Online", "mk9_state_hash: every this many frames");
+REXCVAR_DEFINE_INT32(mk9_state_hash_from, 1, "MK9 Online",
+                     "mk9_state_hash: the first frame hashed (the ranges are taken then, for \"auto\" too)");
+REXCVAR_DEFINE_STRING(mk9_state_pages_at, "", "MK9 Online",
+                      "mk9_state_hash: at these frames (comma-separated) also write one hash per 4 KB page of the "
+                      "ranges to <mk9_state_hash>.pages (\"<frame> <page address> <hash>\"), to compare two runs");
+REXCVAR_DEFINE_INT32(mk9_memmap_at, 0, "MK9 Online",
+                     "At this frame, write every committed region of the guest heaps to logs/memmap_<frame>.txt "
+                     "(heap, start, size, protection); 0 = never");
+REXCVAR_DEFINE_STRING(mk9_memdump_at, "", "MK9 Online",
+                      "At these frames (comma-separated), write every committed writable region of the guest heaps "
+                      "to logs/memdump_<frame>.bin (analysis: tools/online/memsearch.py)");
+REXCVAR_DEFINE_STRING(mk9_memdump_prefix, "logs/memdump_", "MK9 Online",
+                      "mk9_memdump_at: the dumps' path before \"<frame>.bin\" (two instances need different ones)");
 
 namespace mk9::online {
 namespace {
@@ -70,6 +120,13 @@ uint64_t g_frame = 0;               // the current frame (1-based); 0 before the
 std::vector<Block> g_recording;     // this frame's blocks (mk9_input_record)
 FILE* g_record_file = nullptr;
 FILE* g_hash_file = nullptr;
+FILE* g_check_file = nullptr;
+std::string g_check_line;           // this frame's checks (mk9_check_log)
+FILE* g_rand_file = nullptr;
+FILE* g_script_file = nullptr;
+FILE* g_native_file = nullptr;
+uint64_t g_native_from = 0, g_native_to = 0;
+std::thread::id g_game_thread;
 Replay g_replay;
 std::map<std::pair<uint32_t, uint32_t>, size_t> g_replay_cursor;  // (tag, user) -> next block of this frame
 std::vector<std::pair<uint32_t, uint32_t>> g_ranges;
@@ -109,9 +166,115 @@ void LoadReplay(const std::string& path) {
   REXLOG_INFO("[capture] replay: {} frames from {}", g_replay.frames.size(), path);
 }
 
+// A guest address as the host sees it (the physical views have their own host offsets).
+const uint8_t* Host(uint32_t address) {
+  return rex::system::kernel_memory()->TranslateVirtual<const uint8_t*>(address);
+}
+
+// The committed regions of the guest heaps, merged where they touch: {heap base, start, end, protect}. The first MB of
+// v00000000 holds the store cards (tools/store_cards.py), not game state, and is left out.
+struct Region {
+  uint32_t heap, start, end, protect;
+};
+std::vector<Region> CommittedRegions(bool writable_only) {
+  std::vector<Region> out;
+  auto* memory = rex::system::kernel_memory();
+  if (!memory) return out;
+  for (uint32_t heap_base : {0x00000000u, 0x40000000u, 0x80000000u, 0x90000000u, 0xA0000000u, 0xC0000000u,
+                             0xE0000000u}) {
+    auto* heap = memory->LookupHeap(heap_base == 0 ? 0x00100000u : heap_base);
+    if (!heap) continue;
+    const uint64_t end = uint64_t(heap->heap_base()) + heap->heap_size();
+    uint64_t address = std::max<uint64_t>(heap->heap_base(), heap_base == 0 ? 0x00100000u : 0);
+    while (address < end) {
+      rex::memory::HeapAllocationInfo info{};
+      if (!heap->QueryRegionInfo(uint32_t(address), &info) || info.region_size == 0) break;
+      const uint64_t next = uint64_t(info.base_address) + info.region_size;
+      const bool committed = (info.state & rex::memory::kMemoryAllocationCommit) != 0;
+      const bool writable = (info.protect & rex::memory::kMemoryProtectWrite) != 0;
+      if (committed && (writable || !writable_only)) {
+        if (!out.empty() && out.back().heap == heap_base && out.back().end == info.base_address &&
+            out.back().protect == info.protect) {
+          out.back().end = uint32_t(next);
+        } else {
+          out.push_back({heap_base, info.base_address, uint32_t(next), info.protect});
+        }
+      }
+      if (next <= address) break;
+      address = next;
+    }
+  }
+  return out;
+}
+
+void DumpMemMap() {
+  const auto regions = CommittedRegions(false);
+  const std::string path = "logs/memmap_" + std::to_string(g_frame) + ".txt";
+  FILE* f = std::fopen(path.c_str(), "w");
+  if (!f) return;
+  std::map<uint32_t, uint64_t> per_heap;
+  for (const Region& r : regions) {
+    std::fprintf(f, "%08X %08X-%08X %10u %c%c\n", r.heap, r.start, r.end, r.end - r.start,
+                 (r.protect & rex::memory::kMemoryProtectRead) ? 'r' : '-',
+                 (r.protect & rex::memory::kMemoryProtectWrite) ? 'w' : '-');
+    per_heap[r.heap] += r.end - r.start;
+  }
+  std::fclose(f);
+  std::string summary;
+  for (const auto& [heap, bytes] : per_heap) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), " %08X: %.1f MB", heap, bytes / 1048576.0);
+    summary += buf;
+  }
+  REXLOG_INFO("[capture] frame {}: {} committed regions to {};{}", g_frame, regions.size(), path, summary);
+}
+
+std::vector<uint64_t> ParseFrames(const std::string& text) {
+  std::vector<uint64_t> frames;
+  for (size_t pos = 0; pos < text.size();) {
+    const size_t end = text.find(',', pos);
+    const uint64_t frame = std::strtoull(text.substr(pos, end - pos).c_str(), nullptr, 10);
+    if (frame) frames.push_back(frame);
+    if (end == std::string::npos) break;
+    pos = end + 1;
+  }
+  return frames;
+}
+
+// logs/memdump_<frame>.bin: "MK9D", u32 version 1, u32 region count, then per region u32 start, u32 size and the
+// bytes (guest byte order). Taken on the game thread at the frame's start; other threads keep running meanwhile.
+void DumpMemory() {
+  const auto regions = CommittedRegions(true);
+  const std::string path = REXCVAR_GET(mk9_memdump_prefix) + std::to_string(g_frame) + ".bin";
+  FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) return;
+  const uint32_t header[3] = {0x44394B4Du, 1u, static_cast<uint32_t>(regions.size())};
+  std::fwrite(header, 4, 3, f);
+  uint64_t total = 0;
+  for (const Region& r : regions) {
+    const uint32_t h[2] = {r.start, r.end - r.start};
+    std::fwrite(h, 4, 2, f);
+    std::fwrite(Host(r.start), 1, r.end - r.start, f);
+    total += r.end - r.start;
+  }
+  std::fclose(f);
+  REXLOG_INFO("[capture] frame {}: {} regions, {:.1f} MB written to {}", g_frame, regions.size(), total / 1048576.0,
+              path);
+}
+
 void ParseRanges() {
   g_ranges.clear();
   const std::string text = REXCVAR_GET(mk9_state_ranges);
+  if (text == "auto") {
+    uint64_t total = 0;
+    for (const Region& r : CommittedRegions(true)) {
+      g_ranges.emplace_back(r.start, r.end);
+      total += r.end - r.start;
+    }
+    REXLOG_INFO("[capture] state ranges: {} committed writable regions, {:.1f} MB", g_ranges.size(),
+                total / 1048576.0);
+    return;
+  }
   size_t pos = 0;
   while (pos < text.size()) {
     const size_t end = text.find(',', pos);
@@ -123,8 +286,21 @@ void ParseRanges() {
   }
 }
 
-void WriteHashes(const uint8_t* base) {
+FILE* g_pages_file = nullptr;
+std::vector<uint64_t> g_pages_at;  // frames whose per-page hashes go to <mk9_state_hash>.pages
+
+void WriteHashes() {
   static const int every = REXCVAR_GET(mk9_state_hash_every) > 0 ? REXCVAR_GET(mk9_state_hash_every) : 1;
+  const bool pages_now = g_pages_file && std::find(g_pages_at.begin(), g_pages_at.end(), g_frame) != g_pages_at.end();
+  if (pages_now) {
+    for (const auto& [lo, hi] : g_ranges) {
+      for (uint32_t a = lo & ~0xFFFu; a < hi; a += 0x1000) {
+        std::fprintf(g_pages_file, "%llu %08X %016llx\n", static_cast<unsigned long long>(g_frame), a,
+                     static_cast<unsigned long long>(XXH3_64bits(Host(a), 0x1000)));
+      }
+    }
+    std::fflush(g_pages_file);
+  }
   if (g_frame % every) return;
   static const bool pages = REXCVAR_GET(mk9_state_hash_pages);
   std::string line = std::to_string(g_frame);
@@ -132,11 +308,11 @@ void WriteHashes(const uint8_t* base) {
   for (const auto& [lo, hi] : g_ranges) {
     if (pages) {
       for (uint32_t a = lo & ~0xFFFu; a < hi; a += 0x1000) {
-        std::snprintf(buf, sizeof(buf), " %016llx", static_cast<unsigned long long>(XXH3_64bits(base + a, 0x1000)));
+        std::snprintf(buf, sizeof(buf), " %016llx", static_cast<unsigned long long>(XXH3_64bits(Host(a), 0x1000)));
         line += buf;
       }
     } else {
-      std::snprintf(buf, sizeof(buf), " %016llx", static_cast<unsigned long long>(XXH3_64bits(base + lo, hi - lo)));
+      std::snprintf(buf, sizeof(buf), " %016llx", static_cast<unsigned long long>(XXH3_64bits(Host(lo), hi - lo)));
       line += buf;
     }
   }
@@ -157,6 +333,101 @@ void FlushRecording() {
   if ((g_frame % 60) == 0) std::fflush(g_record_file);  // test runs end with a forced stop: lose 1 s at most
 }
 
+void FlushChecks() {
+  if (!g_check_file || g_check_line.empty()) return;
+  const std::string line = std::to_string(g_frame) + g_check_line + '\n';
+  std::fwrite(line.data(), 1, line.size(), g_check_file);
+  g_check_line.clear();
+  if ((g_frame % 60) == 0) std::fflush(g_check_file);
+}
+
+void CaptureCheck(uint32_t tag, uint32_t value) {
+  if (!g_check_file) return;
+  std::lock_guard lock(g_mutex);
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), " %x=%08x", tag & 0xFFFF, value);
+  g_check_line += buf;
+}
+
+// A draw of the game's random number generator (mk9_rand_log): file and line are what the caller passed.
+void CaptureDraw(const uint8_t* base, uint32_t file, uint32_t line, uint32_t result) {
+  if (!g_rand_file) return;
+  uint64_t stack[40];
+  const int depth = host_stack::Capture(stack, 40, 2);
+  std::string source = "?";
+  if (file >= 0x82000000u && file < 0x84000000u) {
+    const char* text = reinterpret_cast<const char*>(base + file);
+    const size_t len = strnlen(text, 260);
+    source.assign(text, len);
+    if (const size_t slash = source.find_last_of("\\/"); slash != std::string::npos) source.erase(0, slash + 1);
+  }
+  static thread_local int thread_index = [] {
+    static std::atomic<int> next{1};
+    return next++;
+  }();
+  char head[160];
+  std::snprintf(head, sizeof(head), "%llu %s%d %s:%u %08x", static_cast<unsigned long long>(g_frame),
+                std::this_thread::get_id() == g_game_thread ? "g" : "t", thread_index, source.c_str(), line, result);
+  std::string text = head;
+  char buf[24];
+  for (int i = 0; i < depth; ++i) {
+    std::snprintf(buf, sizeof(buf), " %llx", static_cast<unsigned long long>(stack[i]));
+    text += buf;
+  }
+  text += '\n';
+  std::lock_guard lock(g_mutex);
+  std::fwrite(text.data(), 1, text.size(), g_rand_file);
+}
+
+uint32_t Load32(const uint8_t* base, uint32_t addr) {
+  const uint8_t* p = base + addr;
+  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
+}
+
+bool GuestPointer(uint32_t addr) { return addr >= 0x40000000u && addr < 0xF0000000u; }
+
+// A script function started (mk9_script_log): the script object and the function's number (1-based) in its table
+// (+32 count, +140 the entries; an entry's first word is its name).
+void CaptureScriptCall(const uint8_t* base, uint32_t script, uint32_t index) {
+  if (!g_script_file) return;
+  std::string name = "?";
+  if (GuestPointer(script) && index >= 1 && index <= Load32(base, script + 32)) {
+    const uint32_t table = Load32(base, script + 140);
+    const uint32_t entry = GuestPointer(table) ? Load32(base, table + (index - 1) * 4) : 0;
+    const uint32_t text = GuestPointer(entry) ? Load32(base, entry) : 0;
+    if (GuestPointer(text)) {
+      const char* chars = reinterpret_cast<const char*>(base + text);
+      name.assign(chars, strnlen(chars, 128));
+    }
+  }
+  char head[64];
+  std::snprintf(head, sizeof(head), "%llu %s ", static_cast<unsigned long long>(g_frame),
+                std::this_thread::get_id() == g_game_thread ? "g" : "t");
+  const std::string line = head + name + '\n';
+  std::lock_guard lock(g_mutex);
+  std::fwrite(line.data(), 1, line.size(), g_script_file);
+}
+
+constexpr uint32_t kScriptVm = 0x8342CDF0;
+
+// The script native about to run (0 = none or outside mk9_native_log_frames).
+uint32_t NativeAboutToRun(const uint8_t* base) {
+  if (!g_native_file || g_frame < g_native_from || g_frame > g_native_to) return 0;
+  const uint32_t vm = Load32(base, kScriptVm);
+  const uint32_t pc = GuestPointer(vm) ? Load32(base, vm + 60) : 0;
+  return GuestPointer(pc) ? Load32(base, pc + 4) : 0;
+}
+
+// A script native that ran (mk9_native_log), with the VM's result register after it.
+void CaptureNative(const uint8_t* base, uint32_t native) {
+  const uint32_t vm = Load32(base, kScriptVm);
+  char line[48];
+  const int n = std::snprintf(line, sizeof(line), "%llu %08x %x\n", static_cast<unsigned long long>(g_frame), native,
+                              GuestPointer(vm) ? Load32(base, vm + 28) : 0u);
+  std::lock_guard lock(g_mutex);
+  std::fwrite(line, 1, size_t(n), g_native_file);
+}
+
 // Start of frame N (sub_829D5230's entry): the previous frame's record goes out, the state after it is hashed.
 void FrameBegin(const uint8_t* base) {
   std::lock_guard lock(g_mutex);
@@ -172,18 +443,65 @@ void FrameBegin(const uint8_t* base) {
       }
     }
     if (const std::string play = REXCVAR_GET(mk9_input_replay); Configured(play)) LoadReplay(play);
+    if (const std::string checks = REXCVAR_GET(mk9_check_log); Configured(checks)) {
+      g_check_file = std::fopen(checks.c_str(), "w");
+      if (!g_check_file) REXLOG_ERROR("[capture] cannot write {}", checks);
+    }
+    if (const std::string scripts = REXCVAR_GET(mk9_script_log); Configured(scripts)) {
+      g_script_file = std::fopen(scripts.c_str(), "w");
+      if (!g_script_file) REXLOG_ERROR("[capture] cannot write {}", scripts);
+    }
+    if (const std::string natives = REXCVAR_GET(mk9_native_log); Configured(natives)) {
+      g_native_file = std::fopen(natives.c_str(), "w");
+      unsigned long long from = 0, to = 0;
+      if (std::sscanf(REXCVAR_GET(mk9_native_log_frames).c_str(), "%llu-%llu", &from, &to) == 2) {
+        g_native_from = from;
+        g_native_to = to;
+      }
+    }
+    if (const std::string draws = REXCVAR_GET(mk9_rand_log); Configured(draws)) {
+      g_rand_file = std::fopen(draws.c_str(), "w");
+      if (!g_rand_file) REXLOG_ERROR("[capture] cannot write {}", draws);
+    }
     if (const std::string hash = REXCVAR_GET(mk9_state_hash); Configured(hash)) {
-      ParseRanges();
       g_hash_file = std::fopen(hash.c_str(), "w");
-      REXLOG_INFO("[capture] state hashes of {} range(s) to {}", g_ranges.size(), hash);
+      const std::string at = REXCVAR_GET(mk9_state_pages_at);
+      for (size_t pos = 0; pos < at.size();) {
+        const size_t end = at.find(',', pos);
+        const uint64_t frame = std::strtoull(at.substr(pos, end - pos).c_str(), nullptr, 10);
+        if (frame) g_pages_at.push_back(frame);
+        if (end == std::string::npos) break;
+        pos = end + 1;
+      }
+      if (!g_pages_at.empty()) g_pages_file = std::fopen((hash + ".pages").c_str(), "w");
+      REXLOG_INFO("[capture] state hashes to {} from frame {} ({} frames with page hashes)", hash,
+                  REXCVAR_GET(mk9_state_hash_from), g_pages_at.size());
     }
     return true;
   }();
   (void)once;
+  (void)base;
   FlushRecording();
+  FlushChecks();
+  if (g_rand_file && (g_frame % 60) == 0) std::fflush(g_rand_file);
+  if (g_script_file && (g_frame % 60) == 0) std::fflush(g_script_file);
+  if (g_native_file && (g_frame % 60) == 0) std::fflush(g_native_file);
+  g_game_thread = std::this_thread::get_id();
   ++g_frame;
   g_replay_cursor.clear();
-  if (g_hash_file) WriteHashes(base);
+  if (const int at = REXCVAR_GET(mk9_memmap_at); at > 0 && g_frame == uint64_t(at)) DumpMemMap();
+  static const std::vector<uint64_t> dump_at = ParseFrames(REXCVAR_GET(mk9_memdump_at));
+  if (std::find(dump_at.begin(), dump_at.end(), g_frame) != dump_at.end()) DumpMemory();
+  if (g_hash_file && g_frame >= uint64_t(std::max(1, REXCVAR_GET(mk9_state_hash_from)))) {
+    // The ranges are taken when the hashing starts ("auto": the heaps as they are then).
+    static const bool ranges = [] {
+      ParseRanges();
+      REXLOG_INFO("[capture] hashing {} range(s) from frame {}", g_ranges.size(), g_frame);
+      return true;
+    }();
+    (void)ranges;
+    WriteHashes();
+  }
   if (g_replay.loaded && g_frame == g_replay.frames.size() + 1) {
     REXLOG_INFO("[capture] replay ended at frame {}: {} blocks replaced, {} mismatched, {} missing", g_frame,
                 g_replay.replaced, g_replay.mismatched, g_replay.missing);
@@ -224,18 +542,107 @@ void CaptureBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uin
 }
 
 }  // namespace
+
+uint64_t CurrentFrame() { return g_frame; }
+
 }  // namespace mk9::online
 
-// The gamepad read of each frame (called from GuardedMain before FEngineLoop::Tick).
+// The gamepad read of each frame (called from GuardedMain before FEngineLoop::Tick): the frame's start for the capture
+// tools, then the online session's input exchange (netplay.cpp; outside the capture lock, as it may wait), at its
+// first frame the shared seed (seed.h; mk9_seed outside a session), and the pending loads finished (loading.h).
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
   mk9::online::FrameBegin(base);
+  mk9::netplay::OnFrame(base, mk9::online::CurrentFrame());
+  uint32_t seed = 0;
+  if (mk9::netplay::TakeSessionSeed(&seed) ||
+      (!mk9::netplay::Active() && mk9::seed::FixedSeedFor(mk9::online::CurrentFrame(), &seed))) {
+    mk9::seed::Start(base, seed);
+  }
+  if (mk9::loading::Enabled() || mk9::netplay::Active()) mk9::loading::FlushPending(ctx, base);
   __imp__sub_829D5230(ctx, base);
 }
 
-// The capture interface's block entry: (tag, guest pointer, size, user).
+// The game's random number generator (seed.h): an integer (sub_826D91C0) or a float made integer (sub_826D91E8), each
+// given the caller's source file and line (r3, r4); mk9_rand_log writes every draw.
+extern "C" REX_FUNC(__imp__sub_826D91C0);
+REX_HOOK_RAW(sub_826D91C0) {
+  const uint32_t file = ctx.r3.u32, line = ctx.r4.u32;
+  __imp__sub_826D91C0(ctx, base);
+  mk9::online::CaptureDraw(base, file, line, ctx.r3.u32);
+}
+extern "C" REX_FUNC(__imp__sub_826D91E8);
+REX_HOOK_RAW(sub_826D91E8) {
+  const uint32_t file = ctx.r3.u32, line = ctx.r4.u32;
+  __imp__sub_826D91E8(ctx, base);
+  mk9::online::CaptureDraw(base, file, line, ctx.r3.u32);
+}
+
+// A fight's start, once it has loaded: the scripts call this native as the stage's scripts start (it loads the
+// Toasty! easter egg's Toasty.mko and runs toasty_init: sub_823B3DA0), once per fight. The session's barrier there
+// (netplay.cpp) is where the game's own online waited for both players and a "go" (GAME_START_GO_REQUEST,
+// sub_824088A0).
+extern "C" REX_FUNC(__imp__sub_82495660);
+REX_HOOK_RAW(sub_82495660) {
+  mk9::netplay::Barrier(base, "fight start");
+  __imp__sub_82495660(ctx, base);
+}
+
+// IsMoviePlaying (GFullScreenMovie at 0x834246A8; the engine's tick and the scripts, native 824747c0, poll it): a
+// movie ends on each machine's own clock, so in a session the game sees it end once it has ended on both (Busy).
+extern "C" REX_FUNC(__imp__sub_829CE600);
+REX_HOOK_RAW(sub_829CE600) {
+  __imp__sub_829CE600(ctx, base);
+  ctx.r3.u64 = mk9::netplay::Busy(mk9::netplay::kBusyMovie, ctx.r3.u32);
+}
+
+// The scripts' last wait before a fight starts (native 824a5268: an object found by name, then sub_82A30588 asks the
+// world and the object whether the scene is ready; its answer in the VM's result register): ready on each machine's
+// own clock, so in a session the game sees it ready once both machines are (netplay.h, Ready).
+extern "C" REX_FUNC(__imp__sub_824A5268);
+REX_HOOK_RAW(sub_824A5268) {
+  __imp__sub_824A5268(ctx, base);
+  const uint32_t vm = mk9::online::Load32(base, mk9::online::kScriptVm);
+  if (mk9::online::GuestPointer(vm)) {
+    uint8_t* result = base + vm + 28;
+    const uint32_t ready = mk9::netplay::Ready(mk9::netplay::kReadyScene, mk9::online::Load32(base, vm + 28));
+    result[0] = uint8_t(ready >> 24);
+    result[1] = uint8_t(ready >> 16);
+    result[2] = uint8_t(ready >> 8);
+    result[3] = uint8_t(ready);
+  }
+}
+
+// The MKO VM's native call: the native's address is in the bytecode after the instruction (mk9_native_log).
+extern "C" REX_FUNC(__imp__sub_82A12118);
+REX_HOOK_RAW(sub_82A12118) {
+  const uint32_t native = mk9::online::NativeAboutToRun(base);
+  __imp__sub_82A12118(ctx, base);
+  if (native) mk9::online::CaptureNative(base, native);
+}
+
+// Starts a function of an MKO script (r3 the script object, r4 the function's number): mk9_script_log.
+extern "C" REX_FUNC(__imp__sub_82A23D50);
+REX_HOOK_RAW(sub_82A23D50) {
+  mk9::online::CaptureScriptCall(base, ctx.r3.u32, ctx.r4.u32);
+  __imp__sub_82A23D50(ctx, base);
+}
+
+// The capture interface's check entry: (tag, value), the values the game's own online compares between the two
+// machines; the session compares them too (netplay.cpp).
+extern "C" REX_FUNC(__imp__sub_82A1C5C0);
+REX_HOOK_RAW(sub_82A1C5C0) {
+  mk9::netplay::OnCheck(ctx.r3.u32, ctx.r4.u32);
+  mk9::online::CaptureCheck(ctx.r3.u32, ctx.r4.u32);
+  __imp__sub_82A1C5C0(ctx, base);
+}
+
+// The capture interface's block entry: (tag, guest pointer, size, user). The session's inputs and the shared mode
+// seed go in first, then the capture tools see (and record) what the game will read.
 extern "C" REX_FUNC(__imp__sub_82A1C550);
 REX_HOOK_RAW(sub_82A1C550) {
+  mk9::netplay::OverrideBlock(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r1.u32);
+  mk9::seed::OverrideModeSeed(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
   mk9::online::CaptureBlock(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
   __imp__sub_82A1C550(ctx, base);
 }

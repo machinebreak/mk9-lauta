@@ -126,8 +126,8 @@ build los suma solo.
 |---|---|
 | F0 preparación | **hecha**: build de Windows reproducible, el juego corre nativo a 60 fps (Vulkan y D3D12, 720p y 1080p) |
 | F1 mapa del motor | avanzado: bucle principal, lectura de mandos, interfaz de captura (Práctica y online), línea de comandos, fenceposts, GMalloc, rand, info de la partida (ver engine-map.md) |
-| F2 determinismo | herramientas hechas y probadas: `mk9_input_record` / `mk9_input_replay` (una corrida reproducida sin guion llega sola a la pelea), `mk9_state_hash` (+`_pages`). Falta: fijar la semilla (el rival del Ladder cambia entre arranques) y encontrar las páginas deterministas |
-| F3 online con retraso | diseñado (netplay-design.md, camino A); pendiente |
+| F2 determinismo | **logrado en lockstep**: dos instancias llegan a la pelea en el mismo cuadro y pelean sin desync (semillas, cargas, películas, "escena lista", barrera; netplay-design.md). Herramientas: grabar/reproducir mandos, hashes, registro de sorteos con pila, de nativas y de scripts |
+| F3 online con retraso | lockstep por UDP entre dos instancias andando (`app/src/online/netplay.cpp`, `tools/online/pair_test.ps1`); falta el transporte por internet, el lobby y la sesión desde la selección del versus |
 | F4 instantáneas + SyncTest | pendiente (el gate) |
 | F5 rollback | pendiente |
 | F6 pulido, F7 launcher/beta | pendiente; ya están los íconos de Xbox y la configuración para jugar (`app/mk9.toml`) |

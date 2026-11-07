@@ -86,8 +86,13 @@ set(MK9_SOURCES
     src/cpu/sa2_enhancements.cpp
     src/cpu/sa2_gpu_boost.cpp
     # Online (docs/online): the gamepad capture interface (record / replay frame by frame) and per-frame state hashes
-    # for the determinism tests (F2).
+    # for the determinism tests (F2), and the two-player session at the frame boundary (F3).
     src/online/mk9_capture.cpp
+    src/online/netplay.cpp
+    src/online/net_udp.cpp
+    src/online/host_stack.cpp
+    src/online/loading.cpp
+    src/online/seed.cpp
 )
 if(NOT REXGLUE_PLATFORM_SWITCH)
     # Switch profiler counters the native renderer calls (no-ops on PC).

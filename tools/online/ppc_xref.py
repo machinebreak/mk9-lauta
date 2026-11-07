@@ -2,12 +2,13 @@
 """Cross-references in MK9's Xbox 360 image: which code builds a given address, and which data holds it.
 
     python tools/online/ppc_xref.py <addr|"text"> [...]        addresses in hex (8200EBE8) or a string to look up first
-    python tools/online/ppc_xref.py --func <addr>               the function (from .pdata) that contains an address
+    python tools/online/ppc_xref.py --func <addr>               the function that contains an address
     python tools/online/ppc_xref.py --calls <addr>        the direct calls and branches to an address
     options: --image path   (default out/default_image.bin, the loaded image from tools/xex_image.py)
              --range N      also report references to target..target+N-1 (a struct or a string's tail)
 
-Code references are found by constant propagation over each function from .pdata (lis/addis, addi, ori, mr and the
+Code references are found by constant propagation over each function (from .pdata, plus the leaf functions only the
+recompiler's list in app/generated/default/mk9_init.cpp has) (lis/addis, addi, ori, mr and the
 D/DS-form loads and stores off a known register), linear in program order, with the volatile registers r0, r3-r12
 forgotten at every call: the usual way 32-bit addresses are built on PowerPC (lis rX,hi; addi rY,rX,lo or
 lwz rY,lo(rX)). Data references are aligned big-endian words equal to the target in .rdata/.data.
@@ -16,12 +17,15 @@ Output lines: "code <ins addr> in <func start> : <how>" and "data <word addr>".
 import argparse
 import bisect
 import os
+import re
 import struct
 import sys
 
 BASE = 0x82000000
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_IMAGE = os.path.join(REPO, 'out', 'default_image.bin')
+# The recompiler's function list: it also has the leaf functions that .pdata leaves out (nothing to unwind).
+FUNC_LIST = os.path.join(REPO, 'app', 'generated', 'default', 'mk9_init.cpp')
 
 
 class Image:
@@ -48,6 +52,18 @@ class Image:
         funcs.sort()
         self.funcs = funcs
         self.func_starts = [f[0] for f in funcs]
+        # Functions only the recompiler knows run to the next known function's start.
+        if os.path.exists(FUNC_LIST):
+            listed = {int(m.group(1), 16) for m in
+                      re.finditer(r'\{ 0x([0-9A-Fa-f]{8}), sub_', open(FUNC_LIST, encoding='utf-8').read())}
+            starts = sorted(listed | set(self.func_starts))
+            extra = []
+            for i, start in enumerate(starts):
+                if start in listed and self.func_of(start) is None and i + 1 < len(starts):
+                    extra.append((start, starts[i + 1]))
+            funcs = sorted(funcs + extra)
+            self.funcs = funcs
+            self.func_starts = [f[0] for f in funcs]
 
     def u32(self, addr):
         return struct.unpack_from('>I', self.data, addr - BASE)[0]
@@ -222,7 +238,7 @@ def main():
         for t in args.targets:
             a = int(t, 16)
             f = img.func_of(a)
-            print(f'{a:08X}: ' + (f'function {f[0]:08X}-{f[1]:08X} (sub_{f[0]:08X})' if f else 'no .pdata function'))
+            print(f'{a:08X}: ' + (f'function {f[0]:08X}-{f[1]:08X} (sub_{f[0]:08X})' if f else 'no function'))
         return
 
     targets = []
