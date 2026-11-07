@@ -119,6 +119,9 @@ REXCVAR_DEFINE_BOOL(masseffect_native_set4_differences, true, "MASSEFFECT",
 // tools/ro_constants.py's PC check (off the Switch every folded load is also read and compared): a word of the image's
 // read-only data that is not what the executable holds.
 #include <rex/logging.h>
+// mk9-nx online (2026-11-07): the counter of the checks (the generated pch only declares it; the PC link failed with
+// "undefined symbol: g_rex_ro_checked").
+extern "C" volatile unsigned long long g_rex_ro_checked = 0;
 extern "C" void RexRoMismatch(unsigned address) noexcept {
   REXLOG_ERROR("ro_constants: the read-only word at {:08X} is not the executable's (a folded constant is wrong)",
                address);

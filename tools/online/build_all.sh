@@ -40,7 +40,7 @@ for step in "${steps[@]}"; do
   case $step in
     host)
       status "host: configure the code generator"
-      run_ps 'out\host_configure.log' "cmake -S sdk -B out/host -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2"
+      run_ps 'out\host_configure.log' "cmake -S sdk -B out/host -G Ninja -DREXGLUE_VERSION_OVERRIDE=1.0.4 -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2"
       status "host: build rexglue (-j $JOBS_SDK)"
       run_ps 'out\host_build.log' "cmake --build out/host --target rexglue -j $JOBS_SDK"
       ;;

@@ -14,7 +14,8 @@
                 "CMAKE_CXX_FLAGS": "-march=x86-64-v2",
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "REXGLUE_ENABLE_TRACY": "OFF",
-                "REXGLUE_USE_VULKAN": "ON"
+                "REXGLUE_USE_VULKAN": "ON",
+                "REXGLUE_VERSION_OVERRIDE": "1.0.4"
             },
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
         },

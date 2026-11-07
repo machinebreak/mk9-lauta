@@ -204,9 +204,18 @@ add_compile_definitions(REXGLUE_BUILD_CONFIG="$<CONFIG>")
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rex_pch.cmake)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rex_version.cmake)
-rex_resolve_version(REXGLUE_FULL_VERSION
-    FLOOR_MAJOR ${PROJECT_VERSION_MAJOR}
-    FLOOR_MINOR ${PROJECT_VERSION_MINOR})
+# mk9-nx online (2026-11-07): this SDK lives inside the app's repository, whose release tags (v1.0.x) are the app's:
+# on any commit after a tag the configure stops ("floor version (0.10) is behind tag version (1.0)").
+# REXGLUE_VERSION_OVERRIDE names the version instead (app/CMakePresets.json and tools/online/build_all.sh set the
+# app's last release, the version the generated code was made with).
+set(REXGLUE_VERSION_OVERRIDE "" CACHE STRING "SDK version to use instead of the one from the repository's git tags")
+if(REXGLUE_VERSION_OVERRIDE)
+    set(REXGLUE_FULL_VERSION "${REXGLUE_VERSION_OVERRIDE}")
+else()
+    rex_resolve_version(REXGLUE_FULL_VERSION
+        FLOOR_MAJOR ${PROJECT_VERSION_MAJOR}
+        FLOOR_MINOR ${PROJECT_VERSION_MINOR})
+endif()
 
 # Strip the -id trailer (if any) for the numeric-only version.
 string(REGEX REPLACE "-.*$" "" REXGLUE_NUMERIC_VERSION "${REXGLUE_FULL_VERSION}")

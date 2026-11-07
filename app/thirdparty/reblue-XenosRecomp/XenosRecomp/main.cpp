@@ -10,7 +10,9 @@ static std::atomic<size_t> banjoOverrideFallbacks{0};
 static std::atomic<size_t> banjoKillShaders{0}, banjoDepthShaders{0};  // banjo-nx (banjo_gpu_depth_only)
 #endif
 
+#include <cstdlib>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 static std::unique_ptr<uint8_t[]> readAllBytes(const char* filePath, size_t& fileSize)
@@ -30,6 +32,29 @@ static void writeAllBytes(const char* filePath, const void* data, size_t dataSiz
     FILE* file = fopen(filePath, "wb");
     fwrite(data, 1, dataSize, file);
     fclose(file);
+}
+
+// mk9-nx online (2026-11-07): a compressed cache as #embed of a file written next to the output (<output><suffix>)
+// instead of a list of decimal literals. MK9's 19,092 shaders compress to 30.5 MB (DXIL 16.6 + SPIR-V 14.0): as
+// literals, 110 MB of source and 30 million elements, one AST node each in Clang (gigabytes for that one file); #embed
+// keeps the bytes as they are (a 50 MB blob compiles in 2 s with Clang 20). XENOS_RECOMP_BYTE_LISTS=1 writes the old
+// lists, for compilers without #embed.
+static void writeCompressedArray(StringBuffer& f, const char* output, const char* suffix, const char* name,
+                                 const std::vector<uint8_t>& data)
+{
+    if (std::getenv("XENOS_RECOMP_BYTE_LISTS") != nullptr)
+    {
+        f.print("const uint8_t {}[] = {{", name);
+        for (auto value : data)
+            f.print("{},", value);
+        f.println("}};");
+        return;
+    }
+    const std::string path = std::string(output) + suffix;
+    writeAllBytes(path.c_str(), data.data(), data.size());
+    f.println("const uint8_t {}[] = {{", name);
+    f.println("#embed \"{}\"", std::filesystem::path(path).filename().string());
+    f.println("}};");
 }
 
 struct RecompiledShader
@@ -176,7 +201,7 @@ int main(int argc, char** argv)
 
         std::atomic<uint32_t> progress = 0;
 
-        std::for_each(std::execution::par_unseq, shaders.begin(), shaders.end(), [&](auto& hashShaderPair)
+        auto recompileShader = [&](auto& hashShaderPair)
             {
                 auto& shader = hashShaderPair.second;
                 const XXH64_hash_t hash = hashShaderPair.first;
@@ -349,7 +374,34 @@ int main(int argc, char** argv)
                 size_t currentProgress = ++progress;
                 if ((currentProgress % 10) == 0 || (currentProgress == shaders.size() - 1))
                     fmt::println("Recompiling shaders... {}%", currentProgress / float(shaders.size()) * 100.0f);
-            });
+            };
+
+        // mk9-nx online (2026-11-07): XENOS_RECOMP_JOBS=<n> runs the shaders on n worker threads. The parallel
+        // algorithm takes every core, and each worker keeps its own DXC: with MK9's 19,000 shaders, 12 threads held
+        // ~7 GB, too much next to a desktop's other programs. Unset: the parallel algorithm, as before.
+        const char* jobsEnv = std::getenv("XENOS_RECOMP_JOBS");
+        const unsigned jobs = jobsEnv ? static_cast<unsigned>(std::strtoul(jobsEnv, nullptr, 10)) : 0;
+        if (jobs == 0)
+        {
+            std::for_each(std::execution::par_unseq, shaders.begin(), shaders.end(), recompileShader);
+        }
+        else
+        {
+            std::vector<decltype(shaders)::value_type*> work;
+            work.reserve(shaders.size());
+            for (auto& hashShaderPair : shaders)
+                work.push_back(&hashShaderPair);
+            std::atomic<size_t> next = 0;
+            std::vector<std::thread> workers;
+            for (unsigned i = 0; i < jobs; ++i)
+                workers.emplace_back([&]
+                    {
+                        for (size_t index; (index = next++) < work.size();)
+                            recompileShader(*work[index]);
+                    });
+            for (auto& worker : workers)
+                worker.join();
+        }
 
         if (!g_failures.empty())
         {
@@ -377,6 +429,10 @@ int main(int argc, char** argv)
 #else
         f.println("#include \"shader_cache.h\"");
 #endif
+        // mk9-nx online: the compressed caches are #embed (writeCompressedArray), a Clang extension in C++.
+        f.println("#if defined(__clang__)");
+        f.println("#pragma clang diagnostic ignored \"-Wc23-extensions\"");
+        f.println("#endif");
         f.println("ShaderCacheEntry g_shaderCacheEntries[] = {{");
 
         std::vector<uint8_t> dxil;
@@ -447,12 +503,7 @@ int main(int argc, char** argv)
         std::vector<uint8_t> dxilCompressed(ZSTD_compressBound(dxil.size()));
         dxilCompressed.resize(ZSTD_compress(dxilCompressed.data(), dxilCompressed.size(), dxil.data(), dxil.size(), level));
 
-        f.print("const uint8_t g_compressedDxilCache[] = {{");
-
-        for (auto data : dxilCompressed)
-            f.print("{},", data);
-
-        f.println("}};");
+        writeCompressedArray(f, output, ".dxil.zst", "g_compressedDxilCache", dxilCompressed);
         f.println("const size_t g_dxilCacheCompressedSize = {};", dxilCompressed.size());
         f.println("const size_t g_dxilCacheDecompressedSize = {};", dxil.size());
 #endif
@@ -462,12 +513,7 @@ int main(int argc, char** argv)
         std::vector<uint8_t> spirvCompressed(ZSTD_compressBound(spirv.size()));
         spirvCompressed.resize(ZSTD_compress(spirvCompressed.data(), spirvCompressed.size(), spirv.data(), spirv.size(), level));
 
-        f.print("const uint8_t g_compressedSpirvCache[] = {{");
-
-        for (auto data : spirvCompressed)
-            f.print("{},", data);
-
-        f.println("}};");
+        writeCompressedArray(f, output, ".spirv.zst", "g_compressedSpirvCache", spirvCompressed);
 
         f.println("const size_t g_spirvCacheCompressedSize = {};", spirvCompressed.size());
         f.println("const size_t g_spirvCacheDecompressedSize = {};", spirv.size());
