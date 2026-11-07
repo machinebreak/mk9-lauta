@@ -21,7 +21,9 @@ enum BusyFlag : uint8_t {
 
 // Readiness polls (0 = not yet) that end on each machine's own clock: one bit each in the inputs.
 enum ReadyFlag : uint8_t {
-  kReadyScene = 1 << 0,  // the scripts' last wait before a fight starts (native 824a5268, sub_82A30588)
+  kReadyScene = 1 << 0,      // the scripts' last wait before a fight starts (native 824a5268, sub_82A30588)
+  kReadyStreaming = 1 << 1,  // the engine's streaming done, waited on just before (native 8247bf38, sub_82A2EAB8)
+  kReadyModeGate = 1 << 2,   // the Versus selection's gate to the fight mode (native 824a56d0, sub_82A311D8)
 };
 
 // A session is configured (mk9_net_host / mk9_net_join).

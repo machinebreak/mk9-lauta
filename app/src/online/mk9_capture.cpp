@@ -54,10 +54,12 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "online/guest_memory.h"
 #include "online/host_stack.h"
 #include "online/loading.h"
 #include "online/netplay.h"
 #include "online/seed.h"
+#include "online/snapshot.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -171,41 +173,10 @@ const uint8_t* Host(uint32_t address) {
   return rex::system::kernel_memory()->TranslateVirtual<const uint8_t*>(address);
 }
 
-// The committed regions of the guest heaps, merged where they touch: {heap base, start, end, protect}. The first MB of
-// v00000000 holds the store cards (tools/store_cards.py), not game state, and is left out.
-struct Region {
-  uint32_t heap, start, end, protect;
-};
-std::vector<Region> CommittedRegions(bool writable_only) {
-  std::vector<Region> out;
-  auto* memory = rex::system::kernel_memory();
-  if (!memory) return out;
-  for (uint32_t heap_base : {0x00000000u, 0x40000000u, 0x80000000u, 0x90000000u, 0xA0000000u, 0xC0000000u,
-                             0xE0000000u}) {
-    auto* heap = memory->LookupHeap(heap_base == 0 ? 0x00100000u : heap_base);
-    if (!heap) continue;
-    const uint64_t end = uint64_t(heap->heap_base()) + heap->heap_size();
-    uint64_t address = std::max<uint64_t>(heap->heap_base(), heap_base == 0 ? 0x00100000u : 0);
-    while (address < end) {
-      rex::memory::HeapAllocationInfo info{};
-      if (!heap->QueryRegionInfo(uint32_t(address), &info) || info.region_size == 0) break;
-      const uint64_t next = uint64_t(info.base_address) + info.region_size;
-      const bool committed = (info.state & rex::memory::kMemoryAllocationCommit) != 0;
-      const bool writable = (info.protect & rex::memory::kMemoryProtectWrite) != 0;
-      if (committed && (writable || !writable_only)) {
-        if (!out.empty() && out.back().heap == heap_base && out.back().end == info.base_address &&
-            out.back().protect == info.protect) {
-          out.back().end = uint32_t(next);
-        } else {
-          out.push_back({heap_base, info.base_address, uint32_t(next), info.protect});
-        }
-      }
-      if (next <= address) break;
-      address = next;
-    }
-  }
-  return out;
-}
+// The committed regions of the guest heaps (guest_memory.h). The first MB of v00000000 holds the store cards
+// (tools/store_cards.py), not game state, and is left out.
+using guest::CommittedRegions;
+using guest::Region;
 
 void DumpMemMap() {
   const auto regions = CommittedRegions(false);
@@ -553,6 +524,7 @@ uint64_t CurrentFrame() { return g_frame; }
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
   mk9::online::FrameBegin(base);
+  mk9::snapshot::OnFrame(ctx, base, mk9::online::CurrentFrame());
   mk9::netplay::OnFrame(base, mk9::online::CurrentFrame());
   uint32_t seed = 0;
   if (mk9::netplay::TakeSessionSeed(&seed) ||
@@ -596,21 +568,52 @@ REX_HOOK_RAW(sub_829CE600) {
   ctx.r3.u64 = mk9::netplay::Busy(mk9::netplay::kBusyMovie, ctx.r3.u32);
 }
 
-// The scripts' last wait before a fight starts (native 824a5268: an object found by name, then sub_82A30588 asks the
-// world and the object whether the scene is ready; its answer in the VM's result register): ready on each machine's
-// own clock, so in a session the game sees it ready once both machines are (netplay.h, Ready).
+namespace mk9::online {
+namespace {
+
+// A script native that waits on something ending on each machine's own clock just ran: its answer, in the VM's result
+// register, becomes the one both machines agree on (netplay.h, Ready). busy_style: the native says nonzero while not
+// done yet (else nonzero once ready).
+void AgreeOnNativeResult(uint8_t* base, netplay::ReadyFlag flag, bool busy_style) {
+  const uint32_t vm = Load32(base, kScriptVm);
+  if (!GuestPointer(vm)) return;
+  const uint32_t local = Load32(base, vm + 28);
+  uint32_t agreed;
+  if (busy_style) {
+    agreed = netplay::Ready(flag, local == 0 ? 1u : 0u) ? 0u : (local ? local : 1u);
+  } else {
+    agreed = netplay::Ready(flag, local);
+  }
+  uint8_t* result = base + vm + 28;
+  result[0] = uint8_t(agreed >> 24);
+  result[1] = uint8_t(agreed >> 16);
+  result[2] = uint8_t(agreed >> 8);
+  result[3] = uint8_t(agreed);
+}
+
+}  // namespace
+}  // namespace mk9::online
+
+// The scripts' waits that end on each machine's own clock (in a session the game sees them end once they have on both
+// machines): native 824a56d0, sub_82A311D8 on a thing found by name, the gate from the Versus selection to the fight
+// mode (nonzero = ready); native 824a5268, an object found by name, then sub_82A30588 asks the world and the object
+// whether the scene is ready, the last wait before a fight starts (nonzero = ready); native 8247bf38, sub_82A2EAB8: the
+// engine's streaming still busy (the manager at 0x8341ECF4 behind what the level wants, or another manager's busy
+// check; nonzero = busy).
+extern "C" REX_FUNC(__imp__sub_824A56D0);
+REX_HOOK_RAW(sub_824A56D0) {
+  __imp__sub_824A56D0(ctx, base);
+  mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyModeGate, false);
+}
 extern "C" REX_FUNC(__imp__sub_824A5268);
 REX_HOOK_RAW(sub_824A5268) {
   __imp__sub_824A5268(ctx, base);
-  const uint32_t vm = mk9::online::Load32(base, mk9::online::kScriptVm);
-  if (mk9::online::GuestPointer(vm)) {
-    uint8_t* result = base + vm + 28;
-    const uint32_t ready = mk9::netplay::Ready(mk9::netplay::kReadyScene, mk9::online::Load32(base, vm + 28));
-    result[0] = uint8_t(ready >> 24);
-    result[1] = uint8_t(ready >> 16);
-    result[2] = uint8_t(ready >> 8);
-    result[3] = uint8_t(ready);
-  }
+  mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyScene, false);
+}
+extern "C" REX_FUNC(__imp__sub_8247BF38);
+REX_HOOK_RAW(sub_8247BF38) {
+  __imp__sub_8247BF38(ctx, base);
+  mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyStreaming, true);
 }
 
 // The MKO VM's native call: the native's address is in the bytecode after the instruction (mk9_native_log).

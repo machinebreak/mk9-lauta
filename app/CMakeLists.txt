@@ -92,6 +92,8 @@ set(MK9_SOURCES
     src/online/net_udp.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
+    src/online/guest_memory.cpp
+    src/online/snapshot.cpp
     src/online/seed.cpp
 )
 if(NOT REXGLUE_PLATFORM_SWITCH)

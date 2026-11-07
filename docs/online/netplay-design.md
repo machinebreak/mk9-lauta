@@ -63,8 +63,11 @@ cinco corridas de cinco. Lo que hizo falta, en orden de aparición:
    la pelea: 13 vaciados, 37 paquetes, 663 ms en total, el más largo 142 ms).
 3. **Películas** (Bink): duran tiempo real. `IsMoviePlaying` viaja como bandera "ocupado" con las entradas: el juego
    la ve terminar cuando terminó en las dos máquinas (`Busy`).
-4. **"La escena está lista"** (nativa `824a5268`): bandera "listo" por consenso: el juego la ve lista sólo cuando las
-   dos máquinas dijeron listo en el cuadro anterior a la salida de las entradas (`Ready`, ~3 cuadros de espera).
+4. **Esperas de los scripts que terminan con el reloj de cada máquina**: bandera "listo" por consenso (`Ready`): el
+   juego la ve terminada sólo cuando las dos máquinas dijeron terminada en el cuadro anterior a la salida de las
+   entradas (~3 cuadros de espera). Hoy: `824a56d0` (la compuerta de la selección del Versus al modo pelea),
+   `8247bf38` (streaming del motor ocupado) y `824a5268` (la escena lista, la última antes de la pelea).
+   `AgreeOnNativeResult` en `mk9_capture.cpp` hace una nueva con dos líneas.
 5. **Barrera al empezar la pelea** (`Barrier`, nativa `82495660`): nueva época de la sesión, resiembra y cuenta de
    cuadros desde 0; si una máquina llega antes espera a la otra, que sigue con mandos neutros. Es el lugar del
    `GAME_START_GO_REQUEST` del online de NRS; con lo anterior las dos llegan en el mismo cuadro.
@@ -77,5 +80,15 @@ Herramientas para encontrar la próxima fuente de diferencia: `mk9_rand_log` (ca
 script que arranca el C++), `mk9_native_log` + `mk9_native_log_frames` (nativas de una ventana de cuadros con su
 resultado: la primera que da distinto en las dos máquinas es la culpable), `tools/online/func_strings.py`.
 
-Pendiente: la sesión de verdad no empieza en el arranque sino en un menú (las dos máquinas con historias distintas):
-barrera al entrar a la selección del versus; probar con dos personas apretando; Tag; peleas largas.
+**Versus de dos jugadores (2026-11-07):** el menú principal pasa a "2 PLAYERS" con RB; el jugador 2 se une con START
+estando ya en ese menú (antes, VERSUS MODE está en negro) y el cursor salta solo a VERSUS MODE; cada uno elige con A.
+`tools/online/fight_script.py` arma los guiones (menú + pelea con golpes, bloqueos y saltos) y
+`tools/online/hunt.ps1` repite la prueba hasta que algo se separe y guarda los registros. 8 de 8 corridas de un Versus
+con los dos pegándose (~35 s de pelea cada una) sin una diferencia.
+
+**Sesión desde el arranque:** como el determinismo vale desde el cuadro 1, el modelo más simple y robusto es que cada
+partida online arranque el juego ya conectado (como los ports de Tekken): el lobby arregla la partida, el juego se
+relanza en sesión con un perfil neutro (los guardados de cada uno tienen desbloqueos distintos) y los dos menús
+avanzan juntos. Sumar a una sesión a mitad de partida exigiría dos estados iguales, que no hay.
+
+Pendiente: perfil neutro; saltear la intro; ir solo hasta la selección del Versus; Tag; peleas largas y revancha.
