@@ -41,6 +41,19 @@ uint32_t Busy(BusyFlag flag, uint32_t local);
 // the session runs, it reads ready only once both machines' polls said ready in the frame before this frame's inputs
 // left (s - delay - 1), and not ready otherwise: the same on both.
 uint32_t Ready(ReadyFlag flag, uint32_t local);
+// The game is about to do something a rollback cannot undo, outside the simulation's memory (game thread, during a
+// frame; what: for the log), such as the music changing tracks. In a fight with rollback the frame first waits for the
+// other player's inputs up to it. True: every frame so far ran on the right inputs, so no rollback will run this one
+// again (go ahead); false: one of them ran on a wrong prediction and this frame will be run again (leave the action to
+// the corrected run). Anywhere else: true.
+bool ConfirmFrame(const char* what);
+// The game asks for a package to load (UObject::LoadPackageAsync; game thread, during a frame). In a fight with
+// rollback that only happens once the fight is decided (FINISH HIM's FatalityArt, the victory, the menus after it),
+// and what follows (loads, saves, the sound's teardown, the music) cannot be undone: once the frame is confirmed the
+// rest of the epoch goes on in lockstep, as after the fight's mode ends. True: go ahead; false: the frame ran on a
+// wrong prediction and will be run again, so the load is left to the corrected run (nothing in the frame waits for an
+// asynchronous load).
+bool AboutToLoad();
 // A barrier both machines reach (game thread, during a frame; what: for the log): the generators are reseeded on the
 // spot with the next epoch's seed, and the next frame boundary waits for the other machine (netplay.cpp).
 void Barrier(uint8_t* base, const char* what);

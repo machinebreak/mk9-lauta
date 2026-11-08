@@ -37,7 +37,7 @@ namespace {
 
 constexpr uint32_t kThreadPool = 0x8341FC5C;        // GThreadPool: UE3's FQueuedThreadPoolWin*
 constexpr uint32_t kSceneQueryVtable = 0x82275948;  // PhysX's NxSceneQuery implementation
-constexpr size_t kMaxQueries = 64;
+constexpr size_t kMaxQueries = 256;
 
 using Clock = std::chrono::steady_clock;
 
@@ -268,12 +268,21 @@ void NotePoolThread(uint32_t pool, uint32_t thread) {
   }
 }
 
-void NoteSceneQuery(uint32_t query) {
+void NoteSceneQuery(const uint8_t* base, uint32_t query) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (std::find(g_queries.begin(), g_queries.end(), query) != g_queries.end()) return;
-  if (g_queries.size() >= kMaxQueries) return;
+  // The game makes new query objects as fights and rounds go (and frees the old ones): one that is no longer a scene
+  // query is forgotten, and a full list gives up its oldest. A query left out would keep its batch going across a
+  // boundary, and a rollback to that boundary would leave the render thread waiting for a batch PhysX already ran.
+  if (g_queries.size() >= kMaxQueries) {
+    g_queries.erase(std::remove_if(g_queries.begin(), g_queries.end(),
+                                   [&](uint32_t q) { return Load32(base, q) != kSceneQueryVtable; }),
+                    g_queries.end());
+  }
+  if (g_queries.size() >= kMaxQueries) g_queries.erase(g_queries.begin());
   g_queries.push_back(query);
-  if (g_queries.size() <= 8) REXLOG_INFO("[settle] scene query {:08X} runs batches", query);
+  ++g_stats.queries_seen;
+  if (g_stats.queries_seen <= 8) REXLOG_INFO("[settle] scene query {:08X} runs batches", query);
 }
 
 }  // namespace mk9::quiesce

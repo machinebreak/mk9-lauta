@@ -80,6 +80,9 @@ $g = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -WindowStyle 
 $h.WaitForExit($Seconds * 1000) | Out-Null
 foreach ($p in @($h, $g)) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 foreach ($p in @($h, $g)) { $p.WaitForExit(20000) | Out-Null }
+# a room session that ended starts the game again by itself (back to the lobby): those go too
+Get-CimInstance Win32_Process -Filter "Name='mk9.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -eq $exe } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 
 foreach ($role in 'host', 'guest') {
     $log = Join-Path $dir "logs\pair_$role.log"

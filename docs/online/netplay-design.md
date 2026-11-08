@@ -203,6 +203,43 @@ corrida arrancó y la corregida ya no, se para con su fade (antes se le saca el 
 marcaría la fuente que esté en esa dirección). Con 40 ms de lag + jitter: 68 y 37 sonidos que antes se duplicaban
 siguen sonando una sola vez; 30 y 7 nuevos de la corrida corregida; sin desync.
 
+### Partidas enteras: rounds, REMATCH, otro luchador (2026-11-08)
+
+Las pruebas cortaban a mitad del primer round. Con partidas enteras (el host pega sin parar, el invitado pierde cada
+round por KO; 30 ms de lag + 8 de jitter; `out/f3/make_rounds.py`), después de la pantalla CONTINUE? aparecieron
+cuatro problemas, todos del mismo tipo: algo de afuera de la simulación tocando la memoria que el rollback restaura.
+
+1. **Consultas de PhysX sin rastrear.** El reposo del borde recoge los lotes de raycasts pendientes de las consultas
+   que vio ejecutarse, pero la lista tenía un tope de 64 y nunca soltaba las viejas: el juego crea consultas nuevas en
+   cada pelea y cada round (170 en tres peleas). Una nueva sin rastrear dejaba su lote en vuelo a través del borde, y
+   un rollback a ese borde dejaba al hilo de render esperando un lote que PhysX ya había corrido (`finish(true)`,
+   `sub_830AACC0`, colgado). Ahora las que ya no son consultas se olvidan y la lista llena suelta la más vieja.
+2. **El streaming de FMOD por la E/S asíncrona del juego.** La música y las voces se leen de bancos dentro de los
+   paquetes con un archivo de UE3 (vtable `0x82072390`) cuya lectura (`sub_82604168`) encola el pedido en
+   `GAsyncIOSystem` (memoria del juego) y espera un contador en la pila de FMOD. Un rollback con un pedido en la cola
+   se lo llevaba: el stream quedaba ocupado para siempre y el cambio de música de CONTINUE esperaba en FMOD
+   (`sub_82DE7740`). Ahora esas lecturas son del host: el paquete mapeado (`game:\Asset\...`), en el offset del bulk
+   data (`sub_8305EC00`) más la posición, que el host guarda por archivo (`sound_stream.cpp`,
+   `mk9_sound_stream_host`).
+3. **La memoria física de FMOD y XAudio2 en el heap del juego.** Sus buffers XMA (70 KB, 67 KB y 11 KB por stream que
+   se abre, pedidos desde el hilo de streams de FMOD, que corre durante el park) salían del pool físico de GMalloc, cuyo
+   spin lock (`0x83424440`, dueño = id de hilo) y listas están en la memoria de la simulación. Un hilo de sonido
+   tomándolo mientras se guardaba o restauraba un cuadro dejó el lock "tomado" para siempre (el hilo del juego girando
+   en `sub_829AFC48`). Ahora tienen un arena físico propio de 48 MB (el tope del heap físico de 4 KB), afuera del
+   rollback, como el virtual.
+4. **Lo irreversible del final de la pelea.** Con el KO final empiezan las cargas (`FatalityArt` en el FINISH HIM,
+   `<Luchador>_Victory`, el ícono de guardado: **guarda el perfil**, la pantalla de carga y los sonidos del menú), los
+   cambios de música y el desarme de los sonidos: nada de eso se puede deshacer, y un cuadro re-ejecutado lo repetía
+   (o, si se lo salteaba, rompía el resto del cuadro). Como en los otros juegos con rollback, el final va en lockstep:
+   la primera carga de paquete en una pelea con rollback (`LoadPackageAsync`, `sub_82730F70`; en el combate en sí no
+   hay: los X-rays vienen en el paquete del luchador) espera a que el cuadro esté confirmado y pasa el resto de la época
+   a lockstep, como un cambio de modo (`netplay::AboutToLoad`); si el cuadro estaba condenado, la carga queda para la
+   corrida corregida (es asíncrona: nada en el cuadro la espera). El cambio de música también espera la confirmación
+   (`ConfirmFrame`).
+
+Resultado: tres peleas seguidas con REMATCH y SELECT A NEW FIGHTER, 184, 368 y 706 rollbacks del lado del invitado,
+sin cuelgues, sin desync, sin crashes; el final de cada pelea en lockstep desde el FINISH HIM.
+
 ### El borde en reposo y los fps (2026-11-08)
 
 El `[net]` dice "at rest ~12 ms a boundary (render ~12)": casi todo es la espera del vblank. El hilo de render de UE3

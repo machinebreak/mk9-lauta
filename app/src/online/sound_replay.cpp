@@ -12,6 +12,10 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 
+#include "online/netplay.h"
+
+REXCVAR_DEFINE_BOOL(mk9_music_confirm, true, "MK9 Online",
+                    "In a fight with rollback the music changes tracks once the frame's inputs are confirmed");
 REXCVAR_DEFINE_BOOL(mk9_sound_replay, true, "MK9 Online",
                     "Frames a rollback runs again keep the sounds their first run started instead of starting them "
                     "again (sound_replay.h)");
@@ -158,4 +162,17 @@ REX_HOOK_RAW(sub_82E46DE8) {
   }
   __imp__sub_82E46DE8(ctx, base);
   starts.push_back({event, true});
+}
+
+// The music changing tracks (sub_8245E7F8: the music object and the track's index 0-5; it fades the track playing out
+// and has FMOD stop its stream and open the next one, sub_82A352C0 and sub_8260C268). FMOD's streams are outside the
+// rollback: a frame run again would change the music once more. In a fight with rollback the frame first waits for the
+// other player's inputs up to it (netplay.h, ConfirmFrame), so the change is nearly always in a frame no rollback will
+// run again. It goes ahead either way: leaving it out of a frame that will be run again broke the rest of that frame
+// (the game read through what it had not set up), and the sounds a corrected run no longer starts are stopped anyway.
+extern "C" REX_FUNC(__imp__sub_8245E7F8);
+REX_HOOK_RAW(sub_8245E7F8) {
+  static const bool confirm = REXCVAR_GET(mk9_music_confirm);
+  if (confirm) mk9::netplay::ConfirmFrame("the music changes");
+  __imp__sub_8245E7F8(ctx, base);
 }

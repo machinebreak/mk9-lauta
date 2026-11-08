@@ -193,6 +193,7 @@ struct Session {
   double rtt_ms = 0, wait_ms_window = 0, wait_ms_max = 0;
   uint64_t frames_window = 0, stalls_window = 0, sent = 0, received = 0;
   uint64_t rollbacks = 0, resimulated = 0, max_depth = 0, predicted = 0, mispredicted = 0, syncs_slept = 0;
+  uint64_t confirms = 0, confirms_doomed = 0;  // ConfirmFrame: actions a rollback cannot undo, and those left to a rerun
   double ms_keep = 0, ms_restore = 0;
   uint64_t keeps = 0;
 };
@@ -756,7 +757,7 @@ void LogStats() {
       rb = fmt::format("; rollback{}: {} rollbacks ({} frames run again, deepest {}), {} frames predicted, {} wrong; "
                        "keeping a frame {:.2f} ms, a rollback's restore {:.2f} ms; at rest {:.2f} ms a boundary "
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
-                       "batches collected, {} pool waits); advantage {:.1f}, {} sleeps",
+                       "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
                        g.rollbacks ? g.ms_restore / double(g.rollbacks) : 0.0,
@@ -764,14 +765,22 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.pool_waits, g.advantage, g.syncs_slept);
+                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept);
     }
     const sound::HeapStats sound = sound::Stats();
     const sound_replay::Stats sounds = sound_replay::GetStats();
-    rb += fmt::format("; sound's arena {:.1f} MB in use (peak {:.1f}), {} blocks; sounds started {}, in frames run "
-                      "again {} kept playing ({} instances given back), {} new, {} stopped",
-                      sound.in_use / 1048576.0, sound.peak / 1048576.0, sound.blocks, sounds.starts_live,
+    rb += fmt::format("; sound's arena {:.1f} MB in use (peak {:.1f}), {} blocks, physical {:.1f} MB (peak {:.1f}"
+                      "{}); sounds started {}, in frames run again {} kept playing ({} instances given back), {} new, "
+                      "{} stopped",
+                      sound.in_use / 1048576.0, sound.peak / 1048576.0, sound.blocks,
+                      sound.physical_in_use / 1048576.0, sound.physical_peak / 1048576.0,
+                      sound.physical_failed ? fmt::format(", {} did not fit", sound.physical_failed) : "",
+                      sounds.starts_live,
                       sounds.starts_skipped, sounds.pops_replayed, sounds.starts_new, sounds.stopped);
+    if (g.confirms) {
+      rb += fmt::format("; {} action(s) a rollback cannot undo, {} left to a corrected run", g.confirms,
+                        g.confirms_doomed);
+    }
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
                 "longest {:.1f} ms), peer inputs to {}; sent {}, received {}{}{}",
                 g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
@@ -1011,6 +1020,41 @@ uint32_t Ready(ReadyFlag flag, uint32_t local) {
     g.ready_value[bit] = local;
   }
   return (g.frame_ready & flag) ? (g.ready_value[bit] ? g.ready_value[bit] : 1u) : 0u;
+}
+
+bool ConfirmFrame(const char* what) {
+  if (!g.started || g.ended || g.failed || !g.rollback || std::this_thread::get_id() != g.game_thread) return true;
+  const int64_t frame = g.frame - 1;  // the frame running
+  if (frame < 0) return true;
+  const bool waited = g.remote_upto < frame;
+  WaitFor([&] {
+    Receive();
+    return g.remote_upto >= frame;
+  });
+  if (g.ended) return true;  // the session is over: the game goes on alone
+  const bool doomed = g.rollback_to >= 0 && g.rollback_to <= frame;
+  ++g.confirms;
+  if (doomed) ++g.confirms_doomed;
+  if (g.confirms <= 20) {
+    REXLOG_INFO("[net] {} at frame {}{}: {}", what, frame, waited ? " (waited for the other player's inputs)" : "",
+                doomed ? "a prediction was wrong, this frame will be run again" : "confirmed");
+  }
+  return !doomed;
+}
+
+bool AboutToLoad() {
+  if (!g.started || g.ended || g.failed || !g.rollback || !g.speculating ||
+      std::this_thread::get_id() != g.game_thread) {
+    return true;
+  }
+  if (!ConfirmFrame("a package loads")) return false;
+  // the rest of the epoch in lockstep, from the frame after this one (RollbackFrame, as a mode change)
+  const int64_t frame = g.frame - 1;
+  if (g.mode_change_at < 0 || g.mode_change_at > frame) {
+    g.mode_change_at = frame;
+    REXLOG_INFO("[net] a package loads at frame {}: the fight is over, lockstep from here", frame);
+  }
+  return true;
 }
 
 void Barrier(uint8_t* base, const char* what) {

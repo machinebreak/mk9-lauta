@@ -8,6 +8,9 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+#include <rex/hook.h>
+
+#include "online/netplay.h"
 
 REXCVAR_DEFINE_BOOL(mk9_flush_loads, false, "MK9 Online",
                     "Finish the game's pending package loads at the start of each frame, so they end at the same frame "
@@ -49,3 +52,12 @@ void FlushPending(PPCContext& ctx, uint8_t* base) {
 }
 
 }  // namespace mk9::loading
+
+// UObject::LoadPackageAsync (r3 the package's name, an FString; r4 the completion callback, r5 its data, r6 a GUID
+// or null): in a fight with rollback a load means the fight is decided, and the rest of the epoch goes on in lockstep
+// (netplay.h, AboutToLoad); a frame that will be run again leaves the load to its corrected run.
+extern "C" REX_FUNC(__imp__sub_82730F70);
+REX_HOOK_RAW(sub_82730F70) {
+  if (!mk9::netplay::AboutToLoad()) return;
+  __imp__sub_82730F70(ctx, base);
+}

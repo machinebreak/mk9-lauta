@@ -39,6 +39,7 @@ void Release();
 
 struct Stats {
   uint64_t settles = 0, unparked = 0, collected = 0, pool_waits = 0;
+  uint64_t queries_seen = 0;  // scene query objects that ran a batch (the game makes new ones as it goes)
   double ms_total = 0, ms_max = 0;
   double ms_flush = 0, ms_drain = 0, ms_park = 0;  // the parts: the render thread, the pools and queries, the park
 };
@@ -47,6 +48,6 @@ Stats Totals();
 // The hooks (mk9_capture.cpp; any thread): a pool's thread handing back its work (sub_827798D8: pool, thread), and a
 // scene query batch started (NxSceneQuery::execute, sub_830AC338: the query object).
 void NotePoolThread(uint32_t pool, uint32_t thread);
-void NoteSceneQuery(uint32_t query);
+void NoteSceneQuery(const uint8_t* base, uint32_t query);
 
 }  // namespace mk9::quiesce

@@ -7,6 +7,7 @@
 #include "online/sound_memory.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -31,11 +32,17 @@ namespace {
 
 constexpr uint32_t kArenaStart = 0x7B000000;  // the top of the stack range (the SDK's stacks start at 0x70000000)
 constexpr uint32_t kArenaSize = 0x04000000;   // 64 MB: FMOD caps itself at 27 MB (its MemPool's limit, 0x1B00000)
+constexpr uint32_t kPhysicalArenaSize = 0x03000000;  // 48 MB of physical memory: FMOD's XMA buffers and XAudio2's
 constexpr uint32_t kPhysical = 0x00100000;    // FMOD_MEMORY_XBOX360_PHYSICAL
 constexpr uint32_t kGranule = 16;
+constexpr uint32_t kPhysicalAlign = 4096;     // XMA's buffers: a page
 
 class Arena {
  public:
+  // physical: the range comes from the SDK's physical heap (4 KB pages) when first needed; else the fixed virtual
+  // range kArenaStart.
+  explicit Arena(bool physical) : physical_(physical) {}
+
   uint32_t Alloc(uint32_t size, uint32_t align = 0) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!Ready()) return 0;
@@ -101,7 +108,7 @@ class Arena {
     return true;
   }
 
-  bool Contains(uint32_t address) const { return address >= kArenaStart && address < kArenaStart + kArenaSize; }
+  bool Contains(uint32_t address) const { return ready_ && address >= start_ && address - start_ < size_; }
 
   HeapStats Stats() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -113,20 +120,37 @@ class Arena {
     if (ready_ || tried_) return ready_;
     tried_ = true;
     auto* memory = rex::system::kernel_memory();
-    auto* heap = memory ? memory->LookupHeap(kArenaStart) : nullptr;
-    if (!heap || !heap->AllocFixed(kArenaStart, kArenaSize, 0x10000,
-                                   rex::memory::kMemoryAllocationReserve | rex::memory::kMemoryAllocationCommit,
-                                   rex::memory::kMemoryProtectRead | rex::memory::kMemoryProtectWrite)) {
-      REXLOG_ERROR("[sound] FMOD's arena {:08X}-{:08X} could not be committed: FMOD stays in the game's heap",
-                   kArenaStart, kArenaStart + kArenaSize);
+    const uint32_t type = rex::memory::kMemoryAllocationReserve | rex::memory::kMemoryAllocationCommit;
+    const uint32_t protect = rex::memory::kMemoryProtectRead | rex::memory::kMemoryProtectWrite;
+    uint32_t start = 0, size = 0;
+    if (physical_) {
+      // the physical heap's top, as the kernel's physical allocations do (not the game's heap's: GMalloc's physical
+      // pool keeps its books in the simulation's memory)
+      size = kPhysicalArenaSize;
+      auto* heap = memory ? memory->LookupHeapByType(true, 4096) : nullptr;
+      if (heap && !heap->AllocRange(heap->heap_base(), heap->heap_base() + heap->heap_size() - 1, size, 0x10000, type,
+                                    protect, true, &start)) {
+        start = 0;
+      }
+    } else {
+      start = kArenaStart;
+      size = kArenaSize;
+      auto* heap = memory ? memory->LookupHeap(kArenaStart) : nullptr;
+      if (!heap || !heap->AllocFixed(kArenaStart, kArenaSize, 0x10000, type, protect)) start = 0;
+    }
+    if (!start) {
+      REXLOG_ERROR("[sound] the sound's {} arena ({} MB) could not be committed: it stays in the game's heap",
+                   physical_ ? "physical" : "virtual", size >> 20);
       return false;
     }
-    Insert(kArenaStart, kArenaSize);
-    stats_.arena_start = kArenaStart;
-    stats_.arena_size = kArenaSize;
+    start_ = start;
+    size_ = size;
+    Insert(start, size);
+    stats_.arena_start = start;
+    stats_.arena_size = size;
     ready_ = true;
-    REXLOG_INFO("[sound] FMOD's memory: an arena of its own at {:08X}-{:08X}, out of the rollback's ranges",
-                kArenaStart, kArenaStart + kArenaSize);
+    REXLOG_INFO("[sound] the sound's {} memory: an arena of its own at {:08X}-{:08X}, out of the rollback's reach",
+                physical_ ? "physical" : "virtual", start, start + size);
     return true;
   }
 
@@ -147,14 +171,20 @@ class Arena {
   }
 
   std::mutex mutex_;
-  bool ready_ = false, tried_ = false;
+  const bool physical_;
+  std::atomic<bool> ready_{false};
+  bool tried_ = false;
+  uint32_t start_ = 0, size_ = 0;
   std::map<uint32_t, uint32_t> free_;            // start -> size
   std::multimap<uint32_t, uint32_t> by_size_;    // size -> start
   std::unordered_map<uint32_t, uint32_t> used_;  // start -> size
   HeapStats stats_;
 };
 
-Arena g_arena;
+Arena g_arena(false);
+Arena g_physical(true);  // FMOD's and XAudio2's physical memory (it went to GMalloc's physical pool, whose lock and
+                         // lists are the simulation's: a sound thread taking it while a boundary parks the game, or a
+                         // rollback restoring it under them, left the allocator's spin lock held for good)
 
 }  // namespace
 
@@ -177,19 +207,29 @@ std::vector<std::pair<uint32_t, uint32_t>> UntrackedRanges() {
   return ranges;
 }
 
-HeapStats Stats() { return g_arena.Stats(); }
+HeapStats Stats() {
+  HeapStats stats = g_arena.Stats();
+  const HeapStats physical = g_physical.Stats();
+  stats.physical_in_use = physical.in_use;
+  stats.physical_peak = physical.peak;
+  stats.physical_failed = physical.failed;
+  return stats;
+}
 
 }  // namespace mk9::sound
 
-// FMOD's memory callbacks (sound_memory.h): the arena for its virtual memory, GMalloc's physical memory as before.
+// FMOD's memory callbacks (sound_memory.h): its virtual memory from the arena, its physical memory (XMA buffers,
+// allocated by its streams' thread too) from the physical arena.
 extern "C" REX_FUNC(__imp__sub_8258DBC8);
 REX_HOOK_RAW(sub_8258DBC8) {
   const uint32_t size = ctx.r3.u32, type = ctx.r4.u32;
-  if (!mk9::sound::Apart() || (type & mk9::sound::kPhysical)) {
+  if (!mk9::sound::Apart()) {
     __imp__sub_8258DBC8(ctx, base);
     return;
   }
-  const uint32_t block = mk9::sound::g_arena.Alloc(size);
+  const bool physical = (type & mk9::sound::kPhysical) != 0;
+  const uint32_t block = physical ? mk9::sound::g_physical.Alloc(size, mk9::sound::kPhysicalAlign)
+                                  : mk9::sound::g_arena.Alloc(size);
   if (!block) {
     __imp__sub_8258DBC8(ctx, base);  // the arena is full or missing: the game's heap, as before
     return;
@@ -200,13 +240,14 @@ REX_HOOK_RAW(sub_8258DBC8) {
 extern "C" REX_FUNC(__imp__sub_8258DC08);
 REX_HOOK_RAW(sub_8258DC08) {
   const uint32_t block = ctx.r3.u32, size = ctx.r4.u32, type = ctx.r5.u32;
-  auto& arena = mk9::sound::g_arena;
-  if (!mk9::sound::Apart() || (type & mk9::sound::kPhysical) || (block && !arena.Contains(block))) {
+  const bool physical = (type & mk9::sound::kPhysical) != 0;
+  auto& arena = physical ? mk9::sound::g_physical : mk9::sound::g_arena;
+  if (!mk9::sound::Apart() || (block && !arena.Contains(block))) {
     __imp__sub_8258DC08(ctx, base);
     return;
   }
   const uint32_t old_size = block ? arena.SizeOf(block) : 0;
-  const uint32_t fresh = size ? arena.Alloc(size) : 0;
+  const uint32_t fresh = size ? arena.Alloc(size, physical ? mk9::sound::kPhysicalAlign : 0) : 0;
   if (size && !fresh) {
     if (!block) {
       __imp__sub_8258DC08(ctx, base);  // a new block with no arena room: the game's heap, as before
@@ -215,7 +256,9 @@ REX_HOOK_RAW(sub_8258DC08) {
     }
     return;
   }
-  if (fresh && old_size) std::memcpy(base + fresh, base + block, std::min(old_size, size));
+  if (fresh && old_size) {
+    std::memcpy(rex::memory::GuestPtr(base, fresh), rex::memory::GuestPtr(base, block), std::min(old_size, size));
+  }
   if (block) arena.Free(block);
   ctx.r3.u64 = fresh;
 }
@@ -223,8 +266,9 @@ REX_HOOK_RAW(sub_8258DC08) {
 extern "C" REX_FUNC(__imp__sub_8258DCA0);
 REX_HOOK_RAW(sub_8258DCA0) {
   const uint32_t block = ctx.r3.u32, type = ctx.r4.u32;
-  if (!(type & mk9::sound::kPhysical) && mk9::sound::g_arena.Contains(block)) {
-    mk9::sound::g_arena.Free(block);
+  auto& arena = (type & mk9::sound::kPhysical) ? mk9::sound::g_physical : mk9::sound::g_arena;
+  if (arena.Contains(block)) {
+    arena.Free(block);
     return;
   }
   __imp__sub_8258DCA0(ctx, base);
@@ -235,26 +279,28 @@ REX_HOOK_RAW(sub_8258DCA0) {
 namespace mk9::sound {
 namespace {
 constexpr uint32_t kXAudio2 = 0x97;
-bool XAudio2Virtual(uint32_t attributes) {
-  return ((attributes >> 16) & 0xFF) == kXAudio2 && !(attributes & 0x80000000u);
-}
+bool XAudio2Block(uint32_t attributes) { return ((attributes >> 16) & 0xFF) == kXAudio2; }
+bool XAudio2Physical(uint32_t attributes) { return (attributes & 0x80000000u) != 0; }
 }  // namespace
 }  // namespace mk9::sound
 
 extern "C" REX_FUNC(__imp__sub_823667D8);
 REX_HOOK_RAW(sub_823667D8) {
   const uint32_t size = ctx.r3.u32, attributes = ctx.r4.u32;
-  if (!mk9::sound::Apart() || !mk9::sound::XAudio2Virtual(attributes)) {
+  if (!mk9::sound::Apart() || !mk9::sound::XAudio2Block(attributes)) {
     __imp__sub_823667D8(ctx, base);
     return;
   }
   const uint32_t code = (attributes >> 24) & 0xF;
-  const uint32_t block = mk9::sound::g_arena.Alloc(size, code > 4 ? 1u << code : 16u);
+  const uint32_t align = code > 4 ? 1u << code : 16u;
+  const bool physical = mk9::sound::XAudio2Physical(attributes);
+  const uint32_t block = physical ? mk9::sound::g_physical.Alloc(size, std::max(align, mk9::sound::kPhysicalAlign))
+                                  : mk9::sound::g_arena.Alloc(size, align);
   if (!block) {
     __imp__sub_823667D8(ctx, base);
     return;
   }
-  if (attributes & 0x40000000u) std::memset(base + block, 0, size);  // XALLOC_ZEROINITIALIZE
+  if (attributes & 0x40000000u) std::memset(rex::memory::GuestPtr(base, block), 0, size);  // XALLOC_ZEROINITIALIZE
   ctx.r3.u64 = block;
 }
 
@@ -262,6 +308,10 @@ extern "C" REX_FUNC(__imp__sub_823667E0);
 REX_HOOK_RAW(sub_823667E0) {
   if (mk9::sound::Apart() && mk9::sound::g_arena.Contains(ctx.r3.u32)) {
     mk9::sound::g_arena.Free(ctx.r3.u32);
+    return;
+  }
+  if (mk9::sound::Apart() && mk9::sound::g_physical.Contains(ctx.r3.u32)) {
+    mk9::sound::g_physical.Free(ctx.r3.u32);
     return;
   }
   __imp__sub_823667E0(ctx, base);

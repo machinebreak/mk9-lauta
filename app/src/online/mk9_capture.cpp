@@ -577,7 +577,7 @@ REX_HOOK_RAW(sub_827798D8) {
 }
 extern "C" REX_FUNC(__imp__sub_830AC338);
 REX_HOOK_RAW(sub_830AC338) {
-  mk9::quiesce::NoteSceneQuery(ctx.r3.u32);
+  mk9::quiesce::NoteSceneQuery(base, ctx.r3.u32);
   __imp__sub_830AC338(ctx, base);
 }
 

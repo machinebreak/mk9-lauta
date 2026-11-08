@@ -42,6 +42,7 @@ std::vector<std::pair<uint32_t, uint32_t>> UntrackedRanges();
 struct HeapStats {
   uint32_t arena_start = 0, arena_size = 0;
   uint64_t in_use = 0, peak = 0, blocks = 0, allocs = 0, frees = 0, failed = 0;
+  uint64_t physical_in_use = 0, physical_peak = 0, physical_failed = 0;  // the physical arena's (Stats)
 };
 HeapStats Stats();
 
