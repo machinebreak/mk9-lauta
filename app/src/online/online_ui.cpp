@@ -413,12 +413,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##session_end", nullptr, flags)) {
+      ImGui::PushFont(nullptr, 30.0f);
       ImGui::TextColored(kGold, "Fin de la sesión");
+      ImGui::PopFont();
       ImGui::Spacing();
+      ImGui::PushFont(nullptr, 22.0f);
       ImGui::Text("%s", why.c_str());
+      ImGui::PopFont();
       ImGui::TextColored(kGrey, "Volvés al lobby en %d s.", left);
       ImGui::Spacing();
-      if (ImGui::Button("Volver al lobby ahora")) LeaveSession();
+      if (ImGui::Button("Volver al lobby ahora", ImVec2(260, 0))) LeaveSession();
     }
     ImGui::End();
   }

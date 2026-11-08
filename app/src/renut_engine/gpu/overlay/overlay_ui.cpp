@@ -496,6 +496,53 @@ bool Start(UIThreadRunner run_on_ui_thread) {
     io.BackendRendererName = "renut";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
     ImGui::StyleColorsDark();
+    {
+      // mk9-nx online (2026-11-08): the online screens' look: near-black panels, a dark red for what can be pressed and
+      // a gold for what is chosen, rounded corners
+      ImGuiStyle &style = ImGui::GetStyle();
+      style.WindowRounding = 8.0f;
+      style.ChildRounding = 6.0f;
+      style.FrameRounding = 5.0f;
+      style.PopupRounding = 6.0f;
+      style.TabRounding = 5.0f;
+      style.GrabRounding = 4.0f;
+      style.ScrollbarRounding = 6.0f;
+      style.WindowPadding = ImVec2(14.0f, 12.0f);
+      style.FramePadding = ImVec2(8.0f, 5.0f);
+      style.ItemSpacing = ImVec2(8.0f, 7.0f);
+      style.WindowBorderSize = 1.0f;
+      ImVec4 *c = style.Colors;
+      const ImVec4 red(0.55f, 0.08f, 0.07f, 1.0f), red_hover(0.72f, 0.12f, 0.10f, 1.0f), red_active(0.85f, 0.18f, 0.12f, 1.0f);
+      const ImVec4 gold(0.95f, 0.72f, 0.25f, 1.0f);
+      c[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.05f, 0.05f, 0.95f);
+      c[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.08f, 0.08f, 0.60f);
+      c[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.06f, 0.06f, 0.97f);
+      c[ImGuiCol_Border] = ImVec4(0.45f, 0.30f, 0.12f, 0.55f);
+      c[ImGuiCol_TitleBg] = ImVec4(0.22f, 0.04f, 0.04f, 1.0f);
+      c[ImGuiCol_TitleBgActive] = ImVec4(0.38f, 0.06f, 0.05f, 1.0f);
+      c[ImGuiCol_TitleBgCollapsed] = ImVec4(0.15f, 0.03f, 0.03f, 0.9f);
+      c[ImGuiCol_FrameBg] = ImVec4(0.16f, 0.11f, 0.10f, 1.0f);
+      c[ImGuiCol_FrameBgHovered] = ImVec4(0.26f, 0.15f, 0.12f, 1.0f);
+      c[ImGuiCol_FrameBgActive] = ImVec4(0.34f, 0.18f, 0.12f, 1.0f);
+      c[ImGuiCol_Button] = red;
+      c[ImGuiCol_ButtonHovered] = red_hover;
+      c[ImGuiCol_ButtonActive] = red_active;
+      c[ImGuiCol_Header] = ImVec4(0.40f, 0.10f, 0.08f, 0.85f);
+      c[ImGuiCol_HeaderHovered] = red_hover;
+      c[ImGuiCol_HeaderActive] = red_active;
+      c[ImGuiCol_Tab] = ImVec4(0.24f, 0.06f, 0.05f, 1.0f);
+      c[ImGuiCol_TabHovered] = red_hover;
+      c[ImGuiCol_TabSelected] = red;
+      c[ImGuiCol_TabSelectedOverline] = gold;
+      c[ImGuiCol_CheckMark] = gold;
+      c[ImGuiCol_SliderGrab] = gold;
+      c[ImGuiCol_SliderGrabActive] = ImVec4(1.0f, 0.82f, 0.40f, 1.0f);
+      c[ImGuiCol_Separator] = ImVec4(0.45f, 0.30f, 0.12f, 0.45f);
+      c[ImGuiCol_TableHeaderBg] = ImVec4(0.22f, 0.07f, 0.06f, 1.0f);
+      c[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 0.9f, 0.8f, 0.04f);
+      c[ImGuiCol_TextSelectedBg] = ImVec4(0.75f, 0.45f, 0.10f, 0.45f);
+      c[ImGuiCol_NavCursor] = gold;
+    }
     // mk9-nx online (2026-11-08): Windows' Segoe UI, whose glyphs ImGui takes as they are drawn (accents, eñes: the
     // online screens are in Spanish); ImGui's own font, ASCII only, where it is missing
     if (GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES)
