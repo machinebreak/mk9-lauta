@@ -11,11 +11,15 @@
 #include <chrono>
 #include <cstdint>
 
+#include <string>
+
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
 
 #include "sa2_capture.h"
+#include "renut_engine/gpu/sa2_renut_pacing.h"
 #include "renut_engine/gpu/sa2_renut_yield.h"
 
 REXCVAR_DEFINE_BOOL(mk9_fps_log, true, "MK9", "Log the game's presented frames per second every 5 s");
@@ -30,13 +34,20 @@ namespace {
 void Report() {
   using clock = std::chrono::steady_clock;
   static clock::time_point window_start = clock::now();
-  static uint64_t window_frames = 0;
+  static uint64_t window_frames = 0, window_hidden = 0, window_late = 0;
   static uint64_t worst_us = 0;
   static clock::time_point last = clock::now();
+  // mk9-nx online (2026-11-08): a frame a rollback runs again is not shown (sa2_renut_pacing.h): it is counted apart,
+  // and its time goes into the next shown frame's, which is what the player sees
+  if (sa2::renut::FrameHidden()) {
+    ++window_hidden;
+    return;
+  }
   const auto now = clock::now();
   const uint64_t dt = uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(now - last).count());
   last = now;
   if (dt > worst_us) worst_us = dt;
+  if (dt > 20000) ++window_late;  // shown a display refresh late or more
   static const uint64_t hitch_us = uint64_t(REXCVAR_GET(mk9_hitch_log_ms)) * 1000;
   // usf4-nx (0.7.4): game frames over 30 ms are stack-sampling windows too (profiling builds).
   if (dt > 30000) {
@@ -53,10 +64,14 @@ void Report() {
   ++window_frames;
   const double elapsed = std::chrono::duration<double>(now - window_start).count();
   if (elapsed >= 5.0) {
-    REXLOG_INFO("[fps] {:.1f} fps over {:.1f} s ({} frames), longest frame {:.1f} ms, total {}", window_frames / elapsed,
-                elapsed, window_frames, worst_us / 1000.0, g_mk9_game_frames.load(std::memory_order_relaxed));
+    REXLOG_INFO("[fps] {:.1f} fps over {:.1f} s ({} frames{}), longest frame {:.1f} ms, {} over 20 ms, total {}",
+                window_frames / elapsed, elapsed, window_frames,
+                window_hidden ? fmt::format(" shown, {} run again hidden", window_hidden) : std::string(),
+                worst_us / 1000.0, window_late, g_mk9_game_frames.load(std::memory_order_relaxed));
     window_start = now;
     window_frames = 0;
+    window_hidden = 0;
+    window_late = 0;
     worst_us = 0;
   }
 }

@@ -190,8 +190,12 @@ en esos cuadros suena dos veces). El arreglo: grabar las llamadas (66 funciones,
 cada cuadro y, al repetirlo, devolver lo grabado si la secuencia coincide; si diverge, llamar de verdad y parar los
 eventos que la primera corrida arrancó y la nueva no.
 
+Fluidez: los cuadros que se vuelven a correr no se dibujan (Renut descarta sus draws y la cadena de estados arranca
+de cero en el siguiente; `queued.cpp`, `SkipHiddenDraw`). El contador `[fps]` separa los cuadros mostrados de los
+ocultos y cuenta los mostrados tarde: con 40 ms de lag + jitter y 25-64 cuadros re-simulados cada 5 s, 60.0 fps
+mostrados, el más largo 17-20 ms, 0-1 por encima de 20 ms.
+
 Falta (F5):
 - que un cuadro repetido no vuelva a disparar sonidos (lo de arriba);
-- abaratar el borde: no dibujar los cuadros ocultos (el vaciado del render es casi todo el costo) y copiar páginas
-  en paralelo;
+- abaratar el borde de los cuadros vivos (~10 ms de vaciado del render) y copiar páginas en paralelo;
 - pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.

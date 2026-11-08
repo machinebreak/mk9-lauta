@@ -2,6 +2,7 @@
  * @file    gpu/backend/queued.cpp
  */
 #include "renut_engine/gpu/backend/queued.h"
+#include "renut_engine/gpu/sa2_renut_pacing.h"  // mk9-nx online: FrameHidden
 
 #include <algorithm>
 #include <atomic>
@@ -595,9 +596,26 @@ std::string SnapshotDeltaReport() {
   return line;
 }
 
+// mk9-nx online (2026-11-08): a frame a rollback runs again is not shown (sa2_renut_pacing.h, SetFrameHidden; the
+// guest's render thread draws a frame within it, as the rollback drains it at each frame's start): its draws are not
+// made, the state chain's next draw a whole device again. The frame's other work (clears, resolves, fences) still runs.
+std::atomic<uint64_t> g_hidden_draws{0};
+bool SkipHiddenDraw() {
+  if (!sa2::renut::FrameHidden())
+    return false;
+  if (DeltasOn()) {
+    std::lock_guard<std::mutex> chain(g_delta.mutex);
+    g_delta.device = nullptr;
+  }
+  g_hidden_draws.fetch_add(1, std::memory_order_relaxed);
+  return true;
+}
+
 void QueueDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_index_bytes) {
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
+  if (SkipHiddenDraw())
+    return;
   // sa2-nx (2026-10-20, sa2_renut_snapshot_deltas): made and queued under the chain's lock.
   std::unique_lock<std::mutex> chain;
   if (DeltasOn())
@@ -615,6 +633,8 @@ void QueueDraw(u32 device_va, const DrawCall &call, u32 up_vertex_bytes, u32 up_
 void QueueDeferredDraw(u32 device_va, const DrawCall &call, const u8 *scratch, u32 bytes) {
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
+  if (SkipHiddenDraw())
+    return;
   // sa2-nx (2026-10-20, sa2_renut_deferred_chain, from futari-nx via peggle2-nx): a Begin*Vertices draw of the chain
   // too. Made under the chain's lock and queued by FlushDeferredVertices under it as well, before any other draw of the
   // device is made (every hook flushes its device's deferred draw first), so the render thread still applies the chain
