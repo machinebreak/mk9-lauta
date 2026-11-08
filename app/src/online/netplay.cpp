@@ -36,9 +36,13 @@
 // last. The first kLearnFrames of the fight (its intro) still run in lockstep while the timeline learns the pages
 // written with no store card; and every frame run so far must be confirmed before the game goes past something a
 // rollback cannot undo: its mode changing (the fight over, the game's check tag 8 back to 0) or a package load (they
-// finish at a frame's start, loading.h). Once a mode change is confirmed, the epoch goes on in lockstep. A side more
-// than kMaxPrediction frames ahead of the peer's inputs waits, and the side ahead in time sleeps a frame now and then
-// (time sync). Only final frames' sync hashes are compared: frames whose last run had both players' real inputs.
+// finish at a frame's start, loading.h). Once a mode change is confirmed, the epoch goes on in lockstep. The fight
+// decided (its first package load: FINISH HIM's FatalityArt; AboutToLoad) counts as one: what follows (the victory,
+// the profile's save, the menus, the music, the sound's teardown) cannot be undone, so it goes in lockstep too; the
+// music changing waits for its frame to be confirmed (ConfirmFrame). START does not pause a fight with rollback
+// (mk9_net_pause_in_fights). A side more than kMaxPrediction frames ahead of the peer's inputs waits, and the side
+// ahead in time sleeps a frame now and then (time sync). Only final frames' sync hashes are compared: frames whose
+// last run had both players' real inputs.
 //
 // Packets (little-endian): u16 'M9', u8 version, u8 type, then
 //   HELLO    u8 player, u8 delay, u32 build, u32 seed (the host's: the generators start from it, seed.h),
@@ -100,6 +104,8 @@ REXCVAR_DEFINE_BOOL(mk9_net_rollback, true, "MK9 Online", "Fights with rollback 
 REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, 1, "MK9 Online",
                      "Input delay in frames in a fight with rollback (0 = none; the host's is used by both)");
 REXCVAR_DEFINE_INT32(mk9_net_timeout_s, 20, "MK9 Online", "Seconds without the peer before the session ends");
+REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
+                    "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
 REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, true, "MK9 Online",
                     "The session ends when the two games' sync hashes differ (false: it goes on, for tests)");
 REXCVAR_DEFINE_STRING(mk9_net_sync_ranges, "", "MK9 Online",
@@ -833,7 +839,11 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   const bool live = g.frame == g.latest;
   if (live) {
     Ensure(g.latest + g.delay + 1);
-    g.local[size_t(g.latest + g.delay)] = ReadLocalPad();
+    Pad pad = ReadLocalPad();
+    // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
+    // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
+    if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
+    g.local[size_t(g.latest + g.delay)] = pad;
     SendInputs();
     Ping();
   }
