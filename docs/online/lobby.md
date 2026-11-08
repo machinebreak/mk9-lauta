@@ -102,6 +102,22 @@ de lag + 10 ms de jitter, 178 y 54 rollbacks (hasta 4 cuadros), sin desync, 102 
 duplicaban sonando una sola vez; el host se va a mitad de la pelea y el invitado ve "Prueba1 se fue de la sesión" y
 vuelve al lobby.
 
+## Lo que se probó en sesión (2026-11-08)
+
+Todo en esta PC, con 30-40 ms de lag + jitter emulados (`mk9_net_lag_ms`, `mk9_net_jitter_ms`):
+
+- **ONE VS ONE** hasta el final: rounds, FINISH HIM, la victoria, la pantalla CONTINUE? (la maneja el que perdió) y
+  sus tres salidas: **REMATCH**, **SELECT A NEW FIGHTER** (otra selección y otra pelea) y QUIT TO THE MAIN MENU;
+  tres peleas seguidas sin cuelgues ni desync, también con retraso de entrada 0.
+- **TWO VS TWO** (tag, dos luchadores por jugador): pelea con rollback, ~480 rollbacks del lado del invitado.
+- El jugador 2 manejando los menús (START en el título, VERSUS, ONE VS ONE): su perfil se contesta solo.
+- La pausa: START no pausa una pelea con rollback (`mk9_net_pause_in_fights`, apagado): el menú de pausa pasaría el
+  resto de la pelea a lockstep y un jugador podría tener al otro esperando. En los menús START anda.
+
+El final de cada pelea (desde el FINISH HIM) va en lockstep, como en los otros juegos con rollback: ahí el juego
+carga, guarda el perfil y desarma los sonidos, nada de eso se puede deshacer (`netplay-design.md`, "Partidas
+enteras").
+
 ## Falta
 
 - Probar contra el lobby del VPS (con permiso): que el servidor tenga el juego `mk9pc` y su TURN para los NAT
