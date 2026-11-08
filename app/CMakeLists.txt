@@ -76,6 +76,8 @@ set(MK9_SOURCES
     # CPU enhancement: the sound engine's mix-matrix routine (sub_82E1E148, float16 gain ramps) native.
     src/mk9_native_mix.cpp
     src/mk9_button_icons.cpp
+    # A player with no gamer profile (player 2, the online guest) continues without saving, with no sign-in question.
+    src/mk9_profile_prompt.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
@@ -93,6 +95,9 @@ set(MK9_SOURCES
     src/online/transport.cpp
     src/online/lobby.cpp
     src/online/ice_link.cpp
+    src/online/room.cpp
+    src/online/session.cpp
+    src/online/online_ui.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
     src/online/guest_memory.cpp
@@ -154,8 +159,9 @@ if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
-    target_link_libraries(mk9 PRIVATE mk9_juice winhttp)
-    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include")
+    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32)
+    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
 endif()
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].

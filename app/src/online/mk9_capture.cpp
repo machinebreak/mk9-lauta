@@ -59,6 +59,7 @@
 #include "online/host_stack.h"
 #include "online/loading.h"
 #include "online/netplay.h"
+#include "online/online_ui.h"
 #include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/snapshot.h"
@@ -525,6 +526,7 @@ uint64_t CurrentFrame() { return g_frame; }
 // first frame the shared seed (seed.h; mk9_seed outside a session), and the pending loads finished (loading.h).
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
+  mk9::online_ui::Install();  // once: the online screens (F1)
   mk9::online::FrameBegin(base);
   mk9::quiesce::Observe(base, mk9::online::CurrentFrame());
   mk9::snapshot::OnFrame(ctx, base, mk9::online::CurrentFrame());

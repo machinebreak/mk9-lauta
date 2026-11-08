@@ -76,6 +76,7 @@
 #include "online/ice_link.h"
 #include "online/lobby.h"
 #include "online/net_udp.h"
+#include "online/room.h"
 #include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/sound_memory.h"
@@ -523,6 +524,7 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
   }
   g.link = net::WithTestConditions(std::move(link));
   g.room = room;
+  room::EnterSession(room, g.host, name, id);  // the room's chat goes on in the session
   return true;
 }
 

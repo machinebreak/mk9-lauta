@@ -137,6 +137,10 @@ void TakeTextureRequests(ImDrawData *data) {
 // The window input queued since the last build, into the overlay's ImGui.
 void ApplyQueuedInput(ImGuiIO &io);
 
+// mk9-nx online (2026-11-08): a text field of the overlay has the keyboard (the online lobby's chat, a name): the
+// window's key presses and characters go to it only, not on to the game (its releases still go, so no key stays down).
+std::atomic<bool> g_wants_keyboard{false};
+
 // One overlay frame: the dialogs' widgets, turned into the frame the renderer
 // draws. On the UI thread.
 void BuildFrame(float width, float height) {
@@ -157,6 +161,7 @@ void BuildFrame(float width, float height) {
       dialog->Draw();
   }
   ImGui::Render();
+  g_wants_keyboard.store(io.WantTextInput, std::memory_order_relaxed);
   ImDrawData *data = ImGui::GetDrawData();
 
   std::lock_guard lock(g_frame_mutex);
@@ -323,6 +328,8 @@ LRESULT CALLBACK OverlayWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
     if (g_input.size() < kMaxQueuedInput)
       g_input.push_back(m);
   }
+  if ((msg == WM_KEYDOWN || msg == WM_CHAR) && g_wants_keyboard.load(std::memory_order_relaxed))
+    return 0;  // typed into the overlay
   return CallWindowProcW(g_original_proc, hwnd, msg, wparam, lparam);
 }
 
@@ -478,6 +485,10 @@ bool Start(UIThreadRunner run_on_ui_thread) {
     io.BackendRendererName = "renut";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
     ImGui::StyleColorsDark();
+    // mk9-nx online (2026-11-08): Windows' Segoe UI, whose glyphs ImGui takes as they are drawn (accents, eñes: the
+    // online screens are in Spanish); ImGui's own font, ASCII only, where it is missing
+    if (GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES)
+      io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 18.0f);
   }
   g_last_build = std::chrono::steady_clock::now();
 
