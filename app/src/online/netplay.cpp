@@ -1,7 +1,9 @@
 // MK9 online: the two-player session, in lockstep through menus and loads and with rollback in the fight (netplay.h).
 //
-//   mk9_net_host=<port>          open a session on this UDP port and wait for the other player (player 1)
-//   mk9_net_join=<host:port>     join a session (player 2)
+//   mk9_net_room=<code>          the session of a lobby's room (lobby.h), over the players' own path (ice_link.h),
+//   mk9_net_role=host|guest      as its host (player 1) or its guest (player 2); mk9_online_name: the player's name
+//   mk9_net_host=<port>          or: open a session on this UDP port and wait for the other player (player 1; tests,
+//   mk9_net_join=<host:port>     a LAN, a forwarded port), or join one (player 2)
 //   mk9_net_delay=<frames>       input delay in lockstep (menus, loads); the host's counts for both
 //   mk9_net_rollback=<bool>      fights with rollback (else lockstep all along)
 //   mk9_net_rollback_delay=<f>   input delay in a fight with rollback (the host's counts for both): 0 = none, every
@@ -71,6 +73,8 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
+#include "online/ice_link.h"
+#include "online/lobby.h"
 #include "online/net_udp.h"
 #include "online/quiesce.h"
 #include "online/seed.h"
@@ -83,6 +87,9 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+REXCVAR_DEFINE_STRING(mk9_net_room, "", "MK9 Online", "The lobby room whose session this is (empty: none)");
+REXCVAR_DEFINE_STRING(mk9_net_role, "", "MK9 Online", "mk9_net_room: this side is its host or its guest");
+REXCVAR_DEFINE_STRING(mk9_online_name, "", "MK9 Online", "The player's name in the lobby");
 REXCVAR_DEFINE_INT32(mk9_net_host, 0, "MK9 Online", "Host a two-player session on this UDP port (0 = off)");
 REXCVAR_DEFINE_STRING(mk9_net_join, "", "MK9 Online", "Join a two-player session at host:port");
 REXCVAR_DEFINE_INT32(mk9_net_delay, 2, "MK9 Online",
@@ -125,6 +132,7 @@ constexpr int kPadBytes = 14;
 struct Session {
   bool configured = false, failed = false, started = false, ended = false;
   bool host = false;
+  std::string room;  // a lobby room's session (else a direct UDP one)
   int player = 0;  // 0 = player 1 (the host), 1 = player 2
   int lockstep_delay = 2, rollback_delay = 1;
   bool rollback_wanted = true;
@@ -487,11 +495,57 @@ Pad ReadLocalPad() {
   return pad;
 }
 
+// A lobby room's session: the lobby as the player's name, the room hosted (closed: the guest is in it) or joined, and
+// the players' own path through ICE.
+bool ConfigureRoom(const std::string& room, const std::string& role) {
+  g.host = role == "host";
+  if (!g.host && role != "guest") {
+    REXLOG_ERROR("[net] mk9_net_role must be host or guest, not '{}'", role);
+    g.failed = true;
+    return false;
+  }
+  std::string name = REXCVAR_GET(mk9_online_name);
+  if (name.empty()) name = g.host ? "Host" : "Guest";
+  lobby::Start(name);
+  std::string id;
+  if (g.host) {
+    lobby::Host(room, name, false, true);
+  } else {
+    std::random_device rd;
+    id = fmt::format("{:08x}{:08x}", rd(), rd());
+    lobby::Join(room, id);
+  }
+  auto link = net::IceLink::Create(room, g.host, id);
+  if (!link) {
+    REXLOG_ERROR("[net] room {}: the players' path could not be set up", room);
+    g.failed = true;
+    return false;
+  }
+  g.link = net::WithTestConditions(std::move(link));
+  g.room = room;
+  return true;
+}
+
 bool Configure() {
   g.configured = true;
   const int host_port = REXCVAR_GET(mk9_net_host);
   const std::string join = REXCVAR_GET(mk9_net_join);
-  if (host_port <= 0 && join.empty()) return false;
+  const std::string room = REXCVAR_GET(mk9_net_room);
+  if (host_port <= 0 && join.empty() && room.empty()) return false;
+  g.player = 0;
+  g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
+  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), 0, 6);
+  g.rollback_wanted = REXCVAR_GET(mk9_net_rollback);
+  g.delay = g.lockstep_delay;
+  if (!room.empty()) {
+    if (!ConfigureRoom(room, REXCVAR_GET(mk9_net_role))) return false;
+    g.player = g.host ? 0 : 1;
+    if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
+    ParseRanges();
+    REXLOG_INFO("[net] room {} as its {}; lockstep delay {}, rollback {} (delay {}); the host decides", room,
+                g.host ? "host" : "guest", g.lockstep_delay, g.rollback_wanted ? "on" : "off", g.rollback_delay);
+    return true;
+  }
   g.host = host_port > 0;
   g.player = g.host ? 0 : 1;
   g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
@@ -816,7 +870,8 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
 
 bool Active() {
   if (!g.configured) Configure();
-  return g.link && (g.link->HasPeer() || REXCVAR_GET(mk9_net_host) > 0) && !g.failed && !g.ended;
+  // a host waits for its guest; a room's guest waits for the path to the host too
+  return g.link && (g.link->HasPeer() || g.host || !g.room.empty()) && !g.failed && !g.ended;
 }
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {

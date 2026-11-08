@@ -91,6 +91,8 @@ set(MK9_SOURCES
     src/online/netplay.cpp
     src/online/net_udp.cpp
     src/online/transport.cpp
+    src/online/lobby.cpp
+    src/online/ice_link.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
     src/online/guest_memory.cpp
@@ -139,6 +141,22 @@ rexglue_setup_target(mk9 GPU_PLUGINS xenos)
 
 # mk9-nx (2026-10-24): the SDK's FFmpeg (its WMV3 decoder) for the cutscenes: src/mk9_movie.cpp.
 target_link_libraries(mk9 PRIVATE libavcodec)
+
+# mk9-nx online (2026-11-08): libjuice 1.7.4 (thirdparty/libjuice, MPL-2.0): ICE, the players' direct UDP path through
+# their NATs or a TURN relay (src/online/ice_link.cpp); the lobby is WinHTTP's WebSocket (src/online/lobby.cpp).
+if(WIN32)
+    enable_language(C)
+    file(GLOB MK9_JUICE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/src/*.c")
+    add_library(mk9_juice STATIC ${MK9_JUICE_SOURCES})
+    target_include_directories(mk9_juice
+        PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/include"
+        PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/include/juice" "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/src")
+    target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
+        _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
+    target_link_libraries(mk9 PRIVATE mk9_juice winhttp)
+    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include")
+endif()
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].
 if(REXGLUE_PLATFORM_SWITCH AND TARGET rexcore)

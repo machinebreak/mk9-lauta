@@ -5,7 +5,10 @@
 #
 #   powershell -File tools\online\pair_test.ps1 [-Seconds 110] [-HostScript file] [-GuestScript file] [-Delay 2]
 #       [-Snapshots "60,90"] [-Hash] [-HashFrom 1] [-Checks] [-SyncRanges "83380000-834D0000"]
-#       [-Extra "--name=value ..."]
+#       [-Room CODE -Lobby ws://127.0.0.1:8791/lobby?game=mk9pc] [-Extra "--name=value ..."]
+#
+# -Room: the two meet in that lobby room and play over the path ICE finds (ice_link.h) instead of local UDP; the lobby
+# is a local one by default (ps2-web-recomp's scripts/lobby_server.py 8791 --host 127.0.0.1).
 #
 # Scripts: mk9_input_script_file format (one "<seconds> <BUTTON> [hold]" per line), each driving its own player.
 # Snapshots: the host writes captures\snap_<s>s.ppm at those seconds, the guest at one second later (s+1).
@@ -21,6 +24,8 @@ param(
     [int]$HashFrom = 1,
     [string]$SyncRanges = '',
     [string]$Extra = '',
+    [string]$Room = '',
+    [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [ValidateSet('vulkan', 'd3d12')][string]$Backend = 'd3d12'
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -35,7 +40,10 @@ Remove-Item (Join-Path $dir 'logs\pair_*.log') -ErrorAction SilentlyContinue
 function Args-For([string]$role) {
     $a = @('--audio_mute=true', '--window_start_minimized=true', '--sa2_renderer=renut', "--renut_gpu_backend=$Backend",
            "--log_file=logs/pair_$role.log", "--user_data_root=$root\out\inst_$role", "--mk9_net_delay=$Delay")
-    if ($role -eq 'host') { $a += "--mk9_net_host=$Port" } else { $a += "--mk9_net_join=127.0.0.1:$Port" }
+    if ($Room) {
+        $name = if ($role -eq 'host') { 'Prueba1' } else { 'Prueba2' }
+        $a += "--mk9_net_room=$Room", "--mk9_net_role=$role", "--mk9_lobby_url=$Lobby", "--mk9_online_name=$name"
+    } elseif ($role -eq 'host') { $a += "--mk9_net_host=$Port" } else { $a += "--mk9_net_join=127.0.0.1:$Port" }
     $script = if ($role -eq 'host') { $HostScript } else { $GuestScript }
     if ($script) {
         $path = if ([IO.Path]::IsPathRooted($script)) { $script } else { Join-Path $root $script }
