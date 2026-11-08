@@ -12,6 +12,8 @@
 
 #include <cstdint>
 
+struct PPCContext;
+
 namespace mk9::netplay {
 
 // Things the game polls that end on each machine's own clock: one bit each in the inputs.
@@ -28,8 +30,9 @@ enum ReadyFlag : uint8_t {
 
 // A session is configured (mk9_net_host / mk9_net_join).
 bool Active();
-// The frame boundary (game thread). game_frame: the game's frame number (1-based, mk9_capture.cpp).
-void OnFrame(uint8_t* base, uint64_t game_frame);
+// The frame boundary (game thread; ctx: the hook's, for the guest calls a rollback makes). game_frame: the game's
+// frame number (1-based, mk9_capture.cpp).
+void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame);
 // What the game gets from a busy poll this frame (game thread): local, what the poll gave on this machine. While the
 // session runs, it stays busy until neither machine was busy at the frame whose inputs this frame plays (and this
 // machine is not now): the same on both.
@@ -46,6 +49,18 @@ void Barrier(uint8_t* base, const char* what);
 void OnCheck(uint32_t tag, uint32_t value);
 // Once, at the session's first frame: the seed both players start the game's random number generators from (seed.h).
 bool TakeSessionSeed(uint32_t* seed);
+// The session as the online screens show it.
+struct SessionInfo {
+  bool active = false;
+  int player = 0;           // 0: player 1 (the host), 1: player 2
+  double rtt_ms = 0;
+  int delay = 0;            // this epoch's input delay, frames
+  bool rollback = false;    // a fight with rollback
+  bool speculating = false; // ... past its intro
+  uint64_t rollbacks = 0, resimulated = 0;
+  bool desynced = false;
+};
+SessionInfo Info();
 // A capture block (sub_82A1C550's arguments; r1: the caller's stack pointer). Replaces the players' raw gamepad
 // blocks while the session runs.
 void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1);

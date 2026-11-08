@@ -946,6 +946,8 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
   }
   // sa2-nx: the console's vertical blank paced SA2's frames (its game speed follows them): sa2_renut_pacing.cpp.
   sa2::renut::PaceSwap(device_va);
+  // mk9-nx online: a frame a rollback runs again is not shown (sa2_renut_pacing.h, SetFrameHidden)
+  const bool hidden = sa2::renut::FrameHidden();
   // sa2-nx: SA2's game frame count (src/sa2_d3d_trace.cpp: the flip, which only the GPU's vblank interrupt reaches).
   const uint64_t game_frame = g_sa2_game_frames.fetch_add(1, std::memory_order_relaxed) + 1;
   // sa2-nx: a lockstep recording (sa2_capture.cpp) takes this very frame: asked before it is queued.
@@ -995,7 +997,7 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
     RGPU_INFO("[mk9] window packet {:08X} {:08X} {:08X}; scissor rect {} {} {} {}; surface info {:08X} color0 {:08X}",
               w(0x28C0), w(0x28C4), w(0x28C8), w(12924), w(12928), w(12932), w(12936), w(0x2880), w(0x2884));
   }
-  render_thread::QueueFrame([front_buffer, swap_ordinal] {
+  render_thread::QueueFrame([front_buffer, swap_ordinal, hidden] {
     PresentImage image;
     {
       std::lock_guard lock(State().mutex);
@@ -1021,7 +1023,8 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
     MaybeReportMemory();
     // The front buffer is the texture the game resolved the frame into.
     Video::NotePresentingSwap(swap_ordinal);  // banjo-nx (2026-10-20): the probe's "input -> GPU done"
-    Video::Present(image.texture ? &image : nullptr);
+    if (!hidden)
+      Video::Present(image.texture ? &image : nullptr);
     {
       std::lock_guard lock(State().mutex);
       ::renut::gpu::SyncPipelineListLocked();  // banjo-nx (2026-10-20): the list's new records to the card

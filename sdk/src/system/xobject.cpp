@@ -16,6 +16,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/util/string_utils.h>  // For TranslateAnsiStringAddress
 #include <rex/system/xobject.h>
+#include <rex/system/guest_park.h>
 // #include <rex/kernel/xboxkrnl/private.h>  // TODO: JIT only
 #include <rex/system/xenumerator.h>
 #include <rex/system/xevent.h>
@@ -207,6 +208,7 @@ uint32_t XObject::TimeoutTicksToMs(int64_t timeout_ticks) {
 X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode, uint32_t alertable,
                        uint64_t* opt_timeout) {
   ApplyGuestCoreLayoutAtWait();  // sa2-nx (2026-10-20)
+  park::RestScope rest;          // mk9-nx (2026-11-07): guest_park.h
   auto wait_handle = GetWaitHandle();
   if (!wait_handle) {
     // Object doesn't support waiting.
@@ -241,6 +243,7 @@ X_STATUS XObject::SignalAndWait(XObject* signal_object, XObject* wait_object, ui
                                 uint32_t processor_mode, uint32_t alertable,
                                 uint64_t* opt_timeout) {
   ApplyGuestCoreLayoutAtWait();  // sa2-nx (2026-10-20)
+  park::RestScope rest;          // mk9-nx (2026-11-07): guest_park.h
   auto timeout_ms = opt_timeout ? std::chrono::milliseconds(chrono::Clock::ScaleGuestDurationMillis(
                                       TimeoutTicksToMs(*opt_timeout)))
                                 : std::chrono::milliseconds::max();
@@ -269,6 +272,7 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects, uint32_t wait_
                                uint32_t wait_reason, uint32_t processor_mode, uint32_t alertable,
                                uint64_t* opt_timeout) {
   ApplyGuestCoreLayoutAtWait();  // sa2-nx (2026-10-20)
+  park::RestScope rest;          // mk9-nx (2026-11-07): guest_park.h
   std::vector<rex::thread::WaitHandle*> wait_handles(count);
   for (size_t i = 0; i < count; ++i) {
     wait_handles[i] = objects[i]->GetWaitHandle();

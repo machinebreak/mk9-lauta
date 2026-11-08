@@ -21,6 +21,7 @@
 #include <rex/ppc/context.h>
 #include <rex/runtime.h>
 #include <rex/system/function_dispatcher.h>
+#include <rex/system/guest_park.h>
 #include <rex/system/thread_state.h>
 
 namespace rex::runtime {
@@ -79,7 +80,10 @@ bool FunctionDispatcher::Execute(ThreadState* thread_state, uint32_t address) {
   uint64_t previous_lr = ctx->lr;
   ctx->lr = 0xBCBCBCBC;
 
-  fn(*ctx, memory_->virtual_membase());
+  {
+    system::park::BusyScope busy;  // mk9-nx (2026-11-07): guest_park.h
+    fn(*ctx, memory_->virtual_membase());
+  }
 
   ctx->lr = previous_lr;
   ctx->r1.u64 += 64 + 112;
@@ -144,6 +148,8 @@ uint64_t FunctionDispatcher::ExecuteInterrupt(ThreadState* thread_state, uint32_
   SCOPE_profile_cpu_f("cpu");
   PROFILE_INTERRUPT_DISPATCHED();
 
+  // mk9-nx (2026-11-07): busy before the global lock is held, so a park never holds an interrupt that holds it
+  system::park::BusyScope busy;
   // Hold the global lock during interrupt dispatch.
   auto global_lock = global_critical_region_.Acquire();
 

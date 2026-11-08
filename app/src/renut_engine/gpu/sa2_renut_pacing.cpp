@@ -16,6 +16,7 @@
 #include "renut_engine/gpu/sa2_renut_pacing.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -147,9 +148,17 @@ void SleepUntil(Clock::time_point t) {
 // sa2-nx (2026-10-20, banjo_display_sync): the last release taken from the display's refresh (steady_clock ns).
 uint64_t g_display_previous_ns = 0;
 
+namespace {
+std::atomic<bool> g_frame_hidden{false};
+}  // namespace
+
+void SetFrameHidden(bool hidden) { g_frame_hidden.store(hidden, std::memory_order_release); }
+bool FrameHidden() { return g_frame_hidden.load(std::memory_order_acquire); }
+
 void PaceSwap(uint32_t device_va) {
   static const bool on = REXCVAR_GET(sa2_renut_vblank_pacing);
   if (!on || !device_va) return;
+  if (FrameHidden()) return;  // a frame run again by a rollback: no wait, and the grid stays as it was
   const auto *interval_word = ::renut::gpu::GuestPtr<const be_u32>(device_va + kDeviceOffsetPresentationInterval);
   const uint32_t refreshes = RefreshesPerFrame(interval_word ? uint32_t(*interval_word) : 1);
   const auto now = Clock::now();

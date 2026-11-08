@@ -28,6 +28,7 @@
 #include <rex/stream.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/function_dispatcher.h>
+#include <rex/system/guest_park.h>
 #include <rex/system/thread_state.h>
 #include <rex/system/user_module.h>
 #include <rex/kernel/xboxkrnl/threading.h>
@@ -619,6 +620,7 @@ X_STATUS XThread::Exit(int exit_code) {
   FreeStack();
 
   // NOTE: unless PlatformExit fails, expect it to never return!
+  park::ThreadExiting();  // mk9-nx (2026-11-07): guest_park.h
   current_xthread_tls_ = nullptr;
   PROFILE_THREAD_EXIT();
 
@@ -734,7 +736,10 @@ void XThread::Execute() {
 
   // Execute the function
   REXSYS_NOISY_DEBUG("XThread::Execute - Calling function at {:08X}", address);
-  func(*ctx, base);
+  {
+    park::BusyScope busy;  // mk9-nx (2026-11-07): guest_park.h
+    func(*ctx, base);
+  }
 
   exit_code = static_cast<int>(ctx->r3.u32);
 
@@ -1094,6 +1099,7 @@ uint32_t XThread::SelfSuspend() {
 
 X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable, uint64_t interval) {
   ApplyGuestCoreLayoutAtWait();  // sa2-nx (2026-10-20)
+  park::RestScope rest;          // mk9-nx (2026-11-07): guest_park.h
   int64_t timeout_ticks = interval;
   uint32_t timeout_ms;
   if (timeout_ticks > 0) {

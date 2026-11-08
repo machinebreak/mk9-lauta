@@ -19,6 +19,7 @@ set(REXSYSTEM_SOURCES
     xsocket.cpp
     xsymboliclink.cpp
     xobject.cpp
+    guest_park.cpp
     xmodule.cpp
     guest_path.cpp
 

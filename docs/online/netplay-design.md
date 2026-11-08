@@ -126,9 +126,59 @@ el heap bajo (kernel y XAM) y los heaps físicos (texturas, búferes de GPU y au
   - `mk9_write_trace` + `tools/online/write_report.py` dicen quién escribe una página;
   - `tools/online/synctest_runs.ps1` repite el SyncTest.
 
+## Rollback en red (F5) — en curso (2026-11-08)
+
+`app/src/online/netplay.cpp`: lockstep en menús y cargas; en la pelea, rollback después de 120 cuadros de
+aprendizaje (la intro). Sin la entrada del rival, el cuadro corre con una predicción (su última entrada); si llega
+distinta, el borde del cuadro siguiente vuelve a ese cuadro y corre de nuevo los que siguen, ocultos (sin pacing ni
+presentación: `sa2::renut::SetFrameHidden`). Máximo 8 cuadros de predicción, sincronía de tiempo (el lado adelantado
+duerme un cuadro), y antes de un cambio de modo o de una carga se espera a que todo esté confirmado. Sólo se comparan
+los hashes de los cuadros finales.
+
+### El reposo del borde (`quiesce.h`, `rex/system/guest_park.h`)
+
+Guardar o restaurar la memoria con otro hilo a mitad de una tarea rompe el juego: la tarea queda "pendiente" en una
+memoria que nadie va a terminar. Con 40 ms de lag se colgaba en `sub_827F2D58`: un lote de raycasts asíncronos de
+PhysX (`NxSceneQuery`, vtable `0x82275948`) pendiente de un cuadro al otro, cuyo evento ya se había cerrado. El borde
+de cada cuadro con rollback ahora:
+
+1. vacía el render de UE3;
+2. espera los pools de hilos de UE3 (`FQueuedThreadPoolWin`: GThreadPool y los otros dos, encontrados cuando sus
+   hilos devuelven trabajo, `sub_827798D8`) y recoge los lotes de raycasts pendientes (`finish(true)`, `sub_830AACC0`);
+3. estaciona todos los hilos que corren código del juego (**park** del SDK): un hilo está en reposo dentro de una
+   espera del kernel; mientras el park dura, el que sale de una espera queda ahí. Las esperas dentro de una tarea
+   marcada (`park::WorkScope`: las tareas de los hilos de FMOD y los trabajos del job system, `sub_82778508`) no
+   cuentan como reposo: el hilo sigue hasta terminarla;
+4. guarda el cuadro, recibe, y si hace falta retrocede; después suelta el park.
+
+La lista de objetos del kernel se arma antes del park (toma el lock global del SDK, que un hilo estacionado puede
+tener); el SDK cuenta los cambios de la tabla de objetos (`ObjectTable::Mutations`) para no rehacerla al pedo.
+
+SyncTest con los cuadros repetidos ocultos (`mk9_synctest_hidden`): 150-200 rollbacks de 6 cuadros, 0 diferencias,
+ningún cuelgue. Costo del borde: ~9 ms, casi todo el vaciado del render (los pools y el park, menos de 0.5 ms).
+
+### El sonido — tiene que quedar afuera del rollback
+
+Con lag real, ~1000 cuadros adentro de la pelea, FMOD se cuelga: un hilo suyo recorre una lista con un índice basura
+(`sub_82DEDE10`) teniendo su lock, y el juego espera ese lock. Restaurar la memoria de FMOD no puede quedar
+consistente: debajo están XAudio2 (`~0x832A0000-0x832D0000`, su hilo `sub_832C92D0`, su memoria por `XMemAlloc`
+`sub_823667D8` con el id `0x97`), los contextos XMA en memoria física y el decodificador XMA del host, que no se
+revierten. Y aunque se pudiera, cada rollback haría sonar de nuevo los últimos cuadros (el audio "salta para atrás").
+
+El diseño correcto (el de los juegos con rollback): el mundo del sonido (FMOD + XAudio2 + XMA) vive afuera de la
+simulación, y la frontera son las llamadas del juego a FMOD:
+
+- **memoria aparte** (`sound_memory.h`, `mk9_sound_apart`, apagado por ahora): el heap de FMOD sale de un arena
+  propio (`0x7B000000-0x7EFFFFFF`, sus tres callbacks de memoria) y sus datos estáticos (`0x833A7D28-0x833AE0BC`,
+  `0x83462198-0x834B67A0`, `tools/online/module_data.py`) no se revierten; sus hilos siguen durante el park. Falta lo
+  mismo para XAudio2 (sus `XMemAlloc` con id `0x97`, sus estáticos, su hilo y el Audio Worker);
+- **grabar y reproducir** las llamadas del juego a FMOD (66 funciones, 194 sitios): en la primera corrida de cada
+  cuadro se graban (argumentos, resultado, lo que escriben en la memoria del juego, y las llamadas de vuelta de FMOD
+  al juego); al repetir el cuadro, si la secuencia coincide, se devuelve lo grabado sin tocar FMOD; si diverge, se
+  llama de verdad y los eventos que la primera corrida arrancó y la nueva no, se paran.
+
 Falta (F5):
-- resimulación rápida: los cuadros repetidos sin pacing ni presentación;
-- el netcode de rollback: predicción, retroceso al llegar una entrada distinta, sincronía de tiempo; lockstep en menús
-  y cargas, rollback en la pelea;
-- el sonido (hoy la memoria de FMOD se revierte con todo);
-- bajar el costo de guardar (copias en paralelo).
+- el sonido afuera del rollback (lo de arriba);
+- abaratar el borde: no dibujar los cuadros ocultos (el vaciado del render es casi todo el costo) y copiar páginas
+  en paralelo;
+- pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.

@@ -9,4 +9,10 @@ namespace sa2::renut {
 // since the previous Swap has passed (the console's vertical blank).
 void PaceSwap(uint32_t device_va);
 
+// mk9-nx online (2026-11-07): the frames a rollback runs again (app/src/online/netplay.cpp) are hidden: their Swap is
+// neither paced nor presented, so the game catches up within a display frame. Set by the game thread at a frame's
+// start, with the guest's render thread idle (the rollback drains it there), so the frame's Swap reads its own value.
+void SetFrameHidden(bool hidden);
+bool FrameHidden();
+
 }  // namespace sa2::renut

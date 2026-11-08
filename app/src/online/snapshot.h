@@ -37,6 +37,14 @@ namespace mk9::snapshot {
 // thread; ctx: the hook's context, put back as it was).
 void FlushRendering(PPCContext& ctx, uint8_t* base);
 
+// The kernel's objects that live in the simulation's memory (a rollback leaves their bytes as they are: the SDK keeps
+// their state), found again when the kernel's object table changed. It takes the kernel's global lock: called with no
+// park on (quiesce.h), before a boundary parks; Timeline::RollBack uses what it found. Returns the object table's
+// mutation count it is current for.
+uint64_t RefreshKernelObjectHoles();
+// The holes are current for the object table as it is now.
+bool KernelObjectHolesCurrent();
+
 // A full copy of the simulation's memory (mk9_rollback_test).
 class Snapshot {
  public:
@@ -57,9 +65,10 @@ class Snapshot {
 // The simulation's memory frame by frame, from the store cards.
 class Timeline {
  public:
-  // Starts at frame's start: the shadow copy of every committed page, the cards consumed, the pages other threads
-  // write found (the game thread waits a moment for them). keep: frames of undo records kept.
-  void Start(uint8_t* base, uint64_t frame, int keep);
+  // Starts at frame's start: the shadow copy of every committed page, the cards consumed and, with calibrate, the
+  // pages other threads write found (the game thread waits 45 ms for them; mk9_timeline_foreign says whether they are
+  // left out). keep: frames of undo records kept.
+  void Start(uint8_t* base, uint64_t frame, int keep, bool calibrate = true);
   bool started() const { return started_; }
   // At frame's start (frame = the last one + 1): the pages the frame before wrote go to its undo record.
   void Advance(uint8_t* base, uint64_t frame);
@@ -103,7 +112,9 @@ class Timeline {
   std::vector<uint8_t*> shadow_;                    // by page: 4 KB from the pool, or null outside the memory
   std::vector<std::unique_ptr<uint8_t[]>> chunks_;  // the pool's allocations
   std::vector<uint8_t*> free_;                      // the pool's free pages
-  std::vector<uint8_t> foreign_;                    // by page: 1 = another thread writes it
+  std::vector<uint8_t> foreign_;                    // by page: 1 = another thread writes it, or not the simulation
+  std::vector<std::pair<uint32_t, uint32_t>> untracked_;  // what is not the simulation (sound_memory.h)
+  size_t untracked_pages_ = 0;
   std::vector<uint32_t> suspects_;                  // pages written with no card marked: compared at every Advance
   std::vector<uint8_t> suspect_;                    // by page: 1 = in suspects_
   std::vector<uint8_t> committed_;                  // by page: 1 = committed at the last RefreshCommitted

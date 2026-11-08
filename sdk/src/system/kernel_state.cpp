@@ -35,6 +35,7 @@
 
 #include <rex/system/flags.h>
 #include <rex/system/guest_path.h>
+#include <rex/system/guest_park.h>
 #include <rex/system/user_module.h>
 #include <rex/system/xevent.h>
 #include <rex/system/xmodule.h>
@@ -669,6 +670,7 @@ void KernelState::SetExecutableModule(object_ref<UserModule> module) {
         // Throws out of fn leave the originating overlapped uncompleted and
         // the waiting guest thread stuck; fail visibly rather than swallow.
         try {
+          park::BusyScope busy;  // mk9-nx (2026-11-07): guest_park.h
           fn();
         } catch (const std::exception& e) {
           REX_FATAL("Dispatch thread: deferred completion threw '{}'", e.what());

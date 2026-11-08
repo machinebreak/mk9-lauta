@@ -38,6 +38,9 @@ class ObjectTable {
   X_STATUS ReleaseHandle(X_HANDLE handle);
   X_STATUS RemoveHandle(X_HANDLE handle);
 
+  // mk9-nx (2026-11-07): handles added or removed so far (any table): what a cache of the objects may key on
+  static uint64_t Mutations() noexcept;
+
   bool Save(stream::ByteStream* stream);
   bool Restore(stream::ByteStream* stream);
 

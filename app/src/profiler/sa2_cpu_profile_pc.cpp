@@ -40,7 +40,7 @@ REXCVAR_DEFINE_INT32(sa2_cpu_profile_duration_s, 20, "SA2",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_INT32(sa2_stack_dump_s, 0, "SA2",
                      "PC: dump the stacks of every thread at this second of process lifetime (0 = never; testing "
-                     "only). Writes logs/pilas_N.txt")
+                     "only). Writes logs/pilas_<pid>_N.txt")
     .range(0, 3600)
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
@@ -498,7 +498,9 @@ void VolcarPilas(const char* motivo) {
 
   // Nobody is suspended any more.
   const std::filesystem::path ruta =
-      rex::filesystem::GetExecutableFolder() / "logs" / ("pilas_" + std::to_string(numero) + ".txt");
+      rex::filesystem::GetExecutableFolder() / "logs" /
+      // mk9-nx (2026-11-08): the process id too, as two instances (an online pair test) share the folder
+      ("pilas_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(numero) + ".txt");
   std::error_code ec;
   std::filesystem::create_directories(ruta.parent_path(), ec);
   std::FILE* f = _wfopen(ruta.c_str(), L"wb");

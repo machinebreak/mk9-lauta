@@ -10,6 +10,7 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 
 #include <rex/cvar.h>
@@ -104,6 +105,12 @@ bool ObjectTable::Resize(uint32_t new_capacity) {
   return true;
 }
 
+namespace {
+std::atomic<uint64_t> g_object_table_mutations{0};  // mk9-nx (2026-11-07): ObjectTable::Mutations
+}  // namespace
+
+uint64_t ObjectTable::Mutations() noexcept { return g_object_table_mutations.load(std::memory_order_acquire); }
+
 X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
   X_STATUS result = X_STATUS_SUCCESS;
 
@@ -125,6 +132,7 @@ X_STATUS ObjectTable::AddHandle(XObject* object, X_HANDLE* out_handle) {
 
       // Retain so long as the object is in the table.
       object->Retain();
+      g_object_table_mutations.fetch_add(1, std::memory_order_acq_rel);
 
       REXSYS_NOISY_DEBUG("Added handle:{:08X} for {}", handle, typeid(*object).name());
     }
@@ -201,6 +209,7 @@ X_STATUS ObjectTable::RemoveHandle(X_HANDLE handle) {
   if (entry->object) {
     auto object = entry->object;
     entry->object = nullptr;
+    g_object_table_mutations.fetch_add(1, std::memory_order_acq_rel);
     assert_zero(entry->handle_ref_count);
     entry->handle_ref_count = 0;
 

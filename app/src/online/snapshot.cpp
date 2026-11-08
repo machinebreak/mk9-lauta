@@ -16,6 +16,7 @@
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/guest_park.h>
 #include <rex/system/util/object_table.h>
 #include <rex/system/xmemory.h>
 #include <rex/system/xobject.h>
@@ -24,8 +25,11 @@
 #include <xxhash.h>
 
 #include "online/guest_memory.h"
+#include "online/quiesce.h"
+#include "online/sound_memory.h"
 #include "profiler/sa2_cpu_profile_pc.h"
 #include "renut_engine/gpu/backend/render_thread.h"
+#include "renut_engine/gpu/sa2_renut_pacing.h"
 #include "online/write_trace.h"
 
 REXCVAR_DEFINE_STRING(mk9_rollback_test, "", "MK9 Online",
@@ -42,6 +46,8 @@ REXCVAR_DEFINE_BOOL(mk9_write_trace, false, "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_synctest, "", "MK9 Online",
                       "F,P,K: from frame F on, keep the simulation's memory frame by frame and every P frames roll it "
                       "back K frames; the frames that run again must give the game's same checks (rollback's test)");
+REXCVAR_DEFINE_BOOL(mk9_synctest_hidden, true, "MK9 Online",
+                    "mk9_synctest: the frames run again are not shown and not paced, as in a session's rollback");
 
 extern "C" REX_FUNC(__imp__sub_82747FE0);  // FlushRenderingCommands
 
@@ -87,6 +93,9 @@ std::vector<std::pair<uint32_t, uint32_t>> KernelObjectHoles() {
   return holes;
 }
 
+std::vector<std::pair<uint32_t, uint32_t>> g_holes;
+uint64_t g_holes_at = ~0ull;  // the object table's mutation count g_holes are current for
+
 double MsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
@@ -106,7 +115,7 @@ guest::Region Owned(guest::Region r) {
 namespace {
 
 // A flush that takes long (the render thread stuck behind something) gets every thread's stack dumped
-// (logs/pilas_N.txt, tools/online/stacks_report.py), three times at most.
+// (logs/pilas_<pid>_N.txt, tools/online/stacks_report.py), three times at most.
 std::atomic<int64_t> g_flush_started_us{0};
 std::atomic<int> g_flush_dumps{0};
 
@@ -125,7 +134,7 @@ void WatchFlushes() {
         if (since && since != dumped_for && NowUs() - since > 700000 && g_flush_dumps.load() < 3) {
           dumped_for = since;
           ++g_flush_dumps;
-          REXLOG_WARN("[timeline] FlushRenderingCommands has waited {} ms: every thread's stack goes to logs/pilas_N.txt",
+          REXLOG_WARN("[timeline] FlushRenderingCommands has waited {} ms: every thread's stack goes to logs/pilas_<pid>_N.txt",
                       (NowUs() - since) / 1000);
           nfsmw::perfil_pc::VolcarPilas("timeline flush stalled");
         }
@@ -137,6 +146,17 @@ void WatchFlushes() {
 }
 
 }  // namespace
+
+uint64_t RefreshKernelObjectHoles() {
+  const uint64_t now = rex::system::util::ObjectTable::Mutations();
+  if (now != g_holes_at) {
+    g_holes = KernelObjectHoles();
+    g_holes_at = now;
+  }
+  return now;
+}
+
+bool KernelObjectHolesCurrent() { return g_holes_at == rex::system::util::ObjectTable::Mutations(); }
 
 void FlushRendering(PPCContext& ctx, uint8_t* base) {
   WatchFlushes();
@@ -230,7 +250,7 @@ std::vector<uint32_t> Timeline::ConsumeCards(uint8_t* base) {
   return dirty;
 }
 
-void Timeline::Start(uint8_t* base, uint64_t frame, int keep) {
+void Timeline::Start(uint8_t* base, uint64_t frame, int keep, bool calibrate) {
   const auto start = std::chrono::steady_clock::now();
   keep_ = std::max(1, keep);
   for (Undo& u : undo_) {
@@ -259,7 +279,7 @@ void Timeline::Start(uint8_t* base, uint64_t frame, int keep) {
   }
   // The pages other threads write while this one waits: the audio library's, the loaders'. Three looks, 15 ms apart.
   std::vector<uint32_t> found;
-  for (int round = 0; round < 3; ++round) {
+  for (int round = 0; calibrate && round < 3; ++round) {
     std::this_thread::sleep_for(std::chrono::milliseconds(15));
     for (uint32_t page : ConsumeCards(base)) {
       if (!foreign_[page]) {
@@ -279,13 +299,28 @@ void Timeline::Start(uint8_t* base, uint64_t frame, int keep) {
     ranges += text;
     i = j + 1;
   }
-  REXLOG_INFO("[timeline] pages other threads write:{}", ranges);
-  if (!REXCVAR_GET(mk9_timeline_foreign)) {
+  if (calibrate) REXLOG_INFO("[timeline] pages other threads write:{}", ranges);
+  if (!calibrate || !REXCVAR_GET(mk9_timeline_foreign)) {
     foreign_.assign(kPages, 0);
-    REXLOG_INFO("[timeline] mk9_timeline_foreign off: they stay in");
+    foreign_count_ = 0;
+    if (calibrate) REXLOG_INFO("[timeline] mk9_timeline_foreign off: they stay in");
+  }
+  // what is not the simulation (sound_memory.h: FMOD's static data): its whole pages are never kept, and a rollback
+  // leaves its bytes in the pages it shares as they are
+  untracked_ = sound::UntrackedRanges();
+  untracked_pages_ = 0;
+  for (const auto& [lo, hi] : untracked_) {
+    for (uint32_t page = (lo + kPage - 1) >> 12; (uint64_t(page) + 1) << 12 <= hi; ++page) {
+      if (!foreign_[page]) {
+        foreign_[page] = 1;
+        ++untracked_pages_;
+      }
+    }
   }
   frame_ = frame;
   started_ = true;
+  REXLOG_INFO("[timeline] {} whole pages of what is not the simulation left out (the sound's static data)",
+              untracked_pages_);
   REXLOG_INFO("[timeline] started at frame {}: {} pages ({:.1f} MB) shadowed, {} written by other threads left out, "
               "{:.1f} ms", frame, shadow_pages_, shadow_pages_ * 4.0 / 1024.0, foreign_count_, MsSince(start));
 }
@@ -333,8 +368,18 @@ void Timeline::Advance(uint8_t* base, uint64_t frame) {
 
 bool Timeline::RollBack(uint8_t* base, uint64_t frame) {
   if (frame > frame_ || undo_.empty() || undo_.front().frame > frame) return false;
-  // the kernel's objects keep their bytes of now: saved here, put back after
-  const auto holes = KernelObjectHoles();
+  // the kernel's objects keep their bytes of now: saved here, put back after (the list from before the park: looking
+  // the objects up takes the kernel's global lock, which a parked thread may hold)
+  if (!KernelObjectHolesCurrent()) {
+    if (!rex::system::park::Parked()) {
+      RefreshKernelObjectHoles();
+    } else {
+      static int warned = 0;
+      if (warned++ < 10) REXLOG_WARN("[timeline] the kernel's objects changed since the park: their list is older");
+    }
+  }
+  std::vector<std::pair<uint32_t, uint32_t>> holes = g_holes;
+  holes.insert(holes.end(), untracked_.begin(), untracked_.end());
   std::vector<std::vector<uint8_t>> kept;
   kept.reserve(holes.size());
   for (const auto& [lo, hi] : holes) kept.emplace_back(base + lo, base + hi);
@@ -436,6 +481,7 @@ struct SyncTest {
   uint64_t from = 0, period = 0, back = 0;
   Timeline timeline;
   uint64_t sim = 0;               // the simulation's frame number (goes back with a rollback)
+  uint64_t latest = 0;            // the newest simulation frame reached: the frames before it run again
   uint64_t next_rollback = 0;     // the simulation frame of the next rollback
   // the game's checks by its frame number (tag 9): the first run's hash
   std::unordered_map<uint32_t, uint64_t> first;
@@ -521,9 +567,13 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (!g_sync.from) return;
   FinishCheckFrame();
   if (frame < g_sync.from) return;
-  FlushRendering(ctx, base);
+  // the boundary at rest (quiesce.h) until this function returns
+  quiesce::Settle(ctx, base);
+  struct Released {
+    ~Released() { quiesce::Release(); }
+  } released;
   if (!g_sync.timeline.started()) {
-    g_sync.timeline.Start(base, 0, int(g_sync.back) + 2);
+    g_sync.timeline.Start(base, 0, int(g_sync.back) + 2, false);  // as a session keeps it: every page in
     g_sync.sim = 0;
     g_sync.next_rollback = 120 + g_sync.period;  // after the 2 s that learn the pages written with no card
     return;
@@ -545,6 +595,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   }
   if (g_sync.sim <= 120) return;  // no rollback while learning
   g_sync.pages += g_sync.timeline.last_dirty();
+  g_sync.latest = std::max(g_sync.latest, g_sync.sim);
   if (g_sync.sim == g_sync.next_rollback) {
     start = std::chrono::steady_clock::now();
     const uint64_t to = g_sync.sim - g_sync.back;
@@ -566,6 +617,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
     }
     g_sync.next_rollback += g_sync.period;  // the frames run again, then the next rollback
   }
+  sa2::renut::SetFrameHidden(REXCVAR_GET(mk9_synctest_hidden) && g_sync.sim < g_sync.latest);
 }
 
 }  // namespace mk9::snapshot

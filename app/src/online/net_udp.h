@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <string>
 
+#include "online/transport.h"
+
 namespace mk9::net {
 
-class UdpSocket {
+class UdpSocket : public Transport {
  public:
   UdpSocket() = default;
   ~UdpSocket();
@@ -21,16 +23,16 @@ class UdpSocket {
   void Close();
   // "host:port" (a name or an IPv4 address).
   bool SetPeer(const std::string& host_port);
-  bool HasPeer() const { return has_peer_; }
-  std::string PeerText() const;
+  bool HasPeer() const override { return has_peer_; }
+  std::string PeerText() const override;
   uint16_t LocalPort() const { return local_port_; }
 
-  bool Send(const void* data, size_t size);
+  bool Send(const void* data, size_t size) override;
   // One datagram from the peer (or, while no peer is set, from anyone, who then becomes the peer): its size, or -1
   // when nothing is waiting.
-  int Receive(void* buffer, size_t capacity);
+  int Receive(void* buffer, size_t capacity) override;
   // Waits up to timeout_ms for a datagram to arrive.
-  bool WaitReadable(int timeout_ms);
+  bool WaitReadable(int timeout_ms) override;
 
  private:
   uintptr_t socket_ = ~uintptr_t(0);

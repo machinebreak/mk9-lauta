@@ -90,10 +90,13 @@ set(MK9_SOURCES
     src/online/mk9_capture.cpp
     src/online/netplay.cpp
     src/online/net_udp.cpp
+    src/online/transport.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
     src/online/guest_memory.cpp
     src/online/snapshot.cpp
+    src/online/quiesce.cpp
+    src/online/sound_memory.cpp
     src/online/write_trace.cpp
     src/online/seed.cpp
 )

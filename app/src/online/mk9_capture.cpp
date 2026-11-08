@@ -51,6 +51,7 @@
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/system/guest_park.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
@@ -58,6 +59,7 @@
 #include "online/host_stack.h"
 #include "online/loading.h"
 #include "online/netplay.h"
+#include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/snapshot.h"
 
@@ -524,8 +526,9 @@ uint64_t CurrentFrame() { return g_frame; }
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
   mk9::online::FrameBegin(base);
+  mk9::quiesce::Observe(base, mk9::online::CurrentFrame());
   mk9::snapshot::OnFrame(ctx, base, mk9::online::CurrentFrame());
-  mk9::netplay::OnFrame(base, mk9::online::CurrentFrame());
+  mk9::netplay::OnFrame(ctx, base, mk9::online::CurrentFrame());
   uint32_t seed = 0;
   if (mk9::netplay::TakeSessionSeed(&seed) ||
       (!mk9::netplay::Active() && mk9::seed::FixedSeedFor(mk9::online::CurrentFrame(), &seed))) {
@@ -559,6 +562,33 @@ REX_HOOK_RAW(sub_82495660) {
   mk9::netplay::Barrier(base, "fight start");
   __imp__sub_82495660(ctx, base);
 }
+
+// What a rollback boundary waits for (quiesce.h): a thread pool's thread handing back its work (UE3's
+// FQueuedThreadPoolWin::ReturnToPoolOrGetNextJob: r3 the pool, r4 the thread), and a batch of PhysX scene queries
+// starting (NxSceneQuery::execute: r3 the query object, whose pending batch the boundary collects).
+extern "C" REX_FUNC(__imp__sub_827798D8);
+REX_HOOK_RAW(sub_827798D8) {
+  mk9::quiesce::NotePoolThread(ctx.r3.u32, ctx.r4.u32);
+  __imp__sub_827798D8(ctx, base);
+}
+extern "C" REX_FUNC(__imp__sub_830AC338);
+REX_HOOK_RAW(sub_830AC338) {
+  mk9::quiesce::NoteSceneQuery(ctx.r3.u32);
+  __imp__sub_830AC338(ctx, base);
+}
+
+// Tasks a rollback boundary's park must not find a thread halfway through (quiesce.h; rex/system/guest_park.h,
+// WorkScope): what FMOD's threads run each turn of their loop (FMOD::Thread, sub_82DEB0B8: a callback at +288 or the
+// thread's first virtual function; sound_memory.cpp logs each thread's), and a job of the game's job system
+// (sub_8255F188's threads run each one with sub_82778508).
+#define MK9_WORK_HOOK(name)                       extern "C" REX_FUNC(__imp__##name);             REX_HOOK_RAW(name) {                              rex::system::park::WorkScope work;              __imp__##name(ctx, base);                     }
+MK9_WORK_HOOK(sub_82E213C8)  // FMOD: the thread waiting on a semaphore (F80001FC at boot)
+MK9_WORK_HOOK(sub_82DFB4C8)  // FMOD: a thread's virtual work, every 1 ms
+MK9_WORK_HOOK(sub_82DD4310)  // FMOD: a thread's callback, every 10 ms
+MK9_WORK_HOOK(sub_82DF9B50)  // FMOD: a semaphore thread started in a fight
+MK9_WORK_HOOK(sub_82DDDCB8)  // FMOD: another one
+MK9_WORK_HOOK(sub_82778508)  // the job system: one job
+#undef MK9_WORK_HOOK
 
 // IsMoviePlaying (GFullScreenMovie at 0x834246A8; the engine's tick and the scripts, native 824747c0, poll it): a
 // movie ends on each machine's own clock, so in a session the game sees it end once it has ended on both (Busy).

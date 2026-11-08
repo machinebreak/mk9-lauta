@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Symbolizes a stack dump of the PC build (logs/pilas_N.txt, written by sa2_stack_dump_s) thread by thread.
+"""Symbolizes a stack dump of the PC build (logs/pilas_<pid>_N.txt, written by sa2_stack_dump_s) thread by thread.
 
     python tools/online/stacks_report.py out/pc/logs/pilas_1.txt [--exe out/pc/mk9.exe] [--depth 12]
 
