@@ -100,10 +100,13 @@ powershell -File tools\online\run_game.ps1 -Visible -Sound -Seconds 3600
 Teclado (sin mando): Enter = Start, Espacio = A, Backspace = B, L = X, P = Y, 3 = RB, E = RT, WASD = stick izquierdo,
 Shift + flechas = cruceta.
 
-Opciones gráficas de Renut (`-Set` o `out\pc\mk9.toml`): `renut_resolution` (480p, 720p, 1080p, 1440p, 4K; cambia en
-vivo), `renut_shadow_resolution` (Resolution, 1x-4x), `renut_ambient_occlusion` (Half, Full),
-`renut_anisotropic_filtering` (Game, 2x-16x), `renut_post_process_precision` (Game, High), `renut_aspect_ratio`
-(Auto, 16:9, 21:9, 32:9), `renut_vsync`.
+Opciones gráficas de Renut (`-Set` o `out\pc\mk9.toml`; para los jugadores, la ventana **Opciones** con F2,
+`options_ui.h`: presets Baja / Consola / Alta / Ultra y cada opción en castellano, guardadas en mk9.toml sin tocar
+el resto del archivo): `renut_resolution` (480p, 720p, 1080p, 1440p, 4K; cambia en vivo),
+`renut_shadow_resolution` (Resolution, 1x-4x), `renut_ambient_occlusion` (Half, Full),
+`renut_anisotropic_filtering` (Game, 2x-16x), `renut_post_process_precision` (Game, High), `renut_vsync`,
+`sa2_renut_msaa` (0, 2, 4, 8; al reiniciar). `renut_aspect_ratio` no está en este build (widescreen.cpp no se
+compila).
 
 ## Medido (2026-11-07, Ryzen 5 8600G + Radeon 760M integrada)
 

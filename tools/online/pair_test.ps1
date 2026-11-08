@@ -45,7 +45,11 @@ function Args-For([string]$role) {
     if ($Room) {
         $name = if ($role -eq 'host') { 'Prueba1' } else { 'Prueba2' }
         $a += "--mk9_net_room=$Room", "--mk9_net_role=$role", "--mk9_lobby_url=$Lobby", "--mk9_online_name=$name"
-    } elseif ($role -eq 'host') { $a += "--mk9_net_host=$Port" } else { $a += "--mk9_net_join=127.0.0.1:$Port" }
+    } else {
+        # direct UDP: no lobby at all (never the real one)
+        $a += '--mk9_lobby_url=off'
+        if ($role -eq 'host') { $a += "--mk9_net_host=$Port" } else { $a += "--mk9_net_join=127.0.0.1:$Port" }
+    }
     $script = if ($role -eq 'host') { $HostScript } else { $GuestScript }
     if ($script) {
         $path = if ([IO.Path]::IsPathRooted($script)) { $script } else { Join-Path $root $script }

@@ -78,6 +78,8 @@ set(MK9_SOURCES
     src/mk9_button_icons.cpp
     # A player with no gamer profile (player 2, the online guest) continues without saving, with no sign-in question.
     src/mk9_profile_prompt.cpp
+    # The players' options in Spanish (F2): graphics presets and options, the online fights' input delay.
+    src/options_ui.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.

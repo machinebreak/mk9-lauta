@@ -74,7 +74,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
   void Draw() override {
     room::Pump();
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) visible_ = !visible_;
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+      visible_ = !visible_;
+      focus_ = visible_;  // over the options if they are open too
+    }
     const room::State room = room::Snapshot();
     if (room.in_session) {
       const netplay::SessionInfo info = netplay::Info();
@@ -97,6 +100,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     last_seen_lines_ = room.chat.size();
     const ImGuiIO& io = ImGui::GetIO();
+    if (focus_) {
+      ImGui::SetNextWindowFocus();
+      focus_ = false;
+    }
     ImGui::SetNextWindowSize(ImVec2(620, 560), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
@@ -438,7 +445,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::End();
   }
 
-  bool visible_ = false, editing_name_ = false, was_in_room_ = false, leaving_ = false;
+  bool visible_ = false, editing_name_ = false, was_in_room_ = false, leaving_ = false, focus_ = false;
   std::string name_, name_note_, toast_;
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;

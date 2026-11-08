@@ -18,7 +18,7 @@
 #include <rex/logging.h>
 
 REXCVAR_DEFINE_STRING(mk9_lobby_url, "wss://107-172-143-35.sslip.io/lobby?game=mk9pc", "MK9 Online",
-                      "The online lobby: rooms, the global chat, quick match (ws:// or wss://; empty = none)");
+                      "The online lobby: rooms, the global chat, quick match (ws:// or wss://; \"off\" = none: tests)");
 
 namespace mk9::lobby {
 namespace {
@@ -452,7 +452,12 @@ Client& TheClient() {
 
 }  // namespace
 
-bool Configured() { return !REXCVAR_GET(mk9_lobby_url).empty(); }
+// "off" (or "none", or empty in a config file): no lobby at all. An empty value on the command line leaves the default
+// in place, so tests that must not reach the real lobby say "off".
+bool Configured() {
+  const std::string& url = REXCVAR_GET(mk9_lobby_url);
+  return !url.empty() && url != "off" && url != "none";
+}
 
 void Start(const std::string& name) {
   if (Configured()) TheClient().Start(name);

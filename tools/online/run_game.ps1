@@ -40,6 +40,9 @@ $env:REX_MK9_INPUT_SCRIPT_FILE = $ScriptFile
 $env:REX_CL = $GameArgs
 $env:REX_AUDIO_MUTE = if ($Sound) { 'false' } else { 'true' }
 $env:REX_WINDOW_START_MINIMIZED = if ($Visible) { 'false' } else { 'true' }
+# Tests never reach the real lobby (a shared server): -Set "mk9_lobby_url=ws://127.0.0.1:8791/lobby?game=mk9pc" for a
+# local one.
+$env:REX_MK9_LOBBY_URL = 'off'
 $extra = @()
 foreach ($kv in ($Set -split ';')) {
     if ($kv -match '^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$') {
