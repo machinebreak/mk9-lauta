@@ -78,15 +78,21 @@ class Timeline {
   size_t foreign_pages() const { return foreign_count_; }
   size_t last_dirty() const { return last_dirty_; }
   double ms_refresh() const { return ms_refresh_; }
+  uint64_t refreshes() const { return refreshes_; }
+  size_t kernel_holes() const { return holes_; }
+  size_t last_restored() const { return last_restored_; }
 
  private:
   struct Undo {
     uint64_t frame = 0;  // the frame whose start these pages' contents were
     std::vector<uint32_t> pages;
-    std::vector<uint8_t> bytes;  // 4 KB per page
+    std::vector<uint8_t*> bufs;  // 4 KB each, from the pool
   };
   std::vector<uint32_t> ConsumeCards(uint8_t* base);
-  uint8_t* Shadow(uint32_t page);
+  // 4 KB page buffers: the shadow's and the undo records' (an Advance hands the shadow's buffer of a written page to
+  // the record and takes a fresh one: one copy per page).
+  uint8_t* Take();
+  void Give(uint8_t* page);
   // The committed pages of the simulation's memory now (the heaps' allocators commit and decommit at will): a page
   // not committed is neither read nor written, and its shadow goes.
   void RefreshCommitted();
@@ -94,7 +100,9 @@ class Timeline {
   bool started_ = false;
   uint64_t frame_ = 0;  // the frame whose start the shadow holds
   int keep_ = 8;
-  std::vector<std::unique_ptr<uint8_t[]>> shadow_;  // by page: 4 KB, or null outside the simulation's memory
+  std::vector<uint8_t*> shadow_;                    // by page: 4 KB from the pool, or null outside the memory
+  std::vector<std::unique_ptr<uint8_t[]>> chunks_;  // the pool's allocations
+  std::vector<uint8_t*> free_;                      // the pool's free pages
   std::vector<uint8_t> foreign_;                    // by page: 1 = another thread writes it
   std::vector<uint32_t> suspects_;                  // pages written with no card marked: compared at every Advance
   std::vector<uint8_t> suspect_;                    // by page: 1 = in suspects_
@@ -102,6 +110,8 @@ class Timeline {
   std::vector<uint32_t> recent_;                    // the pages the last Advance found written: compared again
   std::vector<uint8_t> marked_;                     // by page: in this Advance's list (cleared after)
   double ms_refresh_ = 0;
+  uint64_t refreshes_ = 0, mutations_ = 0;
+  size_t holes_ = 0, last_restored_ = 0;
   std::vector<Undo> undo_;                          // oldest first
   size_t shadow_pages_ = 0, foreign_count_ = 0, last_dirty_ = 0;
 };

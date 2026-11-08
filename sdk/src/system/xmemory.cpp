@@ -9,6 +9,7 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <atomic>
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -1422,8 +1423,15 @@ void BaseHeap::Reset() {
   // memory heap.
 }
 
+namespace {
+std::atomic<uint64_t> g_heap_mutations{0};
+}  // namespace
+
+uint64_t HeapMutations() noexcept { return g_heap_mutations.load(std::memory_order_acquire); }
+
 bool BaseHeap::Alloc(uint32_t size, uint32_t alignment, uint32_t allocation_type, uint32_t protect,
                      bool top_down, uint32_t* out_address) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   *out_address = 0;
   size = rex::round_up(size, page_size_);
   alignment = rex::round_up(alignment, page_size_);
@@ -1461,6 +1469,7 @@ bool BaseHeap::AllocSystemHeap(uint32_t size, uint32_t alignment, uint32_t alloc
 
 bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignment,
                           uint32_t allocation_type, uint32_t protect) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   alignment = rex::round_up(alignment, page_size_);
   if (base_address % alignment != 0) {
     if (base_address % page_size_ != 0) {
@@ -1564,6 +1573,7 @@ bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size, uint32_t alignme
 bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t size,
                           uint32_t alignment, uint32_t allocation_type, uint32_t protect,
                           bool top_down, uint32_t* out_address) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   *out_address = 0;
 
   alignment = rex::round_up(alignment, page_size_);
@@ -1748,6 +1758,7 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address, uint32_t 
 }
 
 bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   uint32_t page_count = get_page_count(size, page_size_, page_size_shift_);
   uint32_t start_page_number = (address - heap_base_) >> page_size_shift_;
   uint32_t end_page_number = start_page_number + page_count - 1;
@@ -1784,6 +1795,7 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
 }
 
 bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   // Global critical region before heap_mutex_ - see
   // AcquireHostPageReconcileLock for why the order matters.
   auto global_lock = AcquireHostPageReconcileLock();
@@ -1846,6 +1858,7 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
 }
 
 bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect, uint32_t* old_protect) {
+  g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
   if (!size) {
     REXSYS_ERROR("BaseHeap::Protect failed due to zero size");
     return false;

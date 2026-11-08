@@ -3,6 +3,7 @@
 #include "online/snapshot.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -14,11 +15,17 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/util/object_table.h>
+#include <rex/system/xmemory.h>
+#include <rex/system/xobject.h>
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
 #include "online/guest_memory.h"
+#include "profiler/sa2_cpu_profile_pc.h"
+#include "renut_engine/gpu/backend/render_thread.h"
 #include "online/write_trace.h"
 
 REXCVAR_DEFINE_STRING(mk9_rollback_test, "", "MK9 Online",
@@ -55,6 +62,31 @@ bool InRanges(uint32_t page) {
   return false;
 }
 
+// The kernel's objects that live in the simulation's memory: the events, semaphores, mutants and timers the game set
+// up in its own structures (KeInitializeEvent and friends). The SDK keeps their state on the host side too and writes
+// their headers from there (the signal state, its 'REX' stash of the handle), so a rollback never touches their bytes:
+// [start, end) ranges.
+std::vector<std::pair<uint32_t, uint32_t>> KernelObjectHoles() {
+  std::vector<std::pair<uint32_t, uint32_t>> holes;
+  auto* kernel = REX_KERNEL_STATE();
+  if (!kernel) return holes;
+  using Type = rex::system::XObject::Type;
+  for (const auto& object : kernel->object_table()->GetAllObjects()) {
+    const uint32_t guest = object->guest_object();
+    if (!guest || !InRanges(guest >> 12)) continue;
+    uint32_t size = 0;
+    switch (object->type()) {
+      case Type::Event: size = 0x10; break;      // X_KEVENT
+      case Type::Semaphore: size = 0x14; break;  // X_KSEMAPHORE
+      case Type::Mutant: size = 0x20; break;     // the header, the mutant list entry, the owner, the flags
+      case Type::Timer: size = 0x28; break;      // X_KTIMER
+      default: break;                            // threads, files, ... live in the kernel's own memory
+    }
+    if (size) holes.emplace_back(guest, guest + size);
+  }
+  return holes;
+}
+
 double MsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
@@ -71,10 +103,51 @@ guest::Region Owned(guest::Region r) {
 
 }  // namespace
 
+namespace {
+
+// A flush that takes long (the render thread stuck behind something) gets every thread's stack dumped
+// (logs/pilas_N.txt, tools/online/stacks_report.py), three times at most.
+std::atomic<int64_t> g_flush_started_us{0};
+std::atomic<int> g_flush_dumps{0};
+
+int64_t NowUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+void WatchFlushes() {
+  static const bool started = [] {
+    std::thread([] {
+      int64_t dumped_for = 0;
+      for (;;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const int64_t since = g_flush_started_us.load();
+        if (since && since != dumped_for && NowUs() - since > 700000 && g_flush_dumps.load() < 3) {
+          dumped_for = since;
+          ++g_flush_dumps;
+          REXLOG_WARN("[timeline] FlushRenderingCommands has waited {} ms: every thread's stack goes to logs/pilas_N.txt",
+                      (NowUs() - since) / 1000);
+          nfsmw::perfil_pc::VolcarPilas("timeline flush stalled");
+        }
+      }
+    }).detach();
+    return true;
+  }();
+  (void)started;
+}
+
+}  // namespace
+
 void FlushRendering(PPCContext& ctx, uint8_t* base) {
+  WatchFlushes();
+  g_flush_started_us = NowUs();
+  // Renut's gate holds the frame's GPU work until the game thread's Swap, which would wait for this flush: open it
+  renut::gpu::render_thread::HoldGateOpen(true);
   const PPCContext saved = ctx;
   __imp__sub_82747FE0(ctx, base);
   ctx = saved;
+  renut::gpu::render_thread::HoldGateOpen(false);
+  g_flush_started_us = 0;
 }
 
 // --- Snapshot -----------------------------------------------------------------------------------------------------
@@ -99,7 +172,25 @@ void Snapshot::Restore(uint8_t* base) const {
 
 // --- Timeline -----------------------------------------------------------------------------------------------------
 
+uint8_t* Timeline::Take() {
+  if (free_.empty()) {
+    constexpr size_t kChunk = 256;  // pages per allocation
+    chunks_.emplace_back(new uint8_t[kChunk * kPage]);
+    for (size_t i = 0; i < kChunk; ++i) free_.push_back(chunks_.back().get() + i * kPage);
+  }
+  uint8_t* page = free_.back();
+  free_.pop_back();
+  return page;
+}
+
+void Timeline::Give(uint8_t* page) {
+  if (page) free_.push_back(page);
+}
+
 void Timeline::RefreshCommitted() {
+  const uint64_t mutations = rex::memory::HeapMutations();
+  if (mutations == mutations_ && !committed_.empty()) return;  // no heap committed or decommitted a page since
+  mutations_ = mutations;
   const auto start = std::chrono::steady_clock::now();
   committed_.assign(kPages, 0);
   for (const guest::Region& region : guest::CommittedRegions(true)) {
@@ -110,20 +201,13 @@ void Timeline::RefreshCommitted() {
   }
   for (uint32_t page = 0; page < kPages; ++page) {
     if (!committed_[page] && shadow_[page]) {
-      shadow_[page].reset();
+      Give(shadow_[page]);
+      shadow_[page] = nullptr;
       --shadow_pages_;
     }
   }
-  ms_refresh_ = MsSince(start);
-}
-
-uint8_t* Timeline::Shadow(uint32_t page) {
-  auto& slot = shadow_[page];
-  if (!slot) {
-    slot.reset(new uint8_t[kPage]());
-    ++shadow_pages_;
-  }
-  return slot.get();
+  ++refreshes_;
+  ms_refresh_ += MsSince(start);
 }
 
 // The pages written since the cards were last consumed (outside the foreign ones), their cards set back to 1.
@@ -149,17 +233,29 @@ std::vector<uint32_t> Timeline::ConsumeCards(uint8_t* base) {
 void Timeline::Start(uint8_t* base, uint64_t frame, int keep) {
   const auto start = std::chrono::steady_clock::now();
   keep_ = std::max(1, keep);
-  shadow_.clear();
-  shadow_.resize(kPages);
+  for (Undo& u : undo_) {
+    for (uint8_t* page : u.bufs) Give(page);
+  }
+  undo_.clear();
+  for (uint8_t*& page : shadow_) {
+    Give(page);
+    page = nullptr;
+  }
+  shadow_.assign(kPages, nullptr);
   foreign_.assign(kPages, 0);
   suspect_.assign(kPages, 0);
+  marked_.assign(kPages, 0);
   suspects_.clear();
-  undo_.clear();
+  recent_.clear();
+  committed_.clear();
   shadow_pages_ = foreign_count_ = 0;
   ConsumeCards(base);
   RefreshCommitted();
   for (uint32_t page = 0; page < kPages; ++page) {
-    if (committed_[page]) std::memcpy(Shadow(page), base + (uint64_t(page) << 12), kPage);
+    if (!committed_[page]) continue;
+    shadow_[page] = Take();
+    ++shadow_pages_;
+    std::memcpy(shadow_[page], base + (uint64_t(page) << 12), kPage);
   }
   // The pages other threads write while this one waits: the audio library's, the loaders'. Three looks, 15 ms apart.
   std::vector<uint32_t> found;
@@ -196,73 +292,104 @@ void Timeline::Start(uint8_t* base, uint64_t frame, int keep) {
 
 void Timeline::Advance(uint8_t* base, uint64_t frame) {
   RefreshCommitted();
-  if (marked_.size() != kPages) marked_.assign(kPages, 0);
-  std::vector<uint32_t> dirty;
-  for (uint32_t page : ConsumeCards(base)) {
-    if (committed_[page] && !marked_[page]) {
-      marked_[page] = 1;
-      dirty.push_back(page);
-    }
-  }
-  // the pages written the frame before (a store in flight then has landed by now: its card was consumed before) and
-  // the suspects (written with no card at all), when their bytes changed
-  for (const std::vector<uint32_t>* list : {&recent_, &suspects_}) {
+  // the candidates: the pages whose cards were written; the pages written the frame before (a store in flight then
+  // has landed by now: its card was consumed before); the suspects (written with no card at all)
+  std::vector<uint32_t> candidates;
+  std::vector<uint32_t> carded = ConsumeCards(base);
+  for (const std::vector<uint32_t>* list : {&carded, &recent_, &suspects_}) {
     for (uint32_t page : *list) {
-      const uint8_t* shadow = shadow_[page].get();
-      if (marked_[page] || !shadow || !committed_[page]) continue;
-      if (std::memcmp(shadow, base + (uint64_t(page) << 12), kPage) != 0) {
-        marked_[page] = 1;
-        dirty.push_back(page);
-      }
+      if (marked_[page] || !committed_[page]) continue;
+      marked_[page] = 1;
+      candidates.push_back(page);
     }
   }
-  for (uint32_t page : dirty) marked_[page] = 0;
   Undo u;
   u.frame = frame_;
-  u.pages = dirty;
-  u.bytes.resize(size_t(dirty.size()) * kPage);
-  for (size_t i = 0; i < dirty.size(); ++i) {
-    const uint32_t page = dirty[i];
-    uint8_t* shadow = Shadow(page);  // a page committed since: its content before is zeros
-    std::memcpy(u.bytes.data() + i * kPage, shadow, kPage);
-    std::memcpy(shadow, base + (uint64_t(page) << 12), kPage);
+  for (uint32_t page : candidates) {
+    marked_[page] = 0;
+    uint8_t* shadow = shadow_[page];
+    const uint8_t* now = base + (uint64_t(page) << 12);
+    if (shadow && std::memcmp(shadow, now, kPage) == 0) continue;  // written with the same bytes
+    uint8_t* fresh = Take();
+    std::memcpy(fresh, now, kPage);
+    if (!shadow) {  // a page committed since: its content before is zeros
+      shadow = Take();
+      std::memset(shadow, 0, kPage);
+      ++shadow_pages_;
+    }
+    u.pages.push_back(page);
+    u.bufs.push_back(shadow);  // the shadow's bytes (the page at the frame's start) become the undo record's
+    shadow_[page] = fresh;
   }
-  last_dirty_ = dirty.size();
-  recent_ = dirty;
+  last_dirty_ = u.pages.size();
+  recent_ = carded;
   undo_.push_back(std::move(u));
-  while (int(undo_.size()) > keep_) undo_.erase(undo_.begin());
+  while (int(undo_.size()) > keep_) {
+    for (uint8_t* page : undo_.front().bufs) Give(page);
+    undo_.erase(undo_.begin());
+  }
   frame_ = frame;
 }
 
 bool Timeline::RollBack(uint8_t* base, uint64_t frame) {
   if (frame > frame_ || undo_.empty() || undo_.front().frame > frame) return false;
-  while (!undo_.empty() && undo_.back().frame >= frame) {
-    const Undo& u = undo_.back();
+  // the kernel's objects keep their bytes of now: saved here, put back after
+  const auto holes = KernelObjectHoles();
+  std::vector<std::vector<uint8_t>> kept;
+  kept.reserve(holes.size());
+  for (const auto& [lo, hi] : holes) kept.emplace_back(base + lo, base + hi);
+  // the records undone, oldest first: a page takes the bytes of the oldest record it is in (its bytes at frame's
+  // start), once
+  size_t first = undo_.size();
+  while (first > 0 && undo_[first - 1].frame >= frame) --first;
+  std::vector<uint32_t> restored;
+  for (size_t r = first; r < undo_.size(); ++r) {
+    Undo& u = undo_[r];
     for (size_t i = 0; i < u.pages.size(); ++i) {
       const uint32_t page = u.pages[i];
-      if (!committed_[page]) continue;  // decommitted since: nothing to write back into
-      const uint8_t* old = u.bytes.data() + i * kPage;
+      uint8_t* old = u.bufs[i];
+      if (marked_[page] || !committed_[page]) {  // a newer copy of a page restored already, or one decommitted since
+        Give(old);
+        continue;
+      }
+      marked_[page] = 1;
+      restored.push_back(page);
       std::memcpy(base + (uint64_t(page) << 12), old, kPage);
-      std::memcpy(Shadow(page), old, kPage);
+      Give(shadow_[page]);
+      shadow_[page] = old;
     }
-    undo_.pop_back();
+    u.bufs.clear();
   }
+  for (uint32_t page : restored) marked_[page] = 0;
+  undo_.erase(undo_.begin() + std::ptrdiff_t(first), undo_.end());
+  for (size_t i = 0; i < holes.size(); ++i) {
+    const auto& [lo, hi] = holes[i];
+    std::memcpy(base + lo, kept[i].data(), hi - lo);
+    for (uint32_t page = lo >> 12; page <= (hi - 1) >> 12; ++page) {
+      if (shadow_[page]) {
+        const uint32_t from = std::max(lo, page << 12), to = std::min(hi, (page + 1) << 12);
+        std::memcpy(shadow_[page] + (from & (kPage - 1)), base + from, to - from);
+      }
+    }
+  }
+  holes_ = holes.size();
+  last_restored_ = restored.size();
   frame_ = frame;
   recent_.clear();
   return true;
 }
 
 size_t Timeline::Verify(uint8_t* base) {
+  RefreshCommitted();
   std::vector<uint32_t> changed;
   for (uint32_t page = 0; page < kPages; ++page) {
-    uint8_t* shadow = shadow_[page].get();
+    uint8_t* shadow = shadow_[page];
     if (!shadow || !committed_[page] || (!foreign_.empty() && foreign_[page])) continue;
     const uint8_t* now = base + (uint64_t(page) << 12);
     if (std::memcmp(shadow, now, kPage) != 0) {
       // the first words that changed (big-endian), for the first pages: what the writer writes tells who it is
       static int detailed = 0;
-      if (detailed < 60 && suspect_[page]) {
-      } else if (detailed < 60) {
+      if (detailed < 60 && !suspect_[page]) {
         ++detailed;
         std::string words;
         int shown = 0;
@@ -429,10 +556,12 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
       advances += g_sync.period;
       if (g_sync.rollbacks % 25 == 0) {
         REXLOG_INFO("[synctest] {} rollbacks of {} frames: {} frames compared, {} differed; a frame writes {:.0f} "
-                    "pages ({:.2f} ms to keep them, {:.2f} of them for the committed map), a rollback takes {:.2f} ms",
+                    "pages ({:.2f} ms to keep them; the committed map rebuilt {} times, {:.1f} ms in all), a rollback "
+                    "restores {} pages in {:.2f} ms ({} kernel objects kept as they were)",
                     g_sync.rollbacks, g_sync.back, g_sync.compared, g_sync.differed,
                     double(g_sync.pages) / double(advances), g_sync.ms_advance / double(advances),
-                    g_sync.timeline.ms_refresh(), g_sync.ms_rollback / double(g_sync.rollbacks));
+                    g_sync.timeline.refreshes(), g_sync.timeline.ms_refresh(), g_sync.timeline.last_restored(),
+                    g_sync.ms_rollback / double(g_sync.rollbacks), g_sync.timeline.kernel_holes());
       }
     }
     g_sync.next_rollback += g_sync.period;  // the frames run again, then the next rollback

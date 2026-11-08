@@ -76,6 +76,10 @@ inline void MarkStoreCardsAt(u8* cards, u32 guest_address, u32 length) noexcept 
   for (u32 page = guest_address >> 12; page <= last; ++page) cards[page] = 0;
 }
 
+// mk9-nx online (2026-11-07): how many times any heap committed, decommitted, released or reprotected pages; the
+// rollback's timeline (app/src/online/snapshot.cpp) rebuilds its map of committed pages only when this moved.
+uint64_t HeapMutations() noexcept;
+
 inline void MarkStoreCards(u32 guest_address, u32 length) noexcept {
   MarkStoreCardsAt(g_store_cards, guest_address, length);
 }

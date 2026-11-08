@@ -72,6 +72,9 @@ uint64_t FramesDone();
 // mk9-nx (2026-10-24, mk9_record_after_swap): the render thread may take everything queued so far (a game thread
 // polls for its progress); with 'fence' (mk9_gate_fence_exact, 1.0.1), only the work up to that fence's completion.
 void OpenGate(u32 fence = 0);
+// mk9-nx online (2026-11-07): while held open (a game thread draining the guest's render thread at a frame's start, the
+// rollback's snapshots), the render thread may take everything queued, as with the gate off.
+void HoldGateOpen(bool open);
 
 // Waits until everything queued so far has run.
 void Drain();

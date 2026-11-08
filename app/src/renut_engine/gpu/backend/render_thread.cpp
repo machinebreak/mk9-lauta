@@ -143,9 +143,14 @@ bool GateOn() {
   static const bool on = REXCVAR_GET(mk9_record_after_swap);
   return on;
 }
+// mk9-nx online (2026-11-07): a game thread draining the guest's render thread at a frame's start (the rollback's
+// snapshots, app/src/online/snapshot.cpp) holds the gate open meanwhile: the guest's render thread may block on a GPU
+// fence whose work is behind the gate, and the Swap that would open it is the game thread's, which waits for it. The
+// game thread has finished writing that frame's data by then. Requires g_mutex.
+bool g_gate_held_open = false;
 // Requires g_mutex.
 size_t RunnableLocked() {
-  if (!GateOn() || g_stopping)
+  if (!GateOn() || g_stopping || g_gate_held_open)
     return g_queue.size();
   return size_t(std::min<uint64_t>(g_queue.size(), g_gate > g_items_taken ? g_gate - g_items_taken : 0));
 }
@@ -605,6 +610,13 @@ uint64_t QueueFrame(std::function<void()> work) {
   g_slack_next = (g_slack_next + 1) % kSlackFrames;
   g_slack_count = std::min(g_slack_count + 1, kSlackFrames);
   return done;
+}
+
+void HoldGateOpen(bool open) {
+  std::lock_guard lock(g_mutex);
+  g_gate_held_open = open;
+  if (open)
+    OpenGateLocked();
 }
 
 void OpenGate(u32 fence) {

@@ -92,3 +92,43 @@ relanza en sesión con un perfil neutro (los guardados de cada uno tienen desblo
 avanzan juntos. Sumar a una sesión a mitad de partida exigiría dos estados iguales, que no hay.
 
 Pendiente: perfil neutro; saltear la intro; ir solo hasta la selección del Versus; Tag; peleas largas y revancha.
+
+## Rollback (F4) — el núcleo anda (2026-11-07)
+
+`app/src/online/snapshot.cpp`. La memoria de la simulación es el heap virtual por debajo de `0x70000000` y los datos
+de la imagen (`0x80000000-0x9FFFFFFF`). Quedan afuera las pilas, TLS y objetos del kernel (`0x70000000-0x7FFFFFFF`),
+el heap bajo (kernel y XAM) y los heaps físicos (texturas, búferes de GPU y audio, cosa de Renut).
+
+- **Restauración completa** (`mk9_rollback_test=F,K`): con el render de UE3 vaciado (`FlushRenderingCommands`,
+  `sub_82747FE0`), restaurar 88 MB y volver a correr 30 cuadros de pelea contra la IA da los mismos chequeos y los
+  mismos 89 sorteos. Es la prueba de que el rollback por memoria es posible.
+- **Línea de tiempo** (`Timeline`): las *store cards* (cada store del juego pone en 0 el byte `ea >> 12` del primer MB)
+  dicen qué páginas se escribieron desde el último cuadro. Renut sólo lee las de los heaps físicos, así que éstas las
+  consume la línea de tiempo. Cada página escrita deja su contenido anterior (de una copia sombra) en el registro de
+  deshacer del cuadro. Retroceder restaura cada página una vez, desde el registro más viejo que la tiene.
+- **Lo que las cards no ven** se cubre así:
+  - los stores que marcan la card *antes* del dato (vectoriales, `dcbz`, el CRT del SDK), hechos por otro hilo justo
+    mientras se consumen las cards: se vuelven a comparar las páginas del cuadro anterior;
+  - lo que escribe el host sin card (búferes de audio, lecturas de archivo): se aprende comparando todo durante los
+    primeros 2 s y después se compara cada cuadro.
+
+  Los objetos del kernel que viven en la memoria del juego nunca se revierten: son "agujeros" sacados de la tabla de
+  objetos del SDK (hoy no hay ninguno en el rango).
+- **Renut:** mientras el cuadro vacía el render de UE3, la compuerta de Renut se mantiene abierta (`HoldGateOpen`). Si
+  no, el render de UE3 esperaba una cerca de GPU detrás de la compuerta, la compuerta esperaba el Swap del juego, y el
+  juego esperaba el vaciado: un cuelgue de 3 s hasta el watchdog.
+- **SyncTest** (`mk9_synctest=F,P,K`): cada P cuadros retrocede K y compara los chequeos del juego de cada cuadro que
+  vuelve a correr. 125 rollbacks de 6 cuadros, 744 cuadros comparados, 0 diferencias, a 60 fps. Guardar un cuadro
+  (~1700 páginas) cuesta ~4 ms y retroceder 6 cuadros ~1 ms (el mapa de páginas comprometidas se rehace sólo cuando
+  algún heap cambió: contador `rex::memory::HeapMutations` del SDK).
+- **Herramientas:**
+  - `mk9_timeline_verify` compara toda la sombra y muestra los bytes cambiados sin card;
+  - `mk9_write_trace` + `tools/online/write_report.py` dicen quién escribe una página;
+  - `tools/online/synctest_runs.ps1` repite el SyncTest.
+
+Falta (F5):
+- resimulación rápida: los cuadros repetidos sin pacing ni presentación;
+- el netcode de rollback: predicción, retroceso al llegar una entrada distinta, sincronía de tiempo; lockstep en menús
+  y cargas, rollback en la pelea;
+- el sonido (hoy la memoria de FMOD se revierte con todo);
+- bajar el costo de guardar (copias en paralelo).
