@@ -185,10 +185,32 @@ Resultado con 40 ms de lag + 10 ms de jitter (RTT ~115 ms): 3 de 3 peleas comple
 185-226 rollbacks por lado, hasta 4 cuadros), sin desync, sin cuelgues, sin crashes; el sonido suena (medidor de nivel
 en el reporte de audio del SDK: picos 0.07-0.45 en pelea).
 
-Pendiente del sonido: las llamadas del juego a FMOD en un cuadro que se vuelve a correr se repiten (un golpe que suena
-en esos cuadros suena dos veces). El arreglo: grabar las llamadas (66 funciones, 194 sitios) en la primera corrida de
-cada cuadro y, al repetirlo, devolver lo grabado si la secuencia coincide; si diverge, llamar de verdad y parar los
-eventos que la primera corrida arrancó y la nueva no.
+### Los sonidos de los cuadros que se vuelven a correr (2026-11-08)
+
+Un cuadro que el rollback vuelve a correr arrancaba otra vez los sonidos que su primera corrida ya había arrancado (un
+golpe sonando dos veces, uno o más cuadros corrido: en una pelea con 40 ms de lag, 25 de cada ~700). La fuente de
+sonido de UE3 para FMOD toca un sonido (`sub_82607A48`) con una instancia de evento que saca del pool de ese sonido
+(`sub_82607310`, el virtual +180 del sonido: el pool en +200/+204, en la memoria del juego) y después la arranca
+(`FMOD::Event::start`, `sub_82E46DE8`). El pool se revierte con el rollback pero FMOD no: el relleno previo
+(`sub_825CA9B8`) ve ocupada la instancia que la primera corrida arrancó y pone otra nueva, que se arranca y suena encima.
+
+El arreglo (`sound_replay.h`, `mk9_sound_replay`, encendido): en una pelea con rollback se guarda, por cuadro, qué
+instancia dio cada saque del pool (el sonido y el orden del saque en el cuadro) y qué instancias se arrancaron. En un
+cuadro que se vuelve a correr, el mismo saque devuelve la instancia de la primera corrida y su `start` no hace nada: el
+juego queda con la misma instancia que antes y el sonido sigue como iba. Lo que la corrida corregida hace distinto va
+a FMOD como siempre (un sonido que ahora sí ocurre se oye tarde por los cuadros del rollback), y lo que la primera
+corrida arrancó y la corregida ya no, se para con su fade (antes se le saca el callback: el del juego, `sub_82603360`,
+marcaría la fuente que esté en esa dirección). Con 40 ms de lag + jitter: 68 y 37 sonidos que antes se duplicaban
+siguen sonando una sola vez; 30 y 7 nuevos de la corrida corregida; sin desync.
+
+### El borde en reposo y los fps (2026-11-08)
+
+El `[net]` dice "at rest ~12 ms a boundary (render ~12)": casi todo es la espera del vblank. El hilo de render de UE3
+hace el `Swap` y ahí espera el pacing de Renut (`[renut] game thread ... paced`: ~11 ms por cuadro en pelea), y el
+vaciado del borde lo espera. El trabajo real del cuadro (juego + resto del render) es ~5 ms en esta PC: hay margen
+para una PC bastante más lenta antes de perder 60 fps. El borde también deja la entrada a un cuadro de la pantalla
+(`[latency] input -> present ~15 ms`): en paralelo, juego y render sumarían un cuadro de latencia. Saltear el borde en
+los cuadros confirmados solo ayudaría en LAN (por internet casi todos los cuadros corren con predicción).
 
 Fluidez: los cuadros que se vuelven a correr no se dibujan (Renut descarta sus draws y la cadena de estados arranca
 de cero en el siguiente; `queued.cpp`, `SkipHiddenDraw`). El contador `[fps]` separa los cuadros mostrados de los
@@ -196,6 +218,5 @@ ocultos y cuenta los mostrados tarde: con 40 ms de lag + jitter y 25-64 cuadros 
 mostrados, el más largo 17-20 ms, 0-1 por encima de 20 ms.
 
 Falta (F5):
-- que un cuadro repetido no vuelva a disparar sonidos (lo de arriba);
-- abaratar el borde de los cuadros vivos (~10 ms de vaciado del render) y copiar páginas en paralelo;
+- copiar páginas en paralelo (el `keeping a frame` de ~1.4 ms);
 - pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.

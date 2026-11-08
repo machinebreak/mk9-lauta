@@ -48,7 +48,7 @@
 //            u64 hash (of that final frame), u32 the sender's live frame (time sync)
 //   BARRIER  u32 epoch (the one starting there), u32 the sender's last frame of the epoch before
 //   PING / PONG  u64 microseconds (the sender's clock, echoed)
-//   BYE
+//   BYE      u8 why (netplay.h, EndReason: the sender's player left, or its game found the two out of sync)
 // The sync hash of a frame: the game's own checks during it (OnCheck: what its online compared, a draw of its random
 // number generator among them) and the mk9_net_sync_ranges after it. A frame whose hashes differ is reported.
 
@@ -80,6 +80,7 @@
 #include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/sound_memory.h"
+#include "online/sound_replay.h"
 #include "online/snapshot.h"
 #include "online/transport.h"
 #include "profiler/sa2_cpu_profile_pc.h"
@@ -766,8 +767,11 @@ void LogStats() {
                        q.pool_waits, g.advantage, g.syncs_slept);
     }
     const sound::HeapStats sound = sound::Stats();
-    rb += fmt::format("; sound's arena {:.1f} MB in use (peak {:.1f}), {} blocks", sound.in_use / 1048576.0,
-                      sound.peak / 1048576.0, sound.blocks);
+    const sound_replay::Stats sounds = sound_replay::GetStats();
+    rb += fmt::format("; sound's arena {:.1f} MB in use (peak {:.1f}), {} blocks; sounds started {}, in frames run "
+                      "again {} kept playing ({} instances given back), {} new, {} stopped",
+                      sound.in_use / 1048576.0, sound.peak / 1048576.0, sound.blocks, sounds.starts_live,
+                      sounds.starts_skipped, sounds.pops_replayed, sounds.starts_new, sounds.stopped);
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
                 "longest {:.1f} ms), peer inputs to {}; sent {}, received {}{}{}",
                 g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
@@ -885,6 +889,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     g.rollback = false;
     g.mode_change_at = -1;
     g.timeline = snapshot::Timeline();
+    sound_replay::OnFrame(ctx, base, 0, false);
     sa2::renut::SetFrameHidden(false);
     // this frame, as lockstep does it: its local input is the one this side already sent
     WaitFor([&] { return g.remote_upto >= g.frame; });
@@ -907,7 +912,8 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   SetFramePads(g.local[size_t(g.frame)], remote);
   g.frame_busy = 0;
   g.frame_ready = 0xFF;
-  // a frame run again is not shown and not paced
+  // a frame run again is not shown and not paced, and keeps the sounds its first run started (sound_replay.h)
+  sound_replay::OnFrame(ctx, base, uint64_t(g.epoch) << 32 | uint64_t(g.frame + 1), g.frame < g.latest);
   sa2::renut::SetFrameHidden(g.frame < g.latest);
   ++g.frame;
   ++g.frames_window;
@@ -943,7 +949,10 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     if (g.started && g.desync_at >= 0 && REXCVAR_GET(mk9_net_end_on_desync)) EndSession(EndReason::kDesync, true);
   }
   if (!Active()) {
-    if (g.started) sa2::renut::SetFrameHidden(false);  // a session that ended shows every frame again
+    if (g.started) {
+      sa2::renut::SetFrameHidden(false);  // a session that ended shows every frame again
+      sound_replay::OnFrame(ctx, base, 0, false);
+    }
     return;
   }
   g.game_thread = std::this_thread::get_id();
@@ -976,6 +985,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   if (g.rollback) {
     RollbackFrame(ctx, base);
   } else {
+    sound_replay::OnFrame(ctx, base, 0, false);
     LockstepFrame(base);
   }
 }

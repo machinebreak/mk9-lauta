@@ -98,6 +98,7 @@ set(MK9_SOURCES
     src/online/room.cpp
     src/online/session.cpp
     src/online/online_ui.cpp
+    src/online/sound_replay.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
     src/online/guest_memory.cpp
