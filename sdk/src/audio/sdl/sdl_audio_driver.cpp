@@ -99,6 +99,21 @@ void RecordOutput(const float* data, int bytes, uint32_t channels) {
   dump_output.samples = std::vector<float>();
 }
 
+// mk9-nx (2026-11-08): the loudest sample the game gave in the report's window (before audio_mute), so a muted test
+// run still tells sound from silence. A frame: 6 channels x 256 big-endian floats.
+float peak_level = 0;
+void MeasureFrame(const float* frame) {
+  const uint32_t* words = reinterpret_cast<const uint32_t*>(frame);
+  for (int i = 0; i < 6 * 256; i += 7) {  // every 7th sample is enough for a meter
+    uint32_t w = words[i];
+    w = (w >> 24) | ((w >> 8) & 0xFF00) | ((w << 8) & 0xFF0000) | (w << 24);
+    float v;
+    std::memcpy(&v, &w, 4);
+    v = v < 0 ? -v : v;
+    if (v > peak_level && v < 1e6f) peak_level = v;
+  }
+}
+
 void CountFrame(bool silence) {
   ++(silence ? frames_of_silence : frames_with_data);
   const auto now = std::chrono::steady_clock::now();
@@ -106,9 +121,10 @@ void CountFrame(bool silence) {
     return;
   }
   if (last_report_output.time_since_epoch().count() != 0) {
-    REXAPU_INFO("[audio] SDL in 10 s: {} frames with data and {} of silence from missing frames",
-                frames_with_data, frames_of_silence);
+    REXAPU_INFO("[audio] SDL in 10 s: {} frames with data and {} of silence from missing frames; loudest sample {:.3f}",
+                frames_with_data, frames_of_silence, peak_level);
   }
+  peak_level = 0;
   frames_with_data = 0;
   frames_of_silence = 0;
   last_report_output = now;
@@ -321,6 +337,7 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
         for (int32_t k = 0; k < burst && !driver->frames_queued_.empty(); ++k) {
           float* buffer = driver->frames_queued_.front();
           driver->frames_queued_.pop();
+          MeasureFrame(buffer);
           const size_t start = driver->burst_.size();
           driver->burst_.resize(start + size_t(sample_count));
           if (REXCVAR_GET(audio_mute)) {
@@ -380,6 +397,7 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
     } else {
       auto buffer = driver->frames_queued_.front();
       driver->frames_queued_.pop();
+      MeasureFrame(buffer);
       if (REXCVAR_GET(audio_mute)) {
         std::memset(data, 0, len);
       } else {

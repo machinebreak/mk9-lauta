@@ -305,9 +305,11 @@ void Timeline::Start(uint8_t* base, uint64_t frame, int keep, bool calibrate) {
     foreign_count_ = 0;
     if (calibrate) REXLOG_INFO("[timeline] mk9_timeline_foreign off: they stay in");
   }
-  // what is not the simulation (sound_memory.h: FMOD's static data): its whole pages are never kept, and a rollback
-  // leaves its bytes in the pages it shares as they are
+  // what is not the simulation (sound_memory.h: FMOD's static data; sa2_renut_pacing.h: the D3D device's words that
+  // count the GPU's progress): its whole pages are never kept, and a rollback leaves its bytes in the pages it shares
+  // as they are
   untracked_ = sound::UntrackedRanges();
+  for (const auto& range : sa2::renut::GpuProgressRanges()) untracked_.push_back(range);  // the GPU's progress
   untracked_pages_ = 0;
   for (const auto& [lo, hi] : untracked_) {
     for (uint32_t page = (lo + kPage - 1) >> 12; (uint64_t(page) + 1) << 12 <= hi; ++page) {

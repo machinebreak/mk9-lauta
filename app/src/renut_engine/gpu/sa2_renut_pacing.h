@@ -2,6 +2,8 @@
 #pragma once
 
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace sa2::renut {
 
@@ -14,5 +16,12 @@ void PaceSwap(uint32_t device_va);
 // start, with the guest's render thread idle (the rollback drains it there), so the frame's Swap reads its own value.
 void SetFrameHidden(bool hidden);
 bool FrameHidden();
+
+// mk9-nx online (2026-11-08): the guest words of the title D3D device that count the GPU's progress (the current fence
+// tag, the fence completion word, the Swap's counters and tags, the kick flag, the ring stub's pointers: [start, end)
+// byte ranges), which Renut's host state follows. A rollback leaves them as they are: put back, the device would wait
+// for a fence Renut has long completed, or for one it will never queue (hooks/device.cpp). Empty before the device
+// exists.
+std::vector<std::pair<uint32_t, uint32_t>> GpuProgressRanges();
 
 }  // namespace sa2::renut

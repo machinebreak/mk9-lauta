@@ -167,6 +167,26 @@ BusyScope::~BusyScope() { TurnRest(Self()); }
 
 void SetExempt(bool exempt) { Self()->exempt.store(exempt); }
 
+GuardScope::GuardScope() {
+  Record* r = Self();
+  was_exempt_ = r->exempt.load();
+  if (!was_exempt_) return;
+  r->exempt.store(false);
+  // a park already on may be looking at this thread: it waits for the park's end at rest
+  while (g_on.load() && g_parker.load() != r) {
+    r->busy.fetch_sub(1);
+    {
+      std::unique_lock<std::mutex> lock(g_mutex);
+      g_cv.wait(lock, [] { return !g_on.load(); });
+    }
+    r->busy.fetch_add(1);
+  }
+}
+
+GuardScope::~GuardScope() {
+  if (was_exempt_) Self()->exempt.store(true);
+}
+
 void ThreadExiting() {
   Record* r = Self();
   r->busy.store(0);

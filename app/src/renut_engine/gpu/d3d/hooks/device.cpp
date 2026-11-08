@@ -1496,6 +1496,21 @@ void Sa2SynchronizeToPresentationInterval_hook(u32 device_va, u32 /*immediate*/)
 
 }  // namespace
 
+std::vector<std::pair<uint32_t, uint32_t>> sa2::renut::GpuProgressRanges() {
+  const u32 device = Video::GuestDevice();
+  if (!device)
+    return {};
+  constexpr u32 kFenceOffset = d3d::kDeviceAllocSize + ((kSideBufferSize + 0x7F) & ~0x7Fu);  // the fence word
+  return {{device + native::off::Ring, device + native::off::RingGuarantee + 4},
+          {device + d3d::kDeviceOffsetFenceTag, device + d3d::kDeviceOffsetFenceTag + 4},
+          {device + d3d::kDeviceOffsetSwapFenceTag, device + d3d::kDeviceOffsetSwapFenceTag + 4},
+          {device + d3d::kDeviceOffsetSwapFlags, device + d3d::kDeviceOffsetSwapFlags + 1},
+          {device + kDeviceOffsetInKickOff, device + kDeviceOffsetInKickOff + 4},
+          {device + d3d::kDeviceOffsetPresentFenceTag, device + d3d::kDeviceOffsetPresentFenceTag + 4},
+          {device + d3d::kDeviceOffsetSwapCount, device + d3d::kDeviceOffsetSwapCount + 4},
+          {device + kFenceOffset, device + kFenceOffset + 4}};
+}
+
 BANJO_RENUT_HOOK_RAW(sub_82BF6108) {  // Direct3D_CreateDevice [0x8264DF28]
   Sa2CreateDevice(ctx, base);
 }

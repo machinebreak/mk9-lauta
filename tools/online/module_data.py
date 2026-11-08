@@ -49,19 +49,24 @@ def group(addresses, gap):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--strings', action='append', required=True)
+    ap.add_argument('--strings', action='append', default=[])
+    ap.add_argument('--code', help='the code span, hex lo-hi, instead of finding it from --strings')
     ap.add_argument('--gap', type=lambda s: int(s, 0), default=0x400)
     ap.add_argument('--image', default=ppc_xref.DEFAULT_IMAGE)
     args = ap.parse_args()
     img = ppc_xref.Image(args.image)
 
-    targets = sorted({s for needle in args.strings for s in strings_with(img, needle)})
-    if not targets:
-        sys.exit('no string has that text')
-    users = sorted({func for _, func, _, _ in ppc_xref.scan(img, targets, 1)})
-    code_lo = users[0]
-    code_hi = img.func_of(users[-1])[1]
-    print(f'code {code_lo:08X}-{code_hi:08X} ({len(users)} functions use the strings, {len(targets)} strings)')
+    if args.code:
+        code_lo, code_hi = (int(x, 16) for x in args.code.split('-'))
+        print(f'code {code_lo:08X}-{code_hi:08X} (given)')
+    else:
+        targets = sorted({s for needle in args.strings for s in strings_with(img, needle)})
+        if not targets:
+            sys.exit('no string has that text (or give --code)')
+        users = sorted({func for _, func, _, _ in ppc_xref.scan(img, targets, 1)})
+        code_lo = users[0]
+        code_hi = img.func_of(users[-1])[1]
+        print(f'code {code_lo:08X}-{code_hi:08X} ({len(users)} functions use the strings, {len(targets)} strings)')
 
     data_lo, data_hi = img.sections['.data']
     inside, outside = set(), set()

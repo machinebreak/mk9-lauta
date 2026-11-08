@@ -14,12 +14,17 @@
 //   - its threads (FMOD::Thread's loop, sub_82DEB0B8: the mixer, stream, file, non-blocking and geometry threads) run
 //     on through a boundary's park (rex/system/guest_park.h, SetExempt): they touch nothing of the game's. Its banks
 //     are read from the game's packages in memory, unchanged by a rollback.
-// What the game asks of FMOD during a frame (an event started, a parameter set) is not undone by a rollback either:
-// a frame run again asks again, and FMOD's own memory below it (XAudio2's voices, ~0x832A0000) is still the game's.
-// Until those calls are recorded and played back to a frame run again, and XAudio2 is apart too, this stays off
-// (mk9_sound_apart): the sound is rolled back with the rest, its threads parked at their idle places.
+// Below FMOD, XAudio2 (the XDK's, ~0x832A0000-0x832EFFFF) goes apart the same way: its XMemAlloc blocks (allocator
+// id 0x97; sub_823667D8 XMemAlloc, sub_823667E0 XMemFree) come from the same arena, its static data is left as it is
+// (module_data.py --code 832A0000-832F0000), and its worker thread (sub_832C92D0) and the render callback the SDK's
+// Audio Worker calls (sub_832CCC30, registered by sub_832CCE40) run on through parks. XMA's contexts and buffers are
+// physical memory, outside the timeline already.
+// What the game asks of FMOD during a frame (an event started, a parameter set) is not undone by a rollback either: a
+// frame run again asks again (a sound started in the frames run again plays twice) until those calls are recorded and
+// played back to a frame run again.
 //
-//   mk9_sound_apart=<bool>   FMOD in memory of its own (read once, at FMOD's first allocation)
+//   mk9_sound_apart=<bool>   the sound in memory of its own (true; read once, at FMOD's first allocation). Off, the
+//                            sound is rolled back with the rest: FMOD hangs once its state and XMA's part ways
 
 #pragma once
 

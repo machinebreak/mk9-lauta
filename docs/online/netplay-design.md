@@ -157,28 +157,41 @@ tener); el SDK cuenta los cambios de la tabla de objetos (`ObjectTable::Mutation
 SyncTest con los cuadros repetidos ocultos (`mk9_synctest_hidden`): 150-200 rollbacks de 6 cuadros, 0 diferencias,
 ningún cuelgue. Costo del borde: ~9 ms, casi todo el vaciado del render (los pools y el park, menos de 0.5 ms).
 
-### El sonido — tiene que quedar afuera del rollback
+### El sonido y la GPU — afuera del rollback (2026-11-08)
 
-Con lag real, ~1000 cuadros adentro de la pelea, FMOD se cuelga: un hilo suyo recorre una lista con un índice basura
-(`sub_82DEDE10`) teniendo su lock, y el juego espera ese lock. Restaurar la memoria de FMOD no puede quedar
-consistente: debajo están XAudio2 (`~0x832A0000-0x832D0000`, su hilo `sub_832C92D0`, su memoria por `XMemAlloc`
-`sub_823667D8` con el id `0x97`), los contextos XMA en memoria física y el decodificador XMA del host, que no se
+Con lag real, ~1000 cuadros adentro de la pelea, FMOD se colgaba: un hilo suyo recorría una lista con un índice
+basura (`sub_82DEDE10`) teniendo su lock, y el juego esperaba ese lock. Restaurar la memoria de FMOD no puede quedar
+consistente: debajo están XAudio2, los contextos XMA en memoria física y el decodificador XMA del host, que no se
 revierten. Y aunque se pudiera, cada rollback haría sonar de nuevo los últimos cuadros (el audio "salta para atrás").
 
-El diseño correcto (el de los juegos con rollback): el mundo del sonido (FMOD + XAudio2 + XMA) vive afuera de la
-simulación, y la frontera son las llamadas del juego a FMOD:
+El diseño (el de los juegos con rollback): el mundo del sonido vive afuera de la simulación (`sound_memory.h`,
+`mk9_sound_apart`, encendido):
 
-- **memoria aparte** (`sound_memory.h`, `mk9_sound_apart`, apagado por ahora): el heap de FMOD sale de un arena
-  propio (`0x7B000000-0x7EFFFFFF`, sus tres callbacks de memoria) y sus datos estáticos (`0x833A7D28-0x833AE0BC`,
-  `0x83462198-0x834B67A0`, `tools/online/module_data.py`) no se revierten; sus hilos siguen durante el park. Falta lo
-  mismo para XAudio2 (sus `XMemAlloc` con id `0x97`, sus estáticos, su hilo y el Audio Worker);
-- **grabar y reproducir** las llamadas del juego a FMOD (66 funciones, 194 sitios): en la primera corrida de cada
-  cuadro se graban (argumentos, resultado, lo que escriben en la memoria del juego, y las llamadas de vuelta de FMOD
-  al juego); al repetir el cuadro, si la secuencia coincide, se devuelve lo grabado sin tocar FMOD; si diverge, se
-  llama de verdad y los eventos que la primera corrida arrancó y la nueva no, se paran.
+- el heap de FMOD sale de un arena propio (`0x7B000000-0x7EFFFFFF`) por sus tres callbacks de memoria, y sus datos
+  estáticos (`0x833A7D28-0x833AE0BC`, `0x83462198-0x834B67A0`, `tools/online/module_data.py`) no se revierten;
+- XAudio2: sus bloques de `XMemAlloc` con id `0x97` (`sub_823667D8`, `sub_823667E0`) también salen del arena; sus
+  datos estáticos sí se revierten (se arman al arrancar; sacarlos por rangos "adivinados" rompía al hilo de render);
+- los hilos de FMOD y XAudio2 y el callback del Audio Worker siguen durante el park (`park::SetExempt`); cuando un hilo
+  de FMOD entra a código del juego (los callbacks de archivos que UE3 le da a FMOD, `sub_82602B30` y compañía), es del
+  juego mientras dura (`park::GuardScope`): espera a que termine el park y el park lo espera a él.
+
+La GPU es otro mundo que avanza sola: Renut lleva en el host las cercas encoladas y completadas, pero el dispositivo
+D3D del juego (en `0x40012980`, memoria de la simulación) tiene la etiqueta de cerca, la palabra de completado, los
+contadores del Swap y los punteros del anillo. Revertidos, el hilo de render de UE3 esperaba una cerca que Renut ya
+había completado o que nunca iba a encolar (cuelgue en `BlockOnFence`). Esas palabras quedan fuera
+(`sa2::renut::GpuProgressRanges`); el estado de render del dispositivo sí se revierte (lo cachea UE3).
+
+Resultado con 40 ms de lag + 10 ms de jitter (RTT ~115 ms): 3 de 3 peleas completas (~4000 cuadros con rollback,
+185-226 rollbacks por lado, hasta 4 cuadros), sin desync, sin cuelgues, sin crashes; el sonido suena (medidor de nivel
+en el reporte de audio del SDK: picos 0.07-0.45 en pelea).
+
+Pendiente del sonido: las llamadas del juego a FMOD en un cuadro que se vuelve a correr se repiten (un golpe que suena
+en esos cuadros suena dos veces). El arreglo: grabar las llamadas (66 funciones, 194 sitios) en la primera corrida de
+cada cuadro y, al repetirlo, devolver lo grabado si la secuencia coincide; si diverge, llamar de verdad y parar los
+eventos que la primera corrida arrancó y la nueva no.
 
 Falta (F5):
-- el sonido afuera del rollback (lo de arriba);
+- que un cuadro repetido no vuelva a disparar sonidos (lo de arriba);
 - abaratar el borde: no dibujar los cuadros ocultos (el vaciado del render es casi todo el costo) y copiar páginas
   en paralelo;
 - pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.

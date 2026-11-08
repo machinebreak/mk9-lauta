@@ -579,14 +579,17 @@ REX_HOOK_RAW(sub_830AC338) {
 
 // Tasks a rollback boundary's park must not find a thread halfway through (quiesce.h; rex/system/guest_park.h,
 // WorkScope): what FMOD's threads run each turn of their loop (FMOD::Thread, sub_82DEB0B8: a callback at +288 or the
-// thread's first virtual function; sound_memory.cpp logs each thread's), and a job of the game's job system
-// (sub_8255F188's threads run each one with sub_82778508).
+// thread's first virtual function; sound_memory.cpp logs each thread's), and the game's job system (sub_8255F188's
+// threads take each job with sub_827783B0, which first finishes off the one before and takes the queue's lock, and
+// run it with sub_82778508: a thread parked waiting for that lock held a job of the memory from before a rollback,
+// and the queue's lock-free list came out broken).
 #define MK9_WORK_HOOK(name)                       extern "C" REX_FUNC(__imp__##name);             REX_HOOK_RAW(name) {                              rex::system::park::WorkScope work;              __imp__##name(ctx, base);                     }
 MK9_WORK_HOOK(sub_82E213C8)  // FMOD: the thread waiting on a semaphore (F80001FC at boot)
 MK9_WORK_HOOK(sub_82DFB4C8)  // FMOD: a thread's virtual work, every 1 ms
 MK9_WORK_HOOK(sub_82DD4310)  // FMOD: a thread's callback, every 10 ms
 MK9_WORK_HOOK(sub_82DF9B50)  // FMOD: a semaphore thread started in a fight
 MK9_WORK_HOOK(sub_82DDDCB8)  // FMOD: another one
+MK9_WORK_HOOK(sub_827783B0)  // the job system: the next job taken
 MK9_WORK_HOOK(sub_82778508)  // the job system: one job
 #undef MK9_WORK_HOOK
 

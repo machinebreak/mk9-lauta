@@ -21,8 +21,10 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
-REXCVAR_DEFINE_BOOL(mk9_sound_apart, false, "MK9 Online",
-                    "FMOD in memory of its own, out of rollback's reach (sound_memory.h; not finished: off)");
+REXCVAR_DEFINE_BOOL(mk9_sound_apart, true, "MK9 Online",
+                    "FMOD and XAudio2 in memory of their own, out of rollback's reach (sound_memory.h)");
+REXCVAR_DEFINE_BOOL(mk9_sound_xaudio2_data, false, "MK9 Online",
+                    "Test: XAudio2's static data left as it is by a rollback too (the ranges only its code refers to)");
 
 namespace mk9::sound {
 namespace {
@@ -34,10 +36,11 @@ constexpr uint32_t kGranule = 16;
 
 class Arena {
  public:
-  uint32_t Alloc(uint32_t size) {
+  uint32_t Alloc(uint32_t size, uint32_t align = 0) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!Ready()) return 0;
-    const uint32_t align = size >= 1024 ? 128 : kGranule;
+    if (!align) align = size >= 1024 ? 128 : kGranule;
+    align = std::max(align, kGranule);
     size = std::max<uint32_t>(kGranule, (size + kGranule - 1) & ~(kGranule - 1));
     // the smallest free block that holds the size once aligned
     for (auto it = by_size_.lower_bound(size); it != by_size_.end(); ++it) {
@@ -164,7 +167,14 @@ std::vector<std::pair<uint32_t, uint32_t>> UntrackedRanges() {
   if (!Apart()) return {};
   // FMOD's .data (from its gGlobal pointer on) and .bss (from its MemPool on), each up to the first address other
   // code refers to (tools/online/module_data.py --strings "..\src\fmod" --strings "FMOD ")
-  return {{0x833A7D28, 0x833AE0BC}, {0x83462198, 0x834B67A0}};
+  static const bool xaudio2_data = REXCVAR_GET(mk9_sound_xaudio2_data);
+  std::vector<std::pair<uint32_t, uint32_t>> ranges = {{0x833A7D28, 0x833AE0BC}, {0x83462198, 0x834B67A0}};
+  if (xaudio2_data) {
+    // XAudio2's (test): what only its code refers to (module_data.py --code 832A0000-832F0000)
+    ranges.insert(ranges.end(), {{0x833A01D8, 0x833A01DC}, {0x833C3760, 0x833C3B40}, {0x833C58B0, 0x833C5B28},
+                                 {0x834C199C, 0x834C1A38}, {0x834C1F48, 0x834C2424}, {0x834CB0A8, 0x834CB0AC}});
+  }
+  return ranges;
 }
 
 HeapStats Stats() { return g_arena.Stats(); }
@@ -219,6 +229,68 @@ REX_HOOK_RAW(sub_8258DCA0) {
   }
   __imp__sub_8258DCA0(ctx, base);
 }
+
+// XMemAlloc (r3 size, r4 the XALLOC attributes) and XMemFree (r3 block, r4 attributes): XAudio2's virtual blocks
+// (allocator id 0x97) from the arena; everything else as before.
+namespace mk9::sound {
+namespace {
+constexpr uint32_t kXAudio2 = 0x97;
+bool XAudio2Virtual(uint32_t attributes) {
+  return ((attributes >> 16) & 0xFF) == kXAudio2 && !(attributes & 0x80000000u);
+}
+}  // namespace
+}  // namespace mk9::sound
+
+extern "C" REX_FUNC(__imp__sub_823667D8);
+REX_HOOK_RAW(sub_823667D8) {
+  const uint32_t size = ctx.r3.u32, attributes = ctx.r4.u32;
+  if (!mk9::sound::Apart() || !mk9::sound::XAudio2Virtual(attributes)) {
+    __imp__sub_823667D8(ctx, base);
+    return;
+  }
+  const uint32_t code = (attributes >> 24) & 0xF;
+  const uint32_t block = mk9::sound::g_arena.Alloc(size, code > 4 ? 1u << code : 16u);
+  if (!block) {
+    __imp__sub_823667D8(ctx, base);
+    return;
+  }
+  if (attributes & 0x40000000u) std::memset(base + block, 0, size);  // XALLOC_ZEROINITIALIZE
+  ctx.r3.u64 = block;
+}
+
+extern "C" REX_FUNC(__imp__sub_823667E0);
+REX_HOOK_RAW(sub_823667E0) {
+  if (mk9::sound::Apart() && mk9::sound::g_arena.Contains(ctx.r3.u32)) {
+    mk9::sound::g_arena.Free(ctx.r3.u32);
+    return;
+  }
+  __imp__sub_823667E0(ctx, base);
+}
+
+// XAudio2's worker thread and the render callback the SDK's Audio Worker calls: they run on through a rollback
+// boundary's park once the sound is apart (the exemption stays with the thread).
+extern "C" REX_FUNC(__imp__sub_832C92D0);
+REX_HOOK_RAW(sub_832C92D0) {
+  if (mk9::sound::Apart()) rex::system::park::SetExempt(true);
+  __imp__sub_832C92D0(ctx, base);
+}
+extern "C" REX_FUNC(__imp__sub_832CCC30);
+REX_HOOK_RAW(sub_832CCC30) {
+  if (mk9::sound::Apart()) rex::system::park::SetExempt(true);
+  __imp__sub_832CCC30(ctx, base);
+}
+
+// The game's callbacks FMOD calls, on its own threads too: the file system UFmodAudioDevice hands FMOD (sub_82603488:
+// open, close, read, seek, and one more; they go through UE3's file and async IO code, in the game's memory). An
+// exempt sound thread in one of them is the game's for the time being (rex/system/guest_park.h, GuardScope).
+#define MK9_GAME_CALLBACK(name)                   extern "C" REX_FUNC(__imp__##name);             REX_HOOK_RAW(name) {                              rex::system::park::GuardScope guard;            __imp__##name(ctx, base);                     }
+MK9_GAME_CALLBACK(sub_82602B30)
+MK9_GAME_CALLBACK(sub_82602CA8)
+MK9_GAME_CALLBACK(sub_82602D00)
+MK9_GAME_CALLBACK(sub_82602D88)
+MK9_GAME_CALLBACK(sub_82602E00)
+MK9_GAME_CALLBACK(sub_82603360)
+#undef MK9_GAME_CALLBACK
 
 // FMOD::Thread's loop (its mixer, stream, file, non-blocking and geometry threads): they run on through a rollback
 // boundary's park.

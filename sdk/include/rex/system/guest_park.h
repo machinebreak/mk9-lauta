@@ -58,6 +58,19 @@ void ThreadExiting();
 // memory a parking thread keeps or puts back (a library given memory of its own, mk9's sound).
 void SetExempt(bool exempt);
 
+// An exempt thread running code that does touch that memory for the scope (a library's callback into the game): a
+// park on now is waited out first, and Begin waits for the thread to leave the scope. Nothing for other threads.
+class GuardScope {
+ public:
+  GuardScope();
+  ~GuardScope();
+  GuardScope(const GuardScope&) = delete;
+  GuardScope& operator=(const GuardScope&) = delete;
+
+ private:
+  bool was_exempt_ = false;
+};
+
 struct ThreadView {
   uint32_t host_id = 0;     // the host thread's id
   std::string name;         // its guest thread's name when it first rested or called guest code
