@@ -130,10 +130,11 @@ build los suma solo.
 | F0 preparación | **hecha**: build de Windows reproducible, el juego corre nativo a 60 fps (Vulkan y D3D12, 720p y 1080p) |
 | F1 mapa del motor | avanzado: bucle principal, lectura de mandos, interfaz de captura (Práctica y online), línea de comandos, fenceposts, GMalloc, rand, info de la partida (ver engine-map.md) |
 | F2 determinismo | **logrado en lockstep**: dos instancias llegan a la pelea en el mismo cuadro y pelean sin desync (semillas, cargas, películas, "escena lista", barrera; netplay-design.md). Herramientas: grabar/reproducir mandos, hashes, registro de sorteos con pila, de nativas y de scripts |
-| F3 online con retraso | lockstep por UDP entre dos instancias andando (`app/src/online/netplay.cpp`, `tools/online/pair_test.ps1`); falta el transporte por internet, el lobby y la sesión desde la selección del versus |
+| F3 online | **hecho**: lobby (WebSocket al lobby compartido), camino propio por ICE (libjuice), salas de dos con chat, partida rápida y chat global, la sesión que se vuelve a abrir ya unida, pantallas online (F1) y fin de sesión con motivo (lobby.md) |
 | F4 instantáneas + SyncTest | **núcleo hecho**: línea de tiempo por store cards, SyncTest con 0 diferencias en 744 cuadros repetidos a 60 fps (netplay-design.md, "Rollback") |
-| F5 rollback | pendiente |
-| F6 pulido, F7 launcher/beta | pendiente; ya están los íconos de Xbox y la configuración para jugar (`app/mk9.toml`) |
+| F5 rollback | **anda**: rollback en la pelea con lag y jitter sin desync, cuadros re-simulados sin dibujar, sonido y GPU afuera del rollback, sin sonidos duplicados (netplay-design.md) |
+| F6 pulido | en curso: ventana de Opciones (F2) con presets Baja / Consola / Alta / Ultra; íconos de Xbox y configuración para jugar (`app/mk9.toml`) |
+| F7 launcher/beta | pendiente (nombre del producto y distribución: decisiones del dueño) |
 
 Para jugar a mano: abrir `out\pc\mk9.exe` (la configuración `out\pc\mk9.toml` ya trae Renut, sonido e íconos de
 Xbox). Un mando de Xbox o el teclado.

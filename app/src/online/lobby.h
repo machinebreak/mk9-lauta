@@ -6,7 +6,7 @@
 // for each game. Here over WinHTTP's WebSocket (TLS for wss), one thread receiving and one sending; it reconnects by
 // itself and says hello again with the name.
 //
-//   mk9_lobby_url=<ws(s)://host[:port]/lobby?game=mk9pc>   the lobby (empty: none)
+//   mk9_lobby_url=<ws(s)://host[:port]/lobby?game=mk9pc>   the lobby ("off": none; tests never use the real one)
 
 #pragma once
 
