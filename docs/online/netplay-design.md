@@ -255,5 +255,11 @@ ocultos y cuenta los mostrados tarde: con 40 ms de lag + jitter y 25-64 cuadros 
 mostrados, el más largo 17-20 ms, 0-1 por encima de 20 ms.
 
 Falta (F5):
+- una desincronización en los menús (época 0, lockstep) apareció **una vez** en ~15 sesiones de prueba (cuadro 3727,
+  ~62 s: la confirmación de la selección y la pantalla VS); la sesión la detecta y termina con aviso. Sospecha: algo
+  de esa pantalla espera al sonido (la voz del anunciador o de la intro, streams de FMOD que terminan con el reloj de
+  cada máquina) y avanza en cuadros distintos; el arreglo sería otro consenso como el de las películas (Busy/Ready).
+  Si vuelve: `pair_test.ps1 -Checks` y comparar `host_checks.txt`/`guest_checks.txt` y los sorteos
+  (`rand_report.py --other`) en el cuadro del aviso;
 - copiar páginas en paralelo (el `keeping a frame` de ~1.4 ms);
 - pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.
