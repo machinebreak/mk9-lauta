@@ -38,6 +38,9 @@
 REXCVAR_DEFINE_BOOL(banjo_renut_capture_raw, false, "Banjo/Renut",
                     "Test: frame captures copy the game's frame texture itself instead of the scanned-out picture "
                     "(deko3d builds, 4-byte formats)");
+// mk9-nx online (2026-11-08): the captures with reNut's overlay drawn over the frame (the online screens).
+REXCVAR_DEFINE_BOOL(renut_capture_overlay, false, "Banjo/Renut",
+                    "Test: frame captures (mk9_snapshot_s) include the overlay over the frame, as on screen");
 
 // banjo-nx (2026-10-18, the deko3d depth of field): one of the game's textures on screen and in the captures in place of
 // the frame, to compare a pass's inputs between the back ends (the [trace] resolve lines name the headers).
@@ -339,6 +342,12 @@ bool CaptureFrameLocked(VideoState &s, const PresentImage &image, rex::ui::RawIm
                 plume::RenderTextureBarrier(c.target.get(), plume::RenderTextureLayout::COLOR_WRITE));
   cmd->setFramebuffer(c.framebuffer.get());
   RecordScanOut(s, image, w, h);
+  if (REXCVAR_GET(renut_capture_overlay)) {
+    // mk9-nx online (2026-11-08): the overlay over the frame, as the screen shows it (the online screens in tests)
+    cmd->setViewports(plume::RenderViewport(0.0f, 0.0f, float(w), float(h)));
+    cmd->setScissors(plume::RenderRect(0, 0, int32_t(w), int32_t(h)));
+    overlay::DrawLocked(cmd, w, h);
+  }
   cmd->setFramebuffer(nullptr);
   cmd->barriers(plume::RenderBarrierStage::COPY,
                 plume::RenderTextureBarrier(c.target.get(), plume::RenderTextureLayout::COPY_SOURCE));

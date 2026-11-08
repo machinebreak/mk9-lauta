@@ -11,12 +11,19 @@
 #include "imgui.h"
 
 #include <fmt/format.h>
+#include <rex/cvar.h>
 
 #include "online/lobby.h"
 #include "online/netplay.h"
 #include "online/room.h"
 #include "online/session.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
+
+REXCVAR_DEFINE_BOOL(mk9_online_show, false, "MK9 Online",
+                    "The online screens open at start (the game started again back from a room's session)");
+REXCVAR_DEFINE_INT32(mk9_online_test_leave_s, 0, "MK9 Online",
+                     "Tests: in a room's session, this player leaves this many seconds after the game's first frame "
+                     "(0 = never)");
 
 namespace mk9::online_ui {
 namespace {
@@ -60,14 +67,29 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     name_ = session::LoadName();
     std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
     if (!name_.empty() && lobby::Configured()) lobby::Start(name_);
-    // with no name yet the window opens by itself: it has to be chosen to play online
-    visible_ = name_.empty() && lobby::Configured();
+    // with no name yet the window opens by itself (it has to be chosen to play online), and so it does back from a
+    // room's session: the player is in the lobby again
+    visible_ = lobby::Configured() && (name_.empty() || REXCVAR_GET(mk9_online_show));
   }
 
   void Draw() override {
     room::Pump();
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) visible_ = !visible_;
     const room::State room = room::Snapshot();
+    if (room.in_session) {
+      const netplay::SessionInfo info = netplay::Info();
+      if (const int leave_s = REXCVAR_GET(mk9_online_test_leave_s);
+          leave_s > 0 && !leaving_ && Clock::now() - started_ > std::chrono::seconds(leave_s)) {
+        LeaveSession();
+      }
+      if (leaving_) {
+        // the goodbye has gone out (the session ended) or the game thread is busy elsewhere: back to the lobby
+        if (info.ended || Clock::now() > leave_deadline_) session::Back();
+      } else if (info.ended) {
+        DrawSessionEnd(room, info);
+        return;
+      }
+    }
     DrawSessionBadge(room);
     if (!visible_) {
       DrawToast(room);
@@ -247,10 +269,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
       ImGui::TextWrapped("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
                          "pantalla de 2 jugadores. Después cada uno elige su luchador.");
-      if (ImGui::Button("Terminar la sesión y volver al lobby")) {
-        room::Leave();
-        session::Back();
-      }
+      if (ImGui::Button("Terminar la sesión y volver al lobby")) LeaveSession();
     } else if (room.phase == room::Phase::kTogether) {
       if (ImGui::Button(room.my_ready ? "Cancelar listo" : "Estoy listo")) room::SetReady(!room.my_ready);
       ImGui::SameLine();
@@ -328,10 +347,23 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::EndDisabled();
   }
 
-  // In a session, a corner of the screen says who the rival is and the ping.
+  // The way out of a session (the button, the end's window): the goodbye goes to the rival over the room and the
+  // session's own path, then the game starts again as it was (Draw: once the session ended, or after a moment).
+  void LeaveSession() {
+    if (leaving_) return;
+    leaving_ = true;
+    leave_deadline_ = Clock::now() + std::chrono::milliseconds(500);
+    room::Leave();
+    netplay::Leave();
+  }
+
+  static std::string Other(const room::State& room) { return room.other.empty() ? "el rival" : room.other; }
+
+  // In a session, a corner of the screen says who the rival is and the ping (and when the game waits for the rival).
   void DrawSessionBadge(const room::State& room) {
     if (!room.in_session) return;
     const netplay::SessionInfo info = netplay::Info();
+    if (info.ended) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
     ImGui::SetNextWindowBgAlpha(0.45f);
@@ -340,11 +372,46 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##session_badge", nullptr, flags)) {
       if (info.active) {
-        ImGui::Text("vs %s - %.0f ms", room.other.empty() ? "rival" : room.other.c_str(), info.rtt_ms);
+        ImGui::Text("vs %s - %.0f ms", Other(room).c_str(), info.rtt_ms);
+        if (info.waiting) ImGui::TextColored(kGold, "Esperando a %s... %.0f s", Other(room).c_str(), info.waiting_s);
       } else {
-        ImGui::TextColored(kGold, "Conectando con %s...", room.other.empty() ? "el rival" : room.other.c_str());
+        ImGui::TextColored(kGold, "Conectando con %s...", Other(room).c_str());
       }
-      if (info.desynced) ImGui::TextColored(kRed, "Desincronizado");
+    }
+    ImGui::End();
+  }
+
+  // The session is over: why, and back to the lobby (by itself after a few seconds).
+  void DrawSessionEnd(const room::State& room, const netplay::SessionInfo& info) {
+    if (ended_at_ == Clock::time_point{}) ended_at_ = Clock::now();
+    constexpr int kBackAfterS = 10;
+    const int left = kBackAfterS - int(std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - ended_at_).count());
+    if (left <= 0) {
+      LeaveSession();
+      return;
+    }
+    std::string why;
+    switch (info.end_reason) {
+      case netplay::EndReason::kLeft: why = "Saliste de la sesión."; break;
+      case netplay::EndReason::kPeerLeft: why = Other(room) + " se fue de la sesión."; break;
+      case netplay::EndReason::kPeerLost: why = "Se cortó la conexión con " + Other(room) + "."; break;
+      case netplay::EndReason::kDesync: why = "Las dos partidas dejaron de coincidir (se desincronizaron)."; break;
+      case netplay::EndReason::kFailed: why = "No se pudo conectar con " + Other(room) + "."; break;
+      default: why = "La sesión terminó."; break;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    if (ImGui::Begin("##session_end", nullptr, flags)) {
+      ImGui::TextColored(kGold, "Fin de la sesión");
+      ImGui::Spacing();
+      ImGui::Text("%s", why.c_str());
+      ImGui::TextColored(kGrey, "Volvés al lobby en %d s.", left);
+      ImGui::Spacing();
+      if (ImGui::Button("Volver al lobby ahora")) LeaveSession();
     }
     ImGui::End();
   }
@@ -371,11 +438,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::End();
   }
 
-  bool visible_ = false, editing_name_ = false, was_in_room_ = false;
+  bool visible_ = false, editing_name_ = false, was_in_room_ = false, leaving_ = false;
   std::string name_, name_note_, toast_;
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;
-  Clock::time_point toast_until_{};
+  Clock::time_point toast_until_{}, leave_deadline_{}, ended_at_{};
+  const Clock::time_point started_ = Clock::now();
 };
 
 }  // namespace

@@ -347,7 +347,18 @@ void ApplyQueuedInput(ImGuiIO &io) {
 void BuildOnUIThread() {
   RECT rect{};
   GetClientRect(g_window, &rect);
-  BuildFrame(float(rect.right - rect.left), float(rect.bottom - rect.top));
+  // mk9-nx online (2026-11-08): a minimized window has no client area; its overlay is laid out as the window was (or
+  // at 1280x720), so what the dialogs place by the display's size stays in place (and test captures show it)
+  static float last_w = 1280.0f, last_h = 720.0f;
+  float w = float(rect.right - rect.left), h = float(rect.bottom - rect.top);
+  if (w >= 2.0f && h >= 2.0f) {
+    last_w = w;
+    last_h = h;
+  } else {
+    w = last_w;
+    h = last_h;
+  }
+  BuildFrame(w, h);
   g_build_pending.store(false, std::memory_order_release);
 }
 

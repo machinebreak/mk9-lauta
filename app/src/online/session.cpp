@@ -55,7 +55,7 @@ std::wstring Quote(const std::wstring& arg) {
   return out;
 }
 
-// This game's own options, without a session's.
+// This game's own options, without a session's (nor a test's way into one: mk9_online_test).
 std::vector<std::wstring> OwnOptions() {
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -63,7 +63,8 @@ std::vector<std::wstring> OwnOptions() {
   for (int i = 1; argv && i < argc; ++i) {
     const std::wstring a = argv[i];
     if (a.rfind(L"--mk9_net_room", 0) == 0 || a.rfind(L"--mk9_net_role", 0) == 0 ||
-        a.rfind(L"--mk9_online_name", 0) == 0 || a.find(L"online_session") != std::wstring::npos) {
+        a.rfind(L"--mk9_online_name", 0) == 0 || a.rfind(L"--mk9_online_show", 0) == 0 ||
+        a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos) {
       continue;
     }
     out.push_back(a);
@@ -111,7 +112,13 @@ void Launch(const std::string& room, bool host, const std::string& name) {
   Start(options, "the room's fight");
 }
 
-void Back() { Start(OwnOptions(), "back from the room"); }
+void Back() {
+  std::vector<std::wstring> options = OwnOptions();
+  options.push_back(L"--mk9_online_show=true");  // the lobby's screens open again
+  const std::string name = REXCVAR_GET(mk9_online_name);
+  if (!name.empty()) options.push_back(L"--mk9_online_name=" + Wide(name));  // the same name (two tests on one PC)
+  Start(options, "back from the room");
+}
 
 std::string LoadName() {
   const std::string given = REXCVAR_GET(mk9_online_name);

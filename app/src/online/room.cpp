@@ -11,6 +11,7 @@
 #include <rex/logging.h>
 
 #include "online/lobby.h"
+#include "online/netplay.h"
 #include "online/session.h"
 
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
@@ -205,6 +206,7 @@ void OnMessageLocked(const json& d) {
     Touch();
     MaybeStartLocked();
   } else if (kind == "bye") {
+    if (g.s.in_session) netplay::PeerLeft();  // its goodbye over the session's own path may not have come
     OtherGoneLocked("se fue de la sala");
   }
 }
@@ -342,7 +344,8 @@ void Pump() {
         g.said = now;
         SendOther({{"room", "ping"}});
       }
-      if (now - g.heard > kGone) OtherGoneLocked("se desconectó");
+      // in a session the fight's own path says whether the other player is there (the lobby may be what is down)
+      if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("se desconectó");
     }
     if (g.start_pending && now >= g.start_at) {
       g.start_pending = false;

@@ -49,9 +49,20 @@ void Barrier(uint8_t* base, const char* what);
 void OnCheck(uint32_t tag, uint32_t value);
 // Once, at the session's first frame: the seed both players start the game's random number generators from (seed.h).
 bool TakeSessionSeed(uint32_t* seed);
+// Why a session ended.
+enum class EndReason : uint8_t {
+  kNone,
+  kLeft,      // this player left (Leave)
+  kPeerLeft,  // the other player left (its goodbye, here or through the room)
+  kPeerLost,  // no word from the other player for mk9_net_timeout_s
+  kDesync,    // the two games' sync hashes differed: each game went its own way
+  kFailed,    // the session could not start (no path to the other player, a different build)
+};
 // The session as the online screens show it.
 struct SessionInfo {
   bool active = false;
+  bool ended = false;       // it ran, or tried to, and is over (end_reason)
+  EndReason end_reason = EndReason::kNone;
   int player = 0;           // 0: player 1 (the host), 1: player 2
   double rtt_ms = 0;
   int delay = 0;            // this epoch's input delay, frames
@@ -59,8 +70,16 @@ struct SessionInfo {
   bool speculating = false; // ... past its intro
   uint64_t rollbacks = 0, resimulated = 0;
   bool desynced = false;
+  bool waiting = false;     // the game is waiting for the other player's inputs (for longer than a moment)
+  double waiting_s = 0;     // ... this long so far
 };
 SessionInfo Info();
+// This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,
+// the game thread says goodbye to the peer and the session ends (EndReason::kLeft).
+void Leave();
+// The other player said goodbye through the lobby's room (room.h; any thread): the session ends the same way as with
+// its goodbye over the session's own path (EndReason::kPeerLeft).
+void PeerLeft();
 // A capture block (sub_82A1C550's arguments; r1: the caller's stack pointer). Replaces the players' raw gamepad
 // blocks while the session runs.
 void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1);

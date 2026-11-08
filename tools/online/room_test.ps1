@@ -6,13 +6,15 @@
 #
 #   powershell -File tools\online\room_test.ps1 [-Seconds 160] [-Lobby ws://127.0.0.1:8791/lobby?game=mk9pc]
 #       [-HostScript out\f3\host_fight.txt] [-GuestScript out\f3\guest_fight.txt] [-Extra "--name=value ..."]
+#       [-HostExtra "..."] [-GuestExtra "..."]   (one side's own options: snapshots, mk9_online_test_leave_s)
 param(
     [int]$Seconds = 160,
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$HostScript = 'out\f3\host_fight.txt',
     [string]$GuestScript = 'out\f3\guest_fight.txt',
     [string]$Extra = '',
-    [string]$HostExtra = ''
+    [string]$HostExtra = '',
+    [string]$GuestExtra = ''
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $dir = Join-Path $root 'out\pc'
@@ -32,6 +34,7 @@ function Args-For([string]$role) {
            "--mk9_input_script_file=$(Join-Path $root $script)")
     if ($Extra) { $a += ($Extra -split ' ') }
     if ($role -eq 'host' -and $HostExtra) { $a += ($HostExtra -split ' ') }
+    if ($role -eq 'guest' -and $GuestExtra) { $a += ($GuestExtra -split ' ') }
     return ($a -join ' ')
 }
 Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Minimized -ArgumentList (Args-For 'host') | Out-Null
@@ -43,7 +46,7 @@ foreach ($role in 'host', 'guest') {
     $log = Join-Path $dir "logs\room_$role.log"
     "== $role"
     if (Test-Path $log) {
-        Select-String -Path $log -Pattern '\[room\]|\[session\]|\[ice\] room|session started|DESYNC|rollback on|epoch 1 frame' |
+        Select-String -Path $log -Pattern '\[room\]|\[session\]|\[ice\] room|session started|session ended|goodbye|DESYNC|rollback on|epoch 1 frame' |
             Select-Object -Last 16 | ForEach-Object { $_.Line.Substring([Math]::Min(40, $_.Line.Length)) }
     } else { 'no log' }
 }

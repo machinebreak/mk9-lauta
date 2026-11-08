@@ -99,6 +99,8 @@ REXCVAR_DEFINE_BOOL(mk9_net_rollback, true, "MK9 Online", "Fights with rollback 
 REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, 1, "MK9 Online",
                      "Input delay in frames in a fight with rollback (0 = none; the host's is used by both)");
 REXCVAR_DEFINE_INT32(mk9_net_timeout_s, 20, "MK9 Online", "Seconds without the peer before the session ends");
+REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, true, "MK9 Online",
+                    "The session ends when the two games' sync hashes differ (false: it goes on, for tests)");
 REXCVAR_DEFINE_STRING(mk9_net_sync_ranges, "", "MK9 Online",
                       "Guest ranges (hex lo-hi, comma-separated) that also go into the sync hash both players compare");
 REXCVAR_DEFINE_INT32(mk9_net_sync_every, 1, "MK9 Online", "Hash mk9_net_sync_ranges every this many frames");
@@ -195,6 +197,11 @@ struct Session {
 };
 
 Session g;
+
+// The online screens' requests to the game thread (Leave, PeerLeft) and how the session ended: any thread.
+std::atomic<int> g_end_request{0};             // 1: this player leaves; 2: the room says the other one left
+std::atomic<uint8_t> g_end_reason{0};          // EndReason
+std::atomic<uint64_t> g_waiting_since_us{0};   // WaitFor's start while it waits for the other player (0: not)
 
 // A session whose game thread stops starting frames for 3 s gets every thread's stack dumped once (logs/pilas_<pid>_N.txt,
 // tools/online/stacks_report.py): a hang's evidence.
@@ -302,6 +309,46 @@ void CompareFinalHashes() {
 void Send(const std::vector<uint8_t>& p) {
   g.link->Send(p.data(), p.size());
   g.last_sent_us = NowUs();
+}
+
+const char* ReasonText(EndReason why) {
+  switch (why) {
+    case EndReason::kLeft: return "this player left";
+    case EndReason::kPeerLeft: return "the other player left";
+    case EndReason::kPeerLost: return "no word from the other player";
+    case EndReason::kDesync: return "the two games went out of sync";
+    case EndReason::kFailed: return "it could not start";
+    default: return "?";
+  }
+}
+
+// The session's end (game thread). goodbye: the peer hears why at once (three datagrams, as one may be lost; the byte
+// after the type says why).
+void EndSession(EndReason why, bool goodbye) {
+  if (g.ended) return;
+  if (goodbye && g.link && g.link->HasPeer()) {
+    auto p = Header(kBye);
+    p.push_back(uint8_t(why));
+    for (int i = 0; i < 3; ++i) g.link->Send(p.data(), p.size());
+  }
+  g.ended = true;
+  g_end_reason.store(uint8_t(why), std::memory_order_release);
+  g_frame_started_us = 0;  // frames go on without the session: no hang to watch for
+  REXLOG_INFO("[net] session ended: {}", ReasonText(why));
+}
+
+// The online screens' requests (Leave, PeerLeft), taken on the game thread.
+void TakeEndRequest() {
+  switch (g_end_request.exchange(0, std::memory_order_acq_rel)) {
+    case 1:
+      EndSession(EndReason::kLeft, true);
+      break;
+    case 2:
+      EndSession(EndReason::kPeerLeft, false);
+      break;
+    default:
+      break;
+  }
 }
 
 void SendHello() {
@@ -426,8 +473,10 @@ void Receive() {
       const double rtt = (NowUs() - Get64(p)) / 1000.0;
       g.rtt_ms = g.rtt_ms == 0 ? rtt : g.rtt_ms * 0.8 + rtt * 0.2;
     } else if (type == kBye) {
-      REXLOG_INFO("[net] the other player left");
-      g.ended = true;
+      // its game found the two out of sync, or its player left
+      const bool desync = left >= 1 && p[0] == uint8_t(EndReason::kDesync);
+      if (!g.ended) REXLOG_INFO("[net] the other player's goodbye{}", desync ? " (out of sync)" : "");
+      EndSession(desync ? EndReason::kDesync : EndReason::kPeerLeft, false);
     }
   }
 }
@@ -446,15 +495,19 @@ template <typename Done>
 void WaitFor(Done done) {
   if (done()) return;
   const uint64_t wait_start = NowUs();
+  g_waiting_since_us.store(wait_start, std::memory_order_relaxed);
   while (!done() && !g.ended) {
     g.link->WaitReadable(1);
     Receive();
+    TakeEndRequest();
+    if (g.ended) break;
     if (NowUs() - g.last_sent_us > 4000) SendInputs();
     if (NowUs() - g.last_heard_us > TimeoutUs()) {
-      REXLOG_ERROR("[net] no word from the other player for {} s: session ended", TimeoutUs() / 1000000);
-      g.ended = true;
+      REXLOG_ERROR("[net] no word from the other player for {} s", TimeoutUs() / 1000000);
+      EndSession(EndReason::kPeerLost, false);
     }
   }
+  g_waiting_since_us.store(0, std::memory_order_relaxed);
   const double waited = (NowUs() - wait_start) / 1000.0;
   g.wait_ms_window += waited;
   g.wait_ms_max = std::max(g.wait_ms_max, waited);
@@ -581,6 +634,8 @@ bool Handshake() {
     }
     g.link->WaitReadable(10);
     Receive();
+    TakeEndRequest();
+    if (g.ended) return false;
     if (g.heard_peer && (g.host || g.peer_hello)) {
       if (!g.host && g.peer_delay >= 0) {
         g.lockstep_delay = g.peer_delay;
@@ -603,6 +658,7 @@ bool WaitAtBarrier() {
   const int64_t last = g.frame - 1;
   const uint64_t start = NowUs();
   uint64_t told_at = 0;
+  g_waiting_since_us.store(start, std::memory_order_relaxed);
   while (g.peer_barrier < next && !g.ended) {
     if (NowUs() - told_at > 20000) {
       SendBarrier(next, last);
@@ -610,11 +666,14 @@ bool WaitAtBarrier() {
     }
     g.link->WaitReadable(2);
     Receive();
+    TakeEndRequest();
+    if (g.ended) break;
     if (NowUs() - g.last_heard_us > TimeoutUs() || NowUs() - start > TimeoutUs() * 3) {
-      REXLOG_ERROR("[net] the other player never reached the barrier of epoch {}: session ended", next);
-      g.ended = true;
+      REXLOG_ERROR("[net] the other player never reached the barrier of epoch {}", next);
+      EndSession(EndReason::kPeerLost, false);
     }
   }
+  g_waiting_since_us.store(0, std::memory_order_relaxed);
   SendBarrier(next, last);  // in case the peer has not heard it yet
   const double waited = (NowUs() - start) / 1000.0;
   REXLOG_INFO("[net] barrier of epoch {}: this side waited {:.1f} ms at its frame {}", next, waited, last);
@@ -800,8 +859,9 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     const uint64_t t0 = NowUs();
     if (!g.timeline.RollBack(base, uint64_t(to))) {
       quiesce::Release();
-      REXLOG_ERROR("[net] frame {} is out of the kept frames (now {}): session ended", to, g.frame);
-      g.ended = true;
+      // a wrong prediction that cannot be undone: from here the two games go their own ways
+      REXLOG_ERROR("[net] frame {} is out of the kept frames (now {})", to, g.frame);
+      EndSession(EndReason::kDesync, true);
       return;
     }
     g.ms_restore += (NowUs() - t0) / 1000.0;
@@ -877,6 +937,11 @@ bool Active() {
 }
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
+  if (Active()) {
+    TakeEndRequest();
+    // two games out of sync go their own ways: the session ends on both (the goodbye says why)
+    if (g.started && g.desync_at >= 0 && REXCVAR_GET(mk9_net_end_on_desync)) EndSession(EndReason::kDesync, true);
+  }
   if (!Active()) {
     if (g.started) sa2::renut::SetFrameHidden(false);  // a session that ended shows every frame again
     return;
@@ -968,6 +1033,14 @@ bool TakeSessionSeed(uint32_t* seed) {
 SessionInfo Info() {
   SessionInfo info;
   info.active = g.started && !g.ended && !g.failed;
+  info.ended = g.ended || g.failed;
+  info.end_reason = EndReason(g_end_reason.load(std::memory_order_acquire));
+  if (info.end_reason == EndReason::kNone && g.failed) info.end_reason = EndReason::kFailed;
+  if (const uint64_t since = g_waiting_since_us.load(std::memory_order_relaxed); since && info.active) {
+    const uint64_t now = NowUs();
+    info.waiting_s = now > since ? double(now - since) / 1e6 : 0.0;
+    info.waiting = info.waiting_s >= 0.5;
+  }
   info.player = g.player;
   info.rtt_ms = g.rtt_ms;
   info.delay = g.delay;
@@ -977,6 +1050,13 @@ SessionInfo Info() {
   info.resimulated = g.resimulated;
   info.desynced = g.desync_at >= 0;
   return info;
+}
+
+void Leave() { g_end_request.store(1, std::memory_order_release); }
+
+void PeerLeft() {
+  int none = 0;
+  g_end_request.compare_exchange_strong(none, 2, std::memory_order_acq_rel);  // this player's leaving goes first
 }
 
 void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1) {
