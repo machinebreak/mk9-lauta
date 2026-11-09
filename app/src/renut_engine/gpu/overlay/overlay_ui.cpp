@@ -321,6 +321,8 @@ void ApplyInput(ImGuiIO &io, const InputMessage &m) {
 // Sees the game window's messages first: the overlay's input is queued for
 // the next build, then everything goes on to the SDK.
 LRESULT CALLBACK OverlayWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+  if (msg == WM_SYSCHAR && wparam == VK_RETURN)
+    return 0;  // Alt+Enter switches full screen (the options, options_ui.cpp): no menu beep
   if (IsInputMessage(msg)) {
     const InputMessage m{msg, wparam, lparam, GetKeyState(VK_CONTROL) < 0,
                          GetKeyState(VK_SHIFT) < 0, GetKeyState(VK_MENU) < 0};

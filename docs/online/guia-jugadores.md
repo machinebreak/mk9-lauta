@@ -36,8 +36,37 @@ En la pestaña **Chat global** se habla con todos los que están en línea.
 - F1, pestaña **Sala**, "Terminar la sesión y volver al lobby".
 - Si tu rival se va o se corta la conexión, el juego te avisa y vuelve solo al lobby en 10 segundos.
 
+## Controles
+
+Se juega con mando o con teclado. Los mandos de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero que
+se conecta es el Jugador 1 y el segundo el Jugador 2.
+
+El teclado ya viene listo para pelear:
+
+| Acción | Tecla | Botón del mando |
+|---|---|---|
+| Moverse, saltar, agacharse | W A S D o las flechas | stick izquierdo |
+| Puño frontal (1) | U | X |
+| Puño trasero (2) | I | Y |
+| Patada frontal (3) / aceptar en los menús | J | A |
+| Patada trasera (4) / volver en los menús | K o Retroceso | B |
+| Agarre | O | RB |
+| Cubrirse | L o Espacio | RT |
+| Cambio de guardia | Ñ (la tecla a la derecha de la L) | LT |
+| Relevo (peleas por equipos) | P | LB |
+| Pausa / Start | Enter o Esc | Start |
+
+El X-Ray es Cubrirse + Cambio de guardia (L + Ñ). Cada tecla se cambia en **F2 > Controles**: "Cambiar" y apretá la
+tecla nueva. Para jugar un Versus en la misma PC con el teclado y un mando, poné "El teclado maneja al: Jugador 2". En
+el online manejás a tu luchador con el teclado y con cualquier mando conectado.
+
+Qué golpe hace cada botón se cambia en el menú del juego, **OPCIONES > MANDO**, y el teclado lo sigue.
+
 ## Opciones (F2)
 
 - **Calidad**: Baja (480p, para PCs con poca placa de video), Consola (720p, como en la Xbox 360), Alta (1080p) y Ultra
   (1440p). Cada opción se puede ajustar sola; los cambios se aplican al momento y quedan guardados.
+- **Pantalla e idioma**: pantalla completa o ventana (también con **F11** o **Alt+Enter** en cualquier momento) y el
+  idioma del juego: español (con el Modo Historia doblado), inglés, portugués, francés, alemán o italiano. El idioma se
+  aplica al volver a abrir el juego.
 - **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala.

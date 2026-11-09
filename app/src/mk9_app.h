@@ -14,11 +14,13 @@
 #include <rex/logging.h>
 #include <rex/rex_app.h>
 #include <rex/runtime.h>
+#include <rex/system.h>
 
 #include "cpu/sa2_enhancements.h"
 #include "me/me_native_system.h"
 #include "sa2_capture.h"
 #include "mk9_script_input.h"
+#include "mk9_controls.h"
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
@@ -35,7 +37,7 @@
 #endif
 
 #if defined(MK9_BUILTIN_CONFIG)
-#include "mk9_builtin_config.h"  // generated from app/mk9_switch_defaults.toml (CMake)
+#include "mk9_builtin_config.h"  // generated from app/mk9_switch_defaults.toml or mk9_pc_defaults.toml (CMake)
 #endif
 
 class Mk9App : public rex::ReXApp {
@@ -46,8 +48,9 @@ class Mk9App : public rex::ReXApp {
     return std::unique_ptr<Mk9App>(new Mk9App(ctx, "mk9", PPCImageConfig));
   }
 
-  // The Switch build's fixed settings (app/mk9_switch_defaults.toml, compiled in): applied before mk9.toml, which
-  // holds only the player's options (and may still override any of these).
+  // The Switch build's fixed settings (app/mk9_switch_defaults.toml, compiled in), or the PC build's defaults
+  // (app/mk9_pc_defaults.toml: the keyboard's layout): applied before mk9.toml, which holds only the player's options
+  // (and may still override any of these).
   std::string_view BuiltInConfig() const override {
 #if defined(MK9_BUILTIN_CONFIG)
     return kMk9BuiltInConfig;
@@ -101,6 +104,14 @@ class Mk9App : public rex::ReXApp {
         break;
       }
     }
+#if defined(_WIN32)
+    // mk9-nx online (2026-11-08): no game files found: say where they go, in the players' language.
+    rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error,
+                              "No se encontraron los archivos del juego.\n\nPoné la carpeta game_root de tu copia del "
+                              "juego (Xbox 360, Komplete Edition: default.xex y las carpetas Asset, Localization, "
+                              "Movies y las demás) al lado de mk9.exe.");
+    std::_Exit(1);
+#endif
   }
 
   // Input: the SDK's default devices plus, for tests, the scripted gamepad (mk9_input_script[_file]).
@@ -151,6 +162,8 @@ class Mk9App : public rex::ReXApp {
 
   // Test snapshots of the game image (mk9_snapshot_s), read from the presenter's guest output.
   void OnPostSetup() override {
+    // The options' key capture, ahead of the game's keyboard (mk9_controls.h), on the window's thread.
+    app_context().CallInUIThreadDeferred([this] { mk9::controls::AttachWindow(window()); });
     mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
     // mk9-nx online (2026-11-07): the PC sampling profiler and stack dumper (sa2_cpu_profile_from_s, sa2_stack_dump_s)
     // were built but never started.

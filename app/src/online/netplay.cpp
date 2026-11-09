@@ -547,13 +547,23 @@ uint8_t SampleBusy(const uint8_t* base) {
   return busy;
 }
 
+// This player's pad: every device of this PC together (the four players' seats merged), so the keyboard and any pad
+// play, whichever seat the options give them offline (mk9_controls.h).
 Pad ReadLocalPad() {
   Pad pad;
   auto* runtime = REX_KERNEL_STATE() ? REX_KERNEL_STATE()->emulator() : nullptr;
   auto* is = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
   if (!is) return pad;
-  rex::input::X_INPUT_STATE state{};
-  if (is->GetState(0, &state) == 0) std::memcpy(pad.bytes, &state.gamepad, 12);
+  rex::input::X_INPUT_STATE merged{};
+  bool any = false;
+  for (uint32_t user = 0; user < rex::input::kMaxGuestUsers; ++user) {
+    rex::input::X_INPUT_STATE state{};
+    if (is->GetState(user, &state) != 0) continue;
+    if (!any) merged = state;
+    else rex::input::MergeInto(merged, state);
+    any = true;
+  }
+  if (any) std::memcpy(pad.bytes, &merged.gamepad, 12);
   return pad;
 }
 

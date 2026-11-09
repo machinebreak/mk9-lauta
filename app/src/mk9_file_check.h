@@ -11,7 +11,7 @@ namespace mk9::file_check {
 // Switch: every start, before the intro. The size of every file of the list (the game folders listed, no stat per
 // file: a few milliseconds), and after a crash in the game's code (the marker Start leaves for it) the SHA-256 of the
 // files the game had opened last. A missing or wrong file: the system's error dialog names it and the process ends
-// (this does not return). Elsewhere, or without the compiled-in list, it does nothing.
+// (this does not return). PC: the sizes, with the message in Spanish. Without the compiled-in list it does nothing.
 void AtStart(const std::filesystem::path& game_root);
 
 // Tests only (mk9_file_check_test): right after the intro started. Nothing by default.

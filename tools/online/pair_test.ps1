@@ -6,6 +6,7 @@
 #   powershell -File tools\online\pair_test.ps1 [-Seconds 110] [-HostScript file] [-GuestScript file] [-Delay 2]
 #       [-Snapshots "60,90"] [-Hash] [-HashFrom 1] [-Checks] [-SyncRanges "83380000-834D0000"]
 #       [-Room CODE -Lobby ws://127.0.0.1:8791/lobby?game=mk9pc] [-Extra "--name=value ..."] [-Profiles inst]
+#       [-HostExtra "--name=value ..."] [-GuestExtra "--name=value ..."]
 #
 # -Room: the two meet in that lobby room and play over the path ICE finds (ice_link.h) instead of local UDP; the lobby
 # is a local one by default (ps2-web-recomp's scripts/lobby_server.py 8791 --host 127.0.0.1).
@@ -25,6 +26,8 @@ param(
     [int]$HashFrom = 1,
     [string]$SyncRanges = '',
     [string]$Extra = '',
+    [string]$HostExtra = '',
+    [string]$GuestExtra = '',
     [string]$Room = '',
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$Profiles = 'inst',
@@ -70,6 +73,8 @@ function Args-For([string]$role) {
     if ($SyncRanges) { $a += "--mk9_net_sync_ranges=$SyncRanges" }
     $a += "--mk9_memdump_prefix=$root\out\f3\memdump_$($role)_"
     if ($Extra) { $a += ($Extra -split ' ') }
+    $own = if ($role -eq 'host') { $HostExtra } else { $GuestExtra }
+    if ($own) { $a += ($own -split ' ') }
     return ($a -join ' ')
 }
 

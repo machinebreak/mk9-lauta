@@ -78,8 +78,10 @@ set(MK9_SOURCES
     src/mk9_button_icons.cpp
     # A player with no gamer profile (player 2, the online guest) continues without saving, with no sign-in question.
     src/mk9_profile_prompt.cpp
-    # The players' options in Spanish (F2): graphics presets and options, the online fights' input delay.
+    # The players' options in Spanish (F2): graphics presets and options, the controls (the keyboard's keys, its
+    # player, the pads), the screen and the language, the online fights' input delay.
     src/options_ui.cpp
+    src/mk9_controls.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
@@ -234,6 +236,26 @@ if(NOT REXGLUE_PLATFORM_SWITCH)  # the Switch writes its mk9.toml itself (Defaul
         COMMAND "${CMAKE_COMMAND}" -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/mk9.toml -DDST=$<TARGET_FILE_DIR:mk9>/mk9.toml
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_if_missing.cmake"
         VERBATIM)
+    # SDL's controller mappings from the community database (github.com/mdqinc/SDL_GameControllerDB, zlib licence:
+    # app/gamecontrollerdb.LICENSE.txt), beside the executable: pads SDL does not know by itself (generic USB pads,
+    # arcade sticks' encoders) play too. Copied on every build (it is not the player's to edit).
+    add_custom_command(TARGET mk9 POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/gamecontrollerdb.txt"
+                "$<TARGET_FILE_DIR:mk9>/gamecontrollerdb.txt"
+        VERBATIM)
+    # The PC build's defaults compiled in (app/mk9_pc_defaults.toml: the keyboard's fighting layout, the SDK's
+    # developer screens off), applied before mk9.toml (src/mk9_app.h BuiltInConfig); no player file is written (the
+    # template above is copied).
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mk9_pc_defaults.toml" MK9_BUILTIN_CONFIG)
+    set(MK9_PLAYER_CONFIG "")
+    # the game files' sizes, checked at every start (src/mk9_file_check.cpp)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mk9_game_files.txt" MK9_GAME_FILES)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/mk9_pc_defaults.toml"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/mk9_game_files.txt")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/mk9_builtin_config.h.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/builtin_config/mk9_builtin_config.h" @ONLY)
+    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/builtin_config")
+    target_compile_definitions(mk9 PRIVATE MK9_BUILTIN_CONFIG=1)
 endif()
 
 # The SDK compiles itself with these (directory scope), but they do not reach the generated game code, which is

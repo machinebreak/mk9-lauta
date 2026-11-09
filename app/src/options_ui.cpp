@@ -2,8 +2,12 @@
 
 #include "options_ui.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 #include <filesystem>
@@ -19,10 +23,19 @@
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/ui/keybinds.h>
 
+#include "mk9_controls.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
+#if defined(MK9_BUILTIN_CONFIG)
+#include "mk9_builtin_config.h"  // the PC build's defaults (app/mk9_pc_defaults.toml): the keyboard's keys
+#endif
+
 REXCVAR_DEFINE_BOOL(mk9_options_show, false, "MK9", "The options window (F2) opens at start");
+REXCVAR_DEFINE_STRING(mk9_options_tab, "", "MK9",
+                      "The options window's tab shown first (Gráficos, Controles, Pantalla e idioma, Online); empty = "
+                      "the first");
 REXCVAR_DEFINE_STRING(mk9_options_test_preset, "", "MK9",
                       "Tests: this quality preset (Baja, Consola, Alta, Ultra) is chosen at start, as with its button");
 
@@ -39,6 +52,7 @@ struct Option {
   const char* label;
   std::vector<Choice> choices;
   const char* help;
+  bool restart = false;  // the game reads it only when it starts
 };
 
 const std::vector<Option>& GraphicsOptions() {
@@ -66,6 +80,20 @@ const std::vector<Option>& GraphicsOptions() {
       {"sa2_renut_msaa", "Antialiasing (MSAA)",
        {{"0", "Apagado (el del juego)"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}},
        "Bordes más suaves; cada paso cuesta más placa de video. Se aplica al volver a abrir el juego."},
+  };
+  return options;
+}
+
+const std::vector<Option>& DisplayOptions() {
+  static const std::vector<Option> options = {
+      {"fullscreen", "Pantalla",
+       {{"true", "Pantalla completa"}, {"false", "Ventana"}},
+       "F11 o Alt+Enter cambian entre pantalla completa y ventana en cualquier momento."},
+      {"user_language", "Idioma del juego",
+       {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
+        {"6", "Italiano"}},
+       "Los textos del juego. En español el Modo Historia está doblado. Se aplica al volver a abrir el juego.",
+       true},
   };
   return options;
 }
@@ -102,6 +130,41 @@ const std::vector<Preset>& Presets() {
         {"renut_anisotropic_filtering", "16x"}, {"renut_post_process_precision", "High"}}},
   };
   return presets;
+}
+
+// A key's value in the PC build's compiled-in defaults (app/mk9_pc_defaults.toml), else the cvar's own default.
+std::string BuiltInDefault(const std::string& key) {
+#if defined(MK9_BUILTIN_CONFIG)
+  std::istringstream in{std::string(kMk9BuiltInConfig)};
+  for (std::string line; std::getline(in, line);) {
+    size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+    if (line.compare(i, key.size(), key) != 0) continue;
+    size_t j = i + key.size();
+    while (j < line.size() && (line[j] == ' ' || line[j] == '\t')) ++j;
+    if (j >= line.size() || line[j] != '=') continue;
+    const size_t open = line.find('"', j);
+    const size_t close = open == std::string::npos ? std::string::npos : line.find('"', open + 1);
+    if (close != std::string::npos) return line.substr(open + 1, close - open - 1);
+  }
+#endif
+  const rex::cvar::FlagEntry* info = rex::cvar::GetFlagInfo(key);
+  return info ? info->default_value : std::string();
+}
+
+// A bind's keys without the ones that are this virtual key (the key moves to another action).
+std::string WithoutKey(const std::string& bind, int virtual_key) {
+  std::string out;
+  std::istringstream in(bind);
+  for (std::string token; std::getline(in, token, ',');) {
+    while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+    while (!token.empty() && token.back() == ' ') token.pop_back();
+    if (token.empty()) continue;
+    if (token.find('+') == std::string::npos && int(rex::ui::ParseVirtualKey(token)) == virtual_key) continue;
+    if (!out.empty()) out += ",";
+    out += token;
+  }
+  return out;
 }
 
 std::filesystem::path ConfigPath() {
@@ -160,10 +223,18 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
       visible_ = !visible_;
       if (visible_) ImGui::SetNextWindowFocus();  // over the online screens if they are open too
+      if (!visible_) StopCapture();
     }
+    // Full screen or a window, any time (on the window's thread, where the SDK changes the window)
+    const ImGuiIO& keys = ImGui::GetIO();
+    if (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (keys.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+      const bool full = rex::cvar::GetFlagByName("fullscreen") == "true";
+      Set({{"fullscreen", full ? "false" : "true"}}, full ? "Ventana" : "Pantalla completa");
+    }
+    if (capturing_ >= 0) TakeKey();
     if (!visible_) return;
     const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowSize(ImVec2(640, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(760, 660), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
     if (!ImGui::Begin("Opciones  (F2 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse)) {
@@ -171,17 +242,28 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       return;
     }
     if (ImGui::BeginTabBar("options_tabs")) {
-      if (ImGui::BeginTabItem("Gráficos")) {
+      if (ImGui::BeginTabItem("Gráficos", nullptr, TabFlags("Gráficos"))) {
         DrawPresets();
         ImGui::Separator();
         for (const Option& o : GraphicsOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Online")) {
+      if (ImGui::BeginTabItem("Controles", nullptr, TabFlags("Controles"))) {
+        DrawControls();
+        ImGui::EndTabItem();
+      } else {
+        StopCapture();
+      }
+      if (ImGui::BeginTabItem("Pantalla e idioma", nullptr, TabFlags("Pantalla e idioma"))) {
+        for (const Option& o : DisplayOptions()) DrawOption(o);
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem("Online", nullptr, TabFlags("Online"))) {
         for (const Option& o : OnlineOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
       ImGui::EndTabBar();
+      first_tabs_ = false;
     }
     ImGui::Separator();
     if (!note_.empty()) ImGui::TextColored(note_ok_ ? ImVec4(0.45f, 0.9f, 0.5f, 1) : ImVec4(1, 0.45f, 0.4f, 1), "%s",
@@ -191,6 +273,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
  private:
+  // The tab mk9_options_tab names is selected the first time the tabs are drawn.
+  ImGuiTabItemFlags TabFlags(const char* tab) const {
+    return first_tabs_ && REXCVAR_GET(mk9_options_tab) == tab ? ImGuiTabItemFlags_SetSelected : 0;
+  }
+
   void DrawPresets() {
     ImGui::AlignTextToFramePadding();
     ImGui::Text("Calidad:");
@@ -203,6 +290,130 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       if (active) ImGui::PopStyleColor();
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.help);
     }
+  }
+
+  void DrawControls() {
+    const ImVec4 grey(0.65f, 0.65f, 0.7f, 1);
+    bool keyboard = rex::cvar::GetFlagByName("mnk_mode") == "true";
+    if (ImGui::Checkbox("Jugar con el teclado", &keyboard)) {
+      Set({{"mnk_mode", keyboard ? "true" : "false"}}, keyboard ? "Teclado activado" : "Teclado desactivado");
+    }
+    if (keyboard) {
+      ImGui::SameLine(0, 30);
+      ImGui::AlignTextToFramePadding();
+      ImGui::Text("El teclado maneja al");
+      ImGui::SameLine();
+      const std::string player = rex::cvar::GetFlagByName("mk9_keyboard_player");
+      ImGui::SetNextItemWidth(150);
+      if (ImGui::BeginCombo("##keyboard_player", player == "2" ? "Jugador 2" : "Jugador 1")) {
+        if (ImGui::Selectable("Jugador 1", player != "2") && player == "2")
+          Set({{"mk9_keyboard_player", "1"}}, "El teclado maneja al Jugador 1");
+        if (ImGui::Selectable("Jugador 2", player == "2") && player != "2")
+          Set({{"mk9_keyboard_player", "2"}}, "El teclado maneja al Jugador 2");
+        ImGui::EndCombo();
+      }
+      ImGui::PushStyleColor(ImGuiCol_Text, grey);
+      ImGui::TextWrapped("Jugador 2: para un Versus en esta PC con el teclado y un mando (el mando es el Jugador 1). "
+                         "Online manejás a tu luchador con el teclado y con cualquier mando conectado.");
+      ImGui::PopStyleColor();
+      ImGui::Spacing();
+      DrawKeys();
+    }
+    ImGui::Separator();
+    ImGui::Text("Mandos conectados:");
+    bool any_pad = false;
+    for (const controls::Device& d : controls::Devices()) {
+      if (d.keyboard) continue;
+      any_pad = true;
+      if (d.player > 0) ImGui::BulletText("Jugador %d: %s", d.player, d.name.c_str());
+      else ImGui::BulletText("%s (sin jugador: ya hay cuatro)", d.name.c_str());
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, grey);
+    if (!any_pad) {
+      ImGui::TextWrapped("Ninguno. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero que se "
+                         "conecta es el Jugador 1.");
+    }
+    ImGui::TextWrapped("Qué golpe hace cada botón del mando se cambia en el menú del juego: OPCIONES > MANDO. El "
+                       "teclado lo sigue: cada tecla aprieta el botón del mando que dice la tabla.");
+    ImGui::PopStyleColor();
+  }
+
+  void DrawKeys() {
+    const auto& actions = controls::Actions();
+    if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                         ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("Acción", ImGuiTableColumnFlags_WidthStretch, 2.3f);
+      ImGui::TableSetupColumn("Mando", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableSetupColumn("Teclas", ImGuiTableColumnFlags_WidthStretch, 1.8f);
+      ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 110.0f);
+      ImGui::TableHeadersRow();
+      for (int i = 0; i < int(actions.size()); ++i) {
+        const controls::Action& a = actions[size_t(i)];
+        ImGui::PushID(i);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(a.label);
+        ImGui::TableNextColumn();
+        ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", a.button);
+        ImGui::TableNextColumn();
+        if (capturing_ == i) {
+          ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1), "Apretá una tecla...");
+        } else {
+          const std::string keys = controls::KeysLabel(rex::cvar::GetFlagByName(a.cvar));
+          ImGui::TextUnformatted(keys.empty() ? "(ninguna)" : keys.c_str());
+        }
+        ImGui::TableNextColumn();
+        if (capturing_ == i) {
+          if (ImGui::Button("Cancelar", ImVec2(-1, 0))) StopCapture();
+        } else if (ImGui::Button("Cambiar", ImVec2(-1, 0))) {
+          capturing_ = i;
+          controls::CaptureNextKey(true);
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+    if (ImGui::Button("Volver a las teclas de fábrica")) {
+      StopCapture();
+      std::vector<std::pair<std::string, std::string>> values;
+      for (const controls::Action& a : actions) values.emplace_back(a.cvar, BuiltInDefault(a.cvar));
+      Set(values, "Teclas de fábrica");
+    }
+  }
+
+  // The key pressed for the action waiting for one: it is that action's only key now, and no other action's.
+  void TakeKey() {
+    const int vk = controls::TakeCapturedKey();
+    if (vk < 0) return;
+    const auto& actions = controls::Actions();
+    const controls::Action& action = actions[size_t(capturing_)];
+    capturing_ = -1;
+    const std::string name = controls::KeyName(vk);
+    if (name.empty()) {
+      note_ok_ = false;
+      note_ = "Esa tecla no se puede usar: elegí otra";
+      return;
+    }
+    std::vector<std::pair<std::string, std::string>> values{{action.cvar, name}};
+    std::string moved;
+    for (const controls::Action& other : actions) {
+      if (&other == &action) continue;
+      const std::string bind = rex::cvar::GetFlagByName(other.cvar);
+      const std::string without = WithoutKey(bind, vk);
+      if (without != bind) {
+        values.emplace_back(other.cvar, without);
+        moved = other.label;
+      }
+    }
+    Set(values, std::string(action.label) + ": " + controls::KeysLabel(name) +
+                    (moved.empty() ? std::string() : " (se la saqué a " + moved + ")"));
+  }
+
+  void StopCapture() {
+    if (capturing_ < 0) return;
+    capturing_ = -1;
+    controls::CaptureNextKey(false);
   }
 
   void Apply(const Preset& p) {
@@ -252,6 +463,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         pending_[key] = value;
         later = true;
       }
+      for (const Option& o : DisplayOptions()) later |= o.restart && key == o.key;
     }
     note_ok_ = SaveValues(values);
     note_ = !note_ok_ ? "No se pudo guardar en mk9.toml"
@@ -262,6 +474,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
   bool visible_ = REXCVAR_GET(mk9_options_show), note_ok_ = true;
+  int capturing_ = -1;  // the action waiting for its key (Controles), -1: none
+  bool first_tabs_ = true;
   std::string note_;
   std::map<std::string, std::string> pending_;
 };

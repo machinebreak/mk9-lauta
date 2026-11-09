@@ -17,7 +17,8 @@
 
 REXCVAR_DEFINE_BOOL(mk9_file_check, true, "MK9",
                     "Switch: check the game files on the SD card against the release's list (their sizes at every "
-                    "start, the SHA-256 of the files open at a crash at the next start) and name a bad one on screen")
+                    "start, the SHA-256 of the files open at a crash at the next start) and name a bad one on screen. "
+                    "PC: the sizes at every start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_INT32(mk9_file_check_test, 0, "MK9",
                      "Tests only: 1 shows an error dialog 2 s into the intro and exits (the intro stops for it), 2 "
@@ -362,6 +363,120 @@ void TestAfterIntroStarted() {
       break;
   }
 }
+
+}  // namespace mk9::file_check
+
+#elif defined(_WIN32) && defined(MK9_BUILTIN_CONFIG)
+
+// mk9-nx online (2026-11-08): the PC's check, the sizes only, every start (one listing of each game folder, as on the
+// Switch): a file missing or cut short is named in Spanish before the game starts, instead of a crash when the game
+// loads it (a stage, a fighter, a DLC character).
+
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <vector>
+
+#include <rex/logging.h>
+#include <rex/platform.h>
+#include <rex/system.h>
+
+#include "mk9_builtin_config.h"
+
+namespace mk9::file_check {
+namespace {
+
+struct GameFile {
+  std::string path;  // relative to game_root, '/' separated
+  uint64_t size = 0;
+};
+
+std::string Lower(std::string_view text) {
+  std::string out(text);
+  for (char& ch : out) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+  return out;
+}
+
+std::vector<GameFile> ParseList() {
+  std::vector<GameFile> files;
+  std::string_view text = kMk9GameFiles;
+  while (!text.empty()) {
+    const size_t end = text.find('\n');
+    std::string_view line = text.substr(0, end);
+    text = end == std::string_view::npos ? std::string_view() : text.substr(end + 1);
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    if (line.empty() || line[0] == '#') continue;
+    const size_t a = line.find(' ');
+    const size_t b = a == std::string_view::npos ? a : line.find(' ', a + 1);
+    if (b == std::string_view::npos) continue;
+    GameFile f;
+    f.size = std::strtoull(std::string(line.substr(0, a)).c_str(), nullptr, 10);
+    f.path = std::string(line.substr(b + 1));
+    files.push_back(std::move(f));
+  }
+  return files;
+}
+
+std::string Bytes(uint64_t n) {
+  std::string digits = std::to_string(n);
+  for (int i = int(digits.size()) - 3; i > 0; i -= 3) digits.insert(size_t(i), ".");
+  return digits;
+}
+
+}  // namespace
+
+void AtStart(const std::filesystem::path& game_root) {
+  if (!REXCVAR_GET(mk9_file_check) || game_root.empty()) return;
+  const std::vector<GameFile> files = ParseList();
+  if (files.empty()) return;
+  std::map<std::string, std::map<std::string, uint64_t>> folders;  // folder (lower case) -> name (lower case) -> size
+  std::vector<std::string> problems;
+  for (const GameFile& f : files) {
+    // default.xex is left out: one another tool rebuilt (decrypted or decompressed) is the same image in another size
+    if (Lower(f.path) == "default.xex") continue;
+    const size_t slash = f.path.rfind('/');
+    const std::string folder = slash == std::string::npos ? std::string() : f.path.substr(0, slash);
+    const std::string name = Lower(slash == std::string::npos ? f.path : f.path.substr(slash + 1));
+    auto [it, fresh] = folders.try_emplace(Lower(folder));
+    if (fresh) {
+      std::error_code ec;
+      for (const auto& entry : std::filesystem::directory_iterator(game_root / folder, ec)) {
+        std::error_code size_ec;
+        if (entry.is_regular_file(size_ec)) {
+          it->second[Lower(entry.path().filename().string())] = entry.file_size(size_ec);
+        }
+      }
+    }
+    const auto found = it->second.find(name);
+    if (found == it->second.end()) {
+      problems.push_back(f.path + ": falta");
+    } else if (found->second != f.size) {
+      problems.push_back(f.path + ": tiene " + Bytes(found->second) + " bytes y tendría que tener " + Bytes(f.size));
+    }
+  }
+  REXLOG_INFO("[files] {} game files: sizes checked in {} folders, {} wrong", files.size(), folders.size(),
+              problems.size());
+  if (problems.empty()) return;
+  for (const std::string& problem : problems) REXLOG_ERROR("[files] {}", problem);
+  std::string text = "El juego no puede arrancar: " +
+                     (problems.size() == 1 ? std::string("un archivo del juego falta o está incompleto")
+                                           : std::to_string(problems.size()) +
+                                                 " archivos del juego faltan o están incompletos") +
+                     " en " + game_root.string() + ":\n\n";
+  for (size_t i = 0; i < problems.size() && i < 8; ++i) text += "- " + problems[i] + "\n";
+  if (problems.size() > 8) {
+    text += "- y " + std::to_string(problems.size() - 8) + " más (están todos en la carpeta logs)\n";
+  }
+  text += "\nVolvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado de "
+          "mk9.exe, entera.";
+  rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, text);
+  rex::FlushLogging();
+  std::_Exit(1);
+}
+
+void TestAfterIntroStarted() {}
 
 }  // namespace mk9::file_check
 

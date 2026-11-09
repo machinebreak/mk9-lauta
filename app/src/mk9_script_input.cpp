@@ -32,6 +32,8 @@
 #include <rex/input/input_system.h>
 #include <rex/logging.h>
 
+#include "mk9_controls.h"
+
 extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
 
 REXCVAR_DEFINE_STRING(mk9_input_script, "", "MK9",
@@ -234,7 +236,10 @@ std::vector<Event> LoadScript() {
 }  // namespace
 
 std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
+  mk9::controls::FindMappingsFile();  // before SDL starts and reads it
   auto input = rex::input::CreateDefaultInputSystem(tool_mode);
+  // mk9-nx (2026-11-08): the keyboard on the player the options say (mk9_controls.h)
+  input->SetDeviceAssignment(mk9::controls::CreateAssignment());
   if (!tool_mode) {
     auto events = LoadScript();
     if (!events.empty()) {

@@ -1,0 +1,51 @@
+# Mortal Kombat Komplete Edition, PC build: defaults compiled into mk9.exe (src/mk9_app.h BuiltInConfig), applied
+# before the player's mk9.toml next to the executable, which may still override any of them key by key (the options
+# window, F2, writes its changes there).
+
+# --- The game's language: Spanish (its menus, and Story Mode dubbed); F2 > Pantalla e idioma changes it -------------
+# XGetLanguage's values: 1 English, 3 German, 4 French, 5 Spanish, 6 Italian, 9 Portuguese (the game's Coalesced.*).
+user_language = 5
+
+# --- The keyboard: a fighting layout, on from the start ------------------------------------------------------------
+# Each key presses an Xbox 360 button, and the game turns the button into its action with its own layout (OPCIONES >
+# MANDO; these names are its defaults). Movement is on the left stick: the game's main menus read the stick and not
+# the D-pad, and in a fight both move. Left and right together are neither (the SDK's stick sums them).
+mnk_mode = true
+keybind_lstick_up = "W,Up"
+keybind_lstick_down = "S,Down"
+keybind_lstick_left = "A,Left"
+keybind_lstick_right = "D,Right"
+keybind_dpad_up = ""
+keybind_dpad_down = ""
+keybind_dpad_left = ""
+keybind_dpad_right = ""
+# Front Punch, Back Punch, Front Kick, Back Kick: the right hand's four keys (punches above, kicks below; A accepts
+# and B goes back in the menus).
+keybind_x = "U"
+keybind_y = "I"
+keybind_a = "J"
+keybind_b = "K,Backspace"
+# Throw (RB), Block (RT), Flip Stance (LT; with Block it makes the X-Ray), Tag (LB). The SDK names keys by their place
+# on an English keyboard (window_sdl.cpp reads scan codes): Semicolon is the key right of L on any keyboard, Ñ on a
+# Spanish one, Ç on a Brazilian one.
+keybind_right_shoulder = "O"
+keybind_right_trigger = "L,Space"
+keybind_left_trigger = "Semicolon"
+keybind_left_shoulder = "P"
+# Start pauses a fight and starts the game at its title (it accepts nothing in the menus).
+keybind_start = "Return,Escape"
+keybind_back = "Tab"
+keybind_lstick_press = ""
+keybind_rstick_press = ""
+keybind_rstick_up = ""
+keybind_rstick_down = ""
+keybind_rstick_left = ""
+keybind_rstick_right = ""
+
+# --- The SDK's developer screens off -------------------------------------------------------------------------------
+# The console's key is the one left of 1 (it would open over a fight), the SDK's raw settings would write every
+# setting into mk9.toml, and the Switch's docked/handheld switch means nothing on a PC. F3 (frame times) and F7
+# (achievements) stay.
+bind_console = ""
+bind_settings = ""
+bind_sa2_docked = ""

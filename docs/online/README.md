@@ -97,12 +97,18 @@ powershell -File tools\online\run_game.ps1 -Seconds 150 -Script "32 START;38 A;4
 powershell -File tools\online\run_game.ps1 -Visible -Sound -Seconds 3600
 ```
 
-Teclado (sin mando): Enter = Start, Espacio = A, Backspace = B, L = X, P = Y, 3 = RB, E = RT, WASD = stick izquierdo,
-Shift + flechas = cruceta.
+Controles (`mk9_controls.h`, `app/mk9_pc_defaults.toml`): el teclado viene activado con una distribución de pelea
+(WASD o flechas = stick izquierdo, U/I/J/K = X/Y/A/B, O = RB agarre, L o Espacio = RT cubrirse, la tecla a la
+derecha de la L = LT cambio de guardia, P = LB relevo, Enter o Esc = Start, Tab = Back) y se reasigna en F2 >
+Controles. El SDK nombra las teclas por su lugar en un teclado inglés (lee códigos de escaneo): "Semicolon" es la Ñ de
+un teclado español. Los mandos van por orden de conexión (el primero es el Jugador 1); el teclado juega con el
+jugador de `mk9_keyboard_player` (2: Versus local con teclado y un mando). Online, todos los dispositivos de la PC
+manejan al jugador local (`netplay.cpp` ReadLocalPad). Los menús del juego leen el stick, no la cruceta.
 
 Opciones gráficas de Renut (`-Set` o `out\pc\mk9.toml`; para los jugadores, la ventana **Opciones** con F2,
-`options_ui.h`: presets Baja / Consola / Alta / Ultra y cada opción en castellano, guardadas en mk9.toml sin tocar
-el resto del archivo): `renut_resolution` (480p, 720p, 1080p, 1440p, 4K; cambia en vivo),
+`options_ui.h`: presets Baja / Consola / Alta / Ultra y cada opción en castellano, los controles, pantalla completa o
+ventana (también F11 / Alt+Enter) y el idioma del juego (`user_language`: español por defecto, inglés, portugués,
+francés, alemán, italiano), guardadas en mk9.toml sin tocar el resto del archivo): `renut_resolution` (480p, 720p, 1080p, 1440p, 4K; cambia en vivo),
 `renut_shadow_resolution` (Resolution, 1x-4x), `renut_ambient_occlusion` (Half, Full),
 `renut_anisotropic_filtering` (Game, 2x-16x), `renut_post_process_precision` (Game, High), `renut_vsync`,
 `sa2_renut_msaa` (0, 2, 4, 8; al reiniciar). `renut_aspect_ratio` no está en este build (widescreen.cpp no se
@@ -133,7 +139,7 @@ build los suma solo.
 | F3 online | **hecho**: lobby (WebSocket al lobby compartido), camino propio por ICE (libjuice), salas de dos con chat, partida rápida y chat global, la sesión que se vuelve a abrir ya unida, pantallas online (F1) y fin de sesión con motivo (lobby.md) |
 | F4 instantáneas + SyncTest | **núcleo hecho**: línea de tiempo por store cards, SyncTest con 0 diferencias en 744 cuadros repetidos a 60 fps (netplay-design.md, "Rollback") |
 | F5 rollback | **anda**: rollback en la pelea con lag y jitter sin desync, cuadros re-simulados sin dibujar, sonido y GPU afuera del rollback, sin sonidos duplicados (netplay-design.md) |
-| F6 pulido | en curso: ventana de Opciones (F2) con presets Baja / Consola / Alta / Ultra; íconos de Xbox y configuración para jugar (`app/mk9.toml`) |
+| F6 pulido | en curso: ventana de Opciones (F2) con presets Baja / Consola / Alta / Ultra, controles (teclado de pelea reasignable, jugador del teclado, mandos conectados), pantalla completa (F11) e idioma (español por defecto); íconos de Xbox y configuración para jugar (`app/mk9.toml`, `app/mk9_pc_defaults.toml`) |
 | F7 launcher/beta | pendiente (nombre del producto y distribución: decisiones del dueño) |
 
 Para jugar a mano: abrir `out\pc\mk9.exe` (la configuración `out\pc\mk9.toml` ya trae Renut, sonido e íconos de
