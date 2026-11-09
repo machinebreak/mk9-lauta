@@ -12,6 +12,15 @@
 #include <vector>
 
 #include <fmt/format.h>
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <rex/cvar.h>
 #include <smolv.h>
 #include <xxhash.h>
@@ -36,7 +45,60 @@ namespace {
 struct DecompressedCache {
   std::once_flag once;
   std::vector<uint8_t> bytes;
+  const uint8_t *mapped = nullptr;  // mk9-lauta: the cache file's read-only view (MapCacheFile)
 };
+
+#if defined(_WIN32)
+// mk9-lauta (2026-11-09): the decompressed cache as a file beside the executable (cache\shaders_<name>_<size>_<hash of
+// the compressed cache>.bin), mapped read-only, instead of ~80 MB of the process's own memory: the view's pages are
+// the file's, which Windows drops under memory pressure and reads again when needed (a PC with 4 GB) instead of writing
+// them to the page file. Made once, written under another name and renamed when complete; nullptr when that fails (the
+// cache then stays in memory, as before).
+const uint8_t *MapCacheFile(const char *name, const uint8_t *compressed, size_t compressed_size,
+                            size_t decompressed_size) {
+  const uint64_t id = XXH3_64bits(compressed, compressed_size);
+  const std::filesystem::path dir = banjo::renut_gpu::NextToExecutable("cache");
+  const std::filesystem::path file =
+      dir / fmt::format("shaders_{}_{}_{:016X}.bin", name, decompressed_size, id);
+  std::error_code ec;
+  if (std::filesystem::file_size(file, ec) != decompressed_size || ec) {
+    std::filesystem::create_directories(dir, ec);
+    std::vector<uint8_t> bytes(decompressed_size);
+    const size_t n = ZSTD_decompress(bytes.data(), decompressed_size, compressed, compressed_size);
+    if (ZSTD_isError(n) || n != decompressed_size)
+      return nullptr;
+    const std::filesystem::path partial = file.string() + ".partial";
+    {
+      std::ofstream out(partial, std::ios::binary | std::ios::trunc);
+      out.write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+      if (!out)
+        return nullptr;
+    }
+    std::filesystem::rename(partial, file, ec);
+    if (ec)
+      return nullptr;
+    // older builds' files of this cache go
+    for (const auto &entry : std::filesystem::directory_iterator(dir, ec)) {
+      const std::string other = entry.path().filename().string();
+      if (other != file.filename().string() && other.rfind(fmt::format("shaders_{}_", name), 0) == 0)
+        std::filesystem::remove(entry.path(), ec);
+    }
+  }
+  HANDLE handle = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                              FILE_FLAG_RANDOM_ACCESS, nullptr);
+  if (handle == INVALID_HANDLE_VALUE)
+    return nullptr;
+  HANDLE mapping = CreateFileMappingW(handle, nullptr, PAGE_READONLY, 0, 0, nullptr);
+  CloseHandle(handle);  // the mapping keeps the file
+  if (!mapping)
+    return nullptr;
+  const void *view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+  CloseHandle(mapping);  // the view keeps the mapping, for the process's life
+  if (view)
+    RGPU_INFO("{} shader cache: {} MB mapped from {}", name, decompressed_size >> 20, file.string());
+  return static_cast<const uint8_t *>(view);
+}
+#endif
 
 DecompressedCache g_spirv;
 #if defined(_WIN32)
@@ -47,6 +109,11 @@ std::atomic<uint64_t> g_decompressed_bytes{0};  // ShaderCacheHostBytes
 const uint8_t *Decompress(DecompressedCache &cache, const uint8_t *compressed,
                           size_t compressed_size, size_t decompressed_size, const char *name) {
   std::call_once(cache.once, [&] {
+#if defined(_WIN32)
+    cache.mapped = MapCacheFile(name, compressed, compressed_size, decompressed_size);
+    if (cache.mapped)
+      return;
+#endif
     cache.bytes.resize(decompressed_size);
     const size_t n = ZSTD_decompress(cache.bytes.data(), decompressed_size, compressed,
                                      compressed_size);
@@ -57,6 +124,8 @@ const uint8_t *Decompress(DecompressedCache &cache, const uint8_t *compressed,
     }
     g_decompressed_bytes.fetch_add(cache.bytes.capacity(), std::memory_order_relaxed);
   });
+  if (cache.mapped)
+    return cache.mapped;
   return cache.bytes.empty() ? nullptr : cache.bytes.data();
 }
 

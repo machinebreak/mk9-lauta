@@ -86,6 +86,8 @@ set(MK9_SOURCES
     src/mk9_localization.cpp
     # The first start's installer: the player's .iso or folder of the game, checked and extracted (mk9_installer.h).
     src/mk9_installer.cpp
+    # This PC's defaults: the first start's quality preset by the graphics and the memory (mk9_hardware.h).
+    src/mk9_hardware.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.

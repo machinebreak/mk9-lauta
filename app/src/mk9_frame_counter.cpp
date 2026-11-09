@@ -39,7 +39,7 @@ void Report() {
   static clock::time_point last = clock::now();
   // mk9-nx online (2026-11-08): a frame a rollback runs again is not shown (sa2_renut_pacing.h): it is counted apart,
   // and its time goes into the next shown frame's, which is what the player sees
-  if (sa2::renut::FrameHidden()) {
+  if (sa2::renut::FrameHidden() || !sa2::renut::LastSwapShown()) {  // mk9-lauta: or left undrawn (mk9_draw_mode)
     ++window_hidden;
     return;
   }
@@ -66,7 +66,7 @@ void Report() {
   if (elapsed >= 5.0) {
     REXLOG_INFO("[fps] {:.1f} fps over {:.1f} s ({} frames{}), longest frame {:.1f} ms, {} over 20 ms, total {}",
                 window_frames / elapsed, elapsed, window_frames,
-                window_hidden ? fmt::format(" shown, {} run again hidden", window_hidden) : std::string(),
+                window_hidden ? fmt::format(" shown, {} not shown: run again or left undrawn", window_hidden) : std::string(),
                 worst_us / 1000.0, window_late, g_mk9_game_frames.load(std::memory_order_relaxed));
     window_start = now;
     window_frames = 0;
@@ -76,6 +76,28 @@ void Report() {
   }
 }
 
+}  // namespace
+
+// mk9-lauta (2026-11-09): the frames a second for the options' FPS counter (mk9_show_fps): game frames and shown ones
+// over the last second.
+std::atomic<uint32_t> g_mk9_fps_game{0}, g_mk9_fps_shown{0};
+namespace {
+void CountForDisplay() {
+  using clock = std::chrono::steady_clock;
+  static clock::time_point since = clock::now();
+  static uint32_t game = 0, shown = 0;
+  if (sa2::renut::FrameHidden()) return;  // frames a rollback runs again: no time of their own
+  ++game;
+  if (sa2::renut::LastSwapShown()) ++shown;
+  const auto now = clock::now();
+  if (now - since >= std::chrono::seconds(1)) {
+    const double seconds = std::chrono::duration<double>(now - since).count();
+    g_mk9_fps_game.store(uint32_t(game / seconds + 0.5), std::memory_order_relaxed);
+    g_mk9_fps_shown.store(uint32_t(shown / seconds + 0.5), std::memory_order_relaxed);
+    since = now;
+    game = shown = 0;
+  }
+}
 }  // namespace
 
 extern "C" REX_FUNC(__imp__sub_82BF6D58);
@@ -93,5 +115,6 @@ REX_HOOK_RAW(sub_82BF6D58) {
     g_sa2_game_frames.fetch_add(1, std::memory_order_relaxed);
   }
   g_mk9_game_frames.fetch_add(1, std::memory_order_relaxed);
+  CountForDisplay();
   if (REXCVAR_GET(mk9_fps_log)) Report();
 }

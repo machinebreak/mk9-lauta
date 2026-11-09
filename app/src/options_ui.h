@@ -7,9 +7,18 @@
 
 #pragma once
 
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace mk9::options_ui {
 
 // Once (any thread): the window goes into the overlay.
 void Install();
+
+// mk9-lauta (2026-11-09): a quality preset's keys and values ("Muy baja", "Baja", "Consola", "Alta", "Ultra"; nullptr
+// for another name), and the keys' lines written to mk9.toml (replaced or added; every other line as it was).
+const std::vector<std::pair<const char*, const char*>>* PresetValues(const std::string& name);
+bool SaveToConfig(const std::vector<std::pair<std::string, std::string>>& values);
 
 }  // namespace mk9::options_ui

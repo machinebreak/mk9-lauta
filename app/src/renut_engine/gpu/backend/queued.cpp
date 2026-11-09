@@ -601,7 +601,8 @@ std::string SnapshotDeltaReport() {
 // made, the state chain's next draw a whole device again. The frame's other work (clears, resolves, fences) still runs.
 std::atomic<uint64_t> g_hidden_draws{0};
 bool SkipHiddenDraw() {
-  if (!sa2::renut::FrameHidden())
+  // mk9-lauta (2026-11-09): a frame the performance mode leaves undrawn, likewise (sa2_renut_pacing.h FrameSkipped)
+  if (!sa2::renut::FrameHidden() && !sa2::renut::FrameSkipped())
     return false;
   if (DeltasOn()) {
     std::lock_guard<std::mutex> chain(g_delta.mutex);

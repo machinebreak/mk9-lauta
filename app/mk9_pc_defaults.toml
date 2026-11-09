@@ -6,6 +6,9 @@
 # XGetLanguage's values: 1 English, 3 German, 4 French, 5 Spanish, 6 Italian, 9 Portuguese (the game's Coalesced.*).
 user_language = 5
 
+# --- The pads' vibration, as the console's (F2 > Controles turns it off) ------------------------------------------------
+input_rumble = true
+
 # --- The keyboard: a fighting layout, on from the start ------------------------------------------------------------
 # Each key presses an Xbox 360 button, and the game turns the button into its action with its own layout (OPCIONES >
 # MANDO; these names are its defaults). Movement is on the left stick: the game's main menus read the stick and not

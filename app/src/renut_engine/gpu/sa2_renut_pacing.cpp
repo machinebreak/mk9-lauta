@@ -17,8 +17,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <mutex>
 #include <chrono>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #if defined(_WIN32)
@@ -44,6 +46,12 @@ REXCVAR_DEFINE_BOOL(sa2_renut_vblank_pacing, true, "SA2",
                     "(60 Hz refreshes), as the console's vertical blank paces the game; SA2's game speed follows its "
                     "frame rate. Off: the game runs as fast as the host renders (tests only)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+REXCVAR_DEFINE_STRING(mk9_draw_mode, "all", "MK9/Renderer",
+                      "Which frames are drawn: all; half (every other frame: the game keeps its 60 frames a second, "
+                      "the GPU draws 30, for a PC whose graphics cannot keep up); auto (all while the PC keeps up, "
+                      "every other one while it does not)")
+    .allowed({"all", "half", "auto"});
 
 // The native renderer's relaxed vsync key (src/me/me_native_system.cpp), the player's setting.
 extern ::sa2::enh::Enhancement g_vsync_relaxed;
@@ -155,10 +163,86 @@ std::atomic<bool> g_frame_hidden{false};
 void SetFrameHidden(bool hidden) { g_frame_hidden.store(hidden, std::memory_order_release); }
 bool FrameHidden() { return g_frame_hidden.load(std::memory_order_acquire); }
 
+namespace {
+
+// mk9-lauta (2026-11-09): the performance mode (mk9_draw_mode). The thread of the Direct3D calls only.
+bool g_skip_this = false;           // the frame being made is not drawn
+std::atomic<bool> g_last_shown{true};
+// "auto": the median of the frames' work (from one Swap's release to the next Swap: the game's work and any wait on
+// the GPU) over windows of 60 frames. Over 15 ms (no room for 60 a second) it draws every other frame for a while;
+// then, when the frames it draws take under 8.5 ms (all of them would fit), it tries all again. A try that fails
+// within 6 s doubles the wait before the next one (4 s up to 2 minutes).
+struct Auto {
+  bool skipping = false;
+  double work[60] = {};
+  uint32_t count = 0;
+  Clock::time_point hold_until{}, tried_at{};
+  Clock::duration hold = std::chrono::seconds(4);
+};
+Auto g_auto;
+
+// mk9_draw_mode as a number (0 all, 1 half, 2 auto), kept by a change callback: the options window changes it from the
+// window's thread while the Direct3D calls' thread reads it.
+std::atomic<int> g_draw_mode{-1};
+int DrawMode() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    static auto parse = [](std::string_view v) { return v == "half" ? 1 : v == "auto" ? 2 : 0; };
+    g_draw_mode.store(parse(REXCVAR_GET(mk9_draw_mode)), std::memory_order_relaxed);
+    rex::cvar::RegisterChangeCallback("mk9_draw_mode", [](std::string_view, std::string_view value) {
+      g_draw_mode.store(parse(value), std::memory_order_relaxed);
+    });
+  });
+  return g_draw_mode.load(std::memory_order_relaxed);
+}
+
+double Median(double* values, uint32_t count) {
+  std::nth_element(values, values + count / 2, values + count);
+  return values[count / 2];
+}
+
+void NoteWork(double work_ms, bool drawn) {
+  if (DrawMode() != 2) return;
+  Auto& a = g_auto;
+  if (a.skipping && !drawn) return;  // undrawn frames say nothing about drawing
+  a.work[a.count++] = std::min(work_ms, 100.0);  // a load's long frames count as late, no more
+  if (a.count < 60) return;
+  const double median = Median(a.work, a.count);
+  a.count = 0;
+  const auto now = Clock::now();
+  if (!a.skipping && median > 15.0) {
+    a.skipping = true;
+    if (a.tried_at != Clock::time_point{} && now - a.tried_at < std::chrono::seconds(6)) {
+      a.hold = std::min<Clock::duration>(a.hold * 2, std::chrono::minutes(2));
+    }
+    a.hold_until = now + a.hold;
+    REXLOG_INFO("[renut] mk9_draw_mode auto: frames take {:.1f} ms: every other frame drawn for at least {} s", median,
+                std::chrono::duration_cast<std::chrono::seconds>(a.hold).count());
+  } else if (a.skipping && now >= a.hold_until && median < 8.5) {
+    a.skipping = false;
+    a.tried_at = now;
+    REXLOG_INFO("[renut] mk9_draw_mode auto: a drawn frame takes {:.1f} ms: every frame drawn again", median);
+  }
+}
+
+}  // namespace
+
+bool FrameSkipped() { return g_skip_this; }
+bool LastSwapShown() { return g_last_shown.load(std::memory_order_relaxed); }
+
+void AfterSwap(bool rollback_hidden) {
+  g_last_shown.store(!rollback_hidden && !g_skip_this, std::memory_order_relaxed);
+  if (rollback_hidden) return;  // the alternation goes on with the live frames
+  const int mode = DrawMode();
+  const bool skipping = mode == 1 || (mode == 2 && g_auto.skipping);
+  g_skip_this = skipping && !g_skip_this;  // drawn, not drawn, drawn...
+}
+
 void PaceSwap(uint32_t device_va) {
   static const bool on = REXCVAR_GET(sa2_renut_vblank_pacing);
   if (!on || !device_va) return;
   if (FrameHidden()) return;  // a frame run again by a rollback: no wait, and the grid stays as it was
+  if (g_stats.released != Clock::time_point{}) NoteWork(Ms(Clock::now() - g_stats.released), !g_skip_this);
   const auto *interval_word = ::renut::gpu::GuestPtr<const be_u32>(device_va + kDeviceOffsetPresentationInterval);
   const uint32_t refreshes = RefreshesPerFrame(interval_word ? uint32_t(*interval_word) : 1);
   const auto now = Clock::now();

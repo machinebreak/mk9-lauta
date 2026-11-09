@@ -946,8 +946,10 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
   }
   // sa2-nx: the console's vertical blank paced SA2's frames (its game speed follows them): sa2_renut_pacing.cpp.
   sa2::renut::PaceSwap(device_va);
-  // mk9-nx online: a frame a rollback runs again is not shown (sa2_renut_pacing.h, SetFrameHidden)
-  const bool hidden = sa2::renut::FrameHidden();
+  // mk9-nx online: a frame a rollback runs again is not shown (sa2_renut_pacing.h, SetFrameHidden); mk9-lauta: nor
+  // one the performance mode left undrawn (its time was paced as any frame's)
+  const bool rollback_hidden = sa2::renut::FrameHidden();
+  const bool hidden = rollback_hidden || sa2::renut::FrameSkipped();
   // sa2-nx: SA2's game frame count (src/sa2_d3d_trace.cpp: the flip, which only the GPU's vblank interrupt reaches).
   const uint64_t game_frame = g_sa2_game_frames.fetch_add(1, std::memory_order_relaxed) + 1;
   // sa2-nx: a lockstep recording (sa2_capture.cpp) takes this very frame: asked before it is queued.
@@ -1043,6 +1045,7 @@ void D3DDevice_Swap_hook(u32 device_va, u32 front_buffer, u32 /*parameters*/) {
   // SA2's own setters keep marking it).
   if (device)
     native::RewindRing(native::DeviceAt(device_va));
+  sa2::renut::AfterSwap(rollback_hidden);  // mk9-lauta: whether the next frame is drawn (mk9_draw_mode)
 }
 
 // void D3DDevice_InsertCallback(D3DDevice*, D3DCALLBACKTYPE, D3DCALLBACK pCallback,

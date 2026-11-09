@@ -17,6 +17,16 @@ void PaceSwap(uint32_t device_va);
 void SetFrameHidden(bool hidden);
 bool FrameHidden();
 
+// mk9-lauta (2026-11-09): the performance mode (mk9_draw_mode): frames that are not drawn but still take their 1/60 s,
+// so the game keeps its speed while the GPU draws every other frame. Read by the thread that makes the Direct3D calls
+// (the draws and the Swap), which also decides it at each Swap (AfterSwap).
+bool FrameSkipped();
+// The Swap hook, after the frame went to the render thread: whether the next frame is drawn (rollback_hidden: this
+// frame was one a rollback ran again, which the alternation does not count).
+void AfterSwap(bool rollback_hidden);
+// Whether the last Swap presented an image (not a frame run again, not a frame left undrawn).
+bool LastSwapShown();
+
 // mk9-nx online (2026-11-08): the guest words of the title D3D device that count the GPU's progress (the current fence
 // tag, the fence completion word, the Swap's counters and tags, the kick flag, the ring stub's pointers: [start, end)
 // byte ranges), which Renut's host state follows. A rollback leaves them as they are: put back, the device would wait

@@ -23,6 +23,7 @@
 #include "mk9_controls.h"
 #include "mk9_localization.h"
 #include "mk9_installer.h"
+#include "mk9_hardware.h"
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
@@ -77,6 +78,10 @@ class Mk9App : public rex::ReXApp {
     }
     // Which renderer enhancements run (sa2-nx's switchable set), in one line; before any guest thread exists.
     sa2::enh::Resolve();
+#if defined(_WIN32)
+    // mk9-lauta (2026-11-09): this PC's defaults: the first start's preset, the memory saving (mk9_hardware.h)
+    mk9::hardware::ApplyDefaults();
+#endif
   }
 
   // Without --game_data_root, use a game_root/ folder next to the executable, and on a PC build tree the

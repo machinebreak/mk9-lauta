@@ -10,6 +10,7 @@
 #endif
 #include <windows.h>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -33,6 +34,8 @@
 #endif
 
 REXCVAR_DEFINE_BOOL(mk9_options_show, false, "MK9", "The options window (F2) opens at start");
+REXCVAR_DEFINE_BOOL(mk9_show_fps, false, "MK9", "The frames a second, top left (the options window, F2)");
+extern std::atomic<uint32_t> g_mk9_fps_game, g_mk9_fps_shown;  // mk9_frame_counter.cpp
 REXCVAR_DEFINE_STRING(mk9_options_tab, "", "MK9",
                       "The options window's tab shown first (Gráficos, Controles, Pantalla e idioma, Online); empty = "
                       "the first");
@@ -74,9 +77,18 @@ const std::vector<Option>& GraphicsOptions() {
       {"renut_post_process_precision", "Brillos y desenfoque",
        {{"Game", "Como en la consola"}, {"High", "Más precisos"}},
        "La precisión del brillo (bloom), la profundidad de campo y la oclusión ambiental."},
+      {"mk9_draw_mode", "Cuadros dibujados",
+       {{"all", "Todos (60 por segundo)"}, {"auto", "Automático (la mitad si la PC no llega)"},
+        {"half", "Uno de cada dos (30 por segundo)"}},
+       "Con poca placa de video: el juego sigue a su velocidad (la pelea a 60 cuadros por segundo) y se dibuja uno de "
+       "cada dos, la mitad de trabajo para la placa. \"Automático\" lo hace sólo mientras la PC no llega a 60."},
       {"renut_vsync", "Sincronización vertical",
        {{"true", "Activada (sin cortes de imagen)"}, {"false", "Desactivada"}},
        "Activada, la imagen no se corta. Desactivada puede bajar un poco la latencia en monitores de más de 60 Hz."},
+      {"banjo_renut_memory_policy", "Ahorro de memoria",
+       {{"false", "Apagado"}, {"true", "Activado (PCs con 4-6 GB de RAM)"}},
+       "Suelta las texturas que no se usan y guarda menos copias: menos memoria a cambio de volver a armarlas cuando "
+       "hacen falta. Se activa solo en PCs con 6 GB o menos."},
       {"sa2_renut_msaa", "Antialiasing (MSAA)",
        {{"0", "Apagado (el del juego)"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}},
        "Bordes más suaves; cada paso cuesta más placa de video. Se aplica al volver a abrir el juego."},
@@ -89,6 +101,14 @@ const std::vector<Option>& DisplayOptions() {
       {"fullscreen", "Pantalla",
        {{"true", "Pantalla completa"}, {"false", "Ventana"}},
        "F11 o Alt+Enter cambian entre pantalla completa y ventana en cualquier momento."},
+      {"renut_gpu_backend", "API gráfica",
+       {{"d3d12", "DirectX 12"}, {"vulkan", "Vulkan"}},
+       "Si el juego anda mal o se ve raro con una, probá la otra (algunas placas y drivers van mejor con Vulkan). Se "
+       "aplica al volver a abrir el juego.",
+       true},
+      {"mk9_show_fps", "Mostrar FPS",
+       {{"false", "No"}, {"true", "Sí, arriba a la izquierda"}},
+       "Los cuadros por segundo que se ven y, si se saltean, los que se dibujan."},
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},
@@ -116,18 +136,23 @@ struct Preset {
 
 const std::vector<Preset>& Presets() {
   static const std::vector<Preset> presets = {
+      {"Muy baja",
+       "Para netbooks y PCs con gráficos integrados viejos o 4 GB de RAM: 480p, todo como en la consola y, si la PC no "
+       "llega a 60, se dibuja uno de cada dos cuadros (el juego sigue a su velocidad).",
+       {{"renut_resolution", "480p"}, {"renut_shadow_resolution", "1x"}, {"renut_ambient_occlusion", "Half"},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "auto"}}},
       {"Baja", "Para PCs con poca placa de video: 480p, sombras y efectos como en la consola.",
        {{"renut_resolution", "480p"}, {"renut_shadow_resolution", "1x"}, {"renut_ambient_occlusion", "Half"},
-        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}}},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "all"}}},
       {"Consola", "Como en la Xbox 360: 720p.",
        {{"renut_resolution", "720p"}, {"renut_shadow_resolution", "Resolution"}, {"renut_ambient_occlusion", "Half"},
-        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}}},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "all"}}},
       {"Alta", "1080p, sombras nítidas, texturas filtradas.",
        {{"renut_resolution", "1080p"}, {"renut_shadow_resolution", "2x"}, {"renut_ambient_occlusion", "Full"},
-        {"renut_anisotropic_filtering", "8x"}, {"renut_post_process_precision", "High"}}},
+        {"renut_anisotropic_filtering", "8x"}, {"renut_post_process_precision", "High"}, {"mk9_draw_mode", "all"}}},
       {"Ultra", "1440p y todo al máximo: para placas de video potentes.",
        {{"renut_resolution", "1440p"}, {"renut_shadow_resolution", "4x"}, {"renut_ambient_occlusion", "Full"},
-        {"renut_anisotropic_filtering", "16x"}, {"renut_post_process_precision", "High"}}},
+        {"renut_anisotropic_filtering", "16x"}, {"renut_post_process_precision", "High"}, {"mk9_draw_mode", "all"}}},
   };
   return presets;
 }
@@ -181,7 +206,16 @@ std::string TomlLine(const std::string& key, const std::string& value) {
 }
 
 // The keys' lines in mk9.toml replaced (or added at its end) with these values; every other line as it was.
-bool SaveValues(const std::vector<std::pair<std::string, std::string>>& values) {
+}  // namespace
+
+const std::vector<std::pair<const char*, const char*>>* PresetValues(const std::string& name) {
+  for (const Preset& p : Presets()) {
+    if (name == p.label) return &p.values;
+  }
+  return nullptr;
+}
+
+bool SaveToConfig(const std::vector<std::pair<std::string, std::string>>& values) {
   const std::filesystem::path path = ConfigPath();
   std::vector<std::string> lines;
   {
@@ -211,6 +245,8 @@ bool SaveValues(const std::vector<std::pair<std::string, std::string>>& values) 
   return bool(out);
 }
 
+namespace {
+
 class OptionsWindow : public renut::gpu::overlay::Dialog {
  public:
   void Draw() override {
@@ -232,6 +268,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       Set({{"fullscreen", full ? "false" : "true"}}, full ? "Ventana" : "Pantalla completa");
     }
     if (capturing_ >= 0) TakeKey();
+    if (REXCVAR_GET(mk9_show_fps)) DrawFps();
     if (!visible_) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowSize(ImVec2(760, 660), ImGuiCond_FirstUseEver);
@@ -273,6 +310,25 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
  private:
+  // The frames a second, top left: the shown ones, and the game's when they differ (the performance mode).
+  void DrawFps() {
+    const uint32_t game = g_mk9_fps_game.load(std::memory_order_relaxed);
+    const uint32_t shown = g_mk9_fps_shown.load(std::memory_order_relaxed);
+    ImGui::SetNextWindowPos(ImVec2(8, 8));
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+    if (ImGui::Begin("##fps", nullptr, flags)) {
+      if (shown + 2 < game) {
+        ImGui::Text("%u FPS (juego a %u)", shown, game);
+      } else {
+        ImGui::Text("%u FPS", shown);
+      }
+    }
+    ImGui::End();
+  }
+
   // The tab mk9_options_tab names is selected the first time the tabs are drawn.
   ImGuiTabItemFlags TabFlags(const char* tab) const {
     return first_tabs_ && REXCVAR_GET(mk9_options_tab) == tab ? ImGuiTabItemFlags_SetSelected : 0;
@@ -320,6 +376,10 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       DrawKeys();
     }
     ImGui::Separator();
+    bool rumble = rex::cvar::GetFlagByName("input_rumble") == "true";
+    if (ImGui::Checkbox("Vibración del mando", &rumble)) {
+      Set({{"input_rumble", rumble ? "true" : "false"}}, rumble ? "Vibración activada" : "Vibración desactivada");
+    }
     ImGui::Text("Mandos conectados:");
     bool any_pad = false;
     for (const controls::Device& d : controls::Devices()) {
@@ -465,7 +525,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       }
       for (const Option& o : DisplayOptions()) later |= o.restart && key == o.key;
     }
-    note_ok_ = SaveValues(values);
+    note_ok_ = SaveToConfig(values);
     note_ = !note_ok_ ? "No se pudo guardar en mk9.toml"
             : later   ? what + ": guardado (se aplica al volver a abrir el juego)"
                       : what + ": guardado";
