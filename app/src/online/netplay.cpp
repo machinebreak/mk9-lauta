@@ -534,7 +534,10 @@ void SendHello() {
 }
 
 void SendInputs() {
-  const int64_t newest = g.rollback ? g.latest + g.delay : g.local_made_upto;
+  // only inputs made: in a fight the next one (latest + delay) is made at the next boundary, and a wait inside a
+  // frame (ConfirmFrame: a load, the music changing) resends before that; sent unmade, the peer would keep that
+  // empty pad as this frame's input and drop the real one (2026-11-09)
+  const int64_t newest = g.local_made_upto;
   int64_t first = std::max<int64_t>(g.peer_acked + 1, 0);
   first = std::max<int64_t>(first, newest - kMaxPerPacket + 1);
   auto p = Header(kInput);
