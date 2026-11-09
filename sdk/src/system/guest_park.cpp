@@ -187,6 +187,27 @@ GuardScope::~GuardScope() {
   if (was_exempt_) Self()->exempt.store(true);
 }
 
+// mk9-lauta (2026-11-10): a stretch of a guarded (or plain) thread's work that touches none of the memory a park keeps
+// (FMOD's streaming copy out of a mapped package into its own buffer, which can wait on a slow disk for tens of ms):
+// the thread is exempt for it, so a boundary does not wait for it; taken back, a park on meanwhile is waited out at
+// rest first, as GuardScope's start does. Declared where they are used (no header of their own).
+bool Exempt() { return Self()->exempt.load(); }
+
+void LendExempt() { Self()->exempt.store(true); }
+
+void TakeBackExempt() {
+  Record* r = Self();
+  r->exempt.store(false);
+  while (g_on.load() && g_parker.load() != r) {
+    r->busy.fetch_sub(1);
+    {
+      std::unique_lock<std::mutex> lock(g_mutex);
+      g_cv.wait(lock, [] { return !g_on.load(); });
+    }
+    r->busy.fetch_add(1);
+  }
+}
+
 void ThreadExiting() {
   Record* r = Self();
   r->busy.store(0);

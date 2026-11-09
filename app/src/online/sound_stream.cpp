@@ -16,6 +16,9 @@
 //   mk9_sound_stream_host=<bool>   FMOD's streaming reads from the game's files on the host (true)
 
 #include <algorithm>
+#include <thread>
+#include <cstdlib>
+#include <chrono>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -31,6 +34,8 @@
 #include <rex/memory/mapped_memory.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
+
+#include "online/sound_memory.h"  // mk9::sound::Apart
 
 REXCVAR_DEFINE_BOOL(mk9_sound_stream_host, true, "MK9 Online",
                     "FMOD's streaming reads (music, voices) from the game's files on the host instead of through the "
@@ -139,6 +144,13 @@ void Open(PPCContext& ctx, uint8_t* base, uint32_t archive, Stream& s) {
 }  // namespace
 }  // namespace mk9::sound_stream
 
+namespace rex::system::park {
+// sdk/src/system/guest_park.cpp
+bool Exempt();
+void LendExempt();
+void TakeBackExempt();
+}  // namespace rex::system::park
+
 using namespace mk9::sound_stream;
 
 REX_HOOK_RAW(sub_82589650) {
@@ -165,13 +177,38 @@ REX_HOOK_RAW(sub_82604168) {
   }
   const uint32_t pos = std::min(s.pos, s.size);
   const uint32_t size = std::min(ctx.r5.u32, s.size - pos);
+  const char* lend_note = "";
   if (size) {
+    // the copy out of the mapped package can wait on the disk (tens of ms on a slow one) and writes only FMOD's buffer,
+    // in the sound's own arena: a guarded thread (FMOD's, inside the game's file callback) is the sound's for it, so a
+    // rollback boundary does not wait for it (the 0.1.0 testers: 8 ms more at every boundary of a fight, the stream
+    // thread left unparked) and is the game's again before it writes the archive's position below
+    const bool lend = mk9::sound::Apart() && !rex::system::park::Exempt();
+    lend_note = lend ? " (the copies run exempt from the rollback's park)" : "";
+    if (lend) {
+      lock.unlock();
+      rex::system::park::LendExempt();
+    }
     std::memcpy(rex::memory::GuestPtr(base, buffer), s.data + s.offset + pos, size);
     rex::memory::MarkStoreCardsAt(base, buffer, size);
+    // tests only: MK9_TEST_SLOW_STREAM=<ms> makes every copy as slow as a slow disk's
+    static const int slow_ms = [] {
+      const char* v = std::getenv("MK9_TEST_SLOW_STREAM");
+      return v ? std::atoi(v) : 0;
+    }();
+    if (slow_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(slow_ms));
+    if (lend) {
+      rex::system::park::TakeBackExempt();
+      lock.lock();
+    }
   }
   s.pos = pos + size;
   St32(base, archive + 8, s.pos);
   ++g_reads;
   g_bytes += size;
+  if (g_reads == 1 || (g_reads & 1023) == 0) {
+    REXLOG_INFO("[sound] FMOD's streaming reads from the host: {} so far, {:.1f} MB{}", g_reads, g_bytes / 1048576.0,
+                lend_note);
+  }
   ctx.r3.u64 = size;
 }

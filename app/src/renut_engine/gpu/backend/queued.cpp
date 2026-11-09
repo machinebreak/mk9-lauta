@@ -598,7 +598,11 @@ std::string SnapshotDeltaReport() {
 
 // mk9-nx online (2026-11-08): a frame a rollback runs again is not shown (sa2_renut_pacing.h, SetFrameHidden; the
 // guest's render thread draws a frame within it, as the rollback drains it at each frame's start): its draws are not
-// made, the state chain's next draw a whole device again. The frame's other work (clears, resolves, fences) still runs.
+// made, the state chain's next draw a whole device again. mk9-lauta (2026-11-10): nor its clears and resolves (fences
+// still complete): a resolve of targets nothing was drawn into copied black into textures the next shown frame reads
+// (a stage's reflection or scene capture updated every few frames, an effect reading the frame before): the black
+// flashes and flickering polygons the 0.1.0 testers saw in some stages online, and with the performance mode's
+// skipped frames. Skipped, those textures keep the last drawn frame's content.
 std::atomic<uint64_t> g_hidden_draws{0};
 bool SkipHiddenDraw() {
   // mk9-lauta (2026-11-09): a frame the performance mode leaves undrawn, likewise (sa2_renut_pacing.h FrameSkipped)
@@ -713,6 +717,8 @@ void QueueClear(u32 device_va, u32 flags, const ClearRect *rect, const float col
                 u32 stencil) {
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
+  if (SkipHiddenDraw())
+    return;
   const auto *device = GuestPtr<const u8>(device_va);
   if (!device)
     return;
@@ -736,6 +742,8 @@ void QueueResolve(u32 device_va, u32 flags, const ClearRect *source_rect, u32 de
                   const float clear_color[4], float clear_depth, u32 clear_stencil) {
   FlushDeferredVertices(device_va);
   RunReadyCallbacks();
+  if (SkipHiddenDraw())
+    return;
   const auto *device = GuestPtr<const u8>(device_va);
   if (!device)
     return;
