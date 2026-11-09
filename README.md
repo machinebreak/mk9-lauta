@@ -1,96 +1,139 @@
-<p align="center"><img src="app/icon.jpg" width="128" alt="mk9-lauta"></p>
-
 # mk9-lauta
 
-**Mortal Kombat Komplete Edition nativo en PC, con online con rollback.**
+[![Release](https://img.shields.io/github/v/release/machinebreak/mk9-lauta?label=release)](https://github.com/machinebreak/mk9-lauta/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/machinebreak/mk9-lauta/total)](https://github.com/machinebreak/mk9-lauta/releases)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-*English: a native Windows port of Mortal Kombat Komplete Edition (Xbox 360, title 575207FD), made from the
-[mk9-nx](https://github.com/Thorhax/mk9-nx) static recompilation, with online play (rollback netcode, a lobby with
-rooms and chat), a first-start installer that takes your own game disc image, and settings for low-end PCs. No game
-files are included: you need your own copy of the game.*
+A native PC port of **Mortal Kombat Komplete Edition** (Xbox 360, PAL release, title 575207FD) with online play,
+built on the static recompilation in **[mk9-nx](https://github.com/Thorhax/mk9-nx)** by Thorhax. It is the game's
+own code recompiled for PC, with a new renderer, sound and input layer underneath; it is not an emulator.
 
-mk9-lauta es el juego de Xbox 360 recompilado a un ejecutable de Windows: no es un emulador. Está hecho sobre
-[mk9-nx](https://github.com/Thorhax/mk9-nx) de Thorhax (la recompilación estática con el renderer Renut) y le suma el
-online, el instalador, las opciones y los controles de PC.
+This repository contains **no game data**. You need your own disc image of that release: the first start reads the
+game's files from it, and they stay on your computer.
 
-**Este repositorio no tiene ningún archivo del juego.** Hace falta una copia propia del juego original de Xbox 360,
-como imagen `.iso` del disco.
+> **Official source.** This project lives only at
+> [github.com/machinebreak/mk9-lauta](https://github.com/machinebreak/mk9-lauta), and it never ships the game:
+> you need your own disc. Our releases are free and have no ads, accounts or payments.
 
-## Qué trae
+**En español:** la guía para jugadores (instalación, online, controles y opciones) está en
+[docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` de cada release.
 
-- **Online con rollback** (F1): lobby con nombre de usuario, partida rápida, salas públicas y privadas con código,
-  chat de la sala y chat global. Las peleas usan rollback (si la conexión tiene un salto, el juego se corrige solo
-  sin frenar) y los menús van sincronizados. Conexión directa entre las dos PCs, y por un servidor de relevo cuando
-  el router no la deja.
-- **Instalador**: la primera vez elegís la ISO del juego (o la carpeta donde ya está extraído) y se verifica y copia
-  solo.
-- **Opciones** (F2): calidad gráfica (Muy baja, Baja, Consola, Alta, Ultra), resolución de 480p a 4K, sombras,
-  oclusión ambiental, filtrado de texturas, antialiasing, pantalla completa, contador de FPS, DirectX 12 o Vulkan,
-  idioma del juego (español con el Modo Historia doblado, inglés, portugués, francés, alemán, italiano).
-- **PCs bajas**: la primera vez el juego elige la calidad según tu placa de video y tu memoria. En "Muy baja", si la
-  PC no llega a 60 cuadros, dibuja uno de cada dos y el juego sigue a su velocidad. Con 4 a 6 GB de RAM se activa solo
-  el ahorro de memoria.
-- **Controles**: mandos de Xbox, PlayStation y Switch Pro, con vibración, y el teclado listo para pelear, con cada
-  tecla cambiable.
+## What works
 
-## Requisitos
+- The whole game: Story, Ladder and Tag Ladder, Versus with two players on one PC, the Challenge Tower, Training
+  and the Krypt, with the Komplete Edition's downloadable fighters.
+- A GPU renderer (Renut, from masterspike52's reNut) on Direct3D 12, or on Vulkan (F2 > Pantalla e idioma > API
+  gráfica; Vulkan is also tried by itself when Direct3D 12 cannot start). Internal resolution 480p, 720p (the
+  console's), 1080p, 1440p or 4K; shadows, ambient occlusion, texture filtering, effect precision and MSAA can each
+  be set.
+- Low-end PCs: the first start picks a quality preset from the graphics card and the memory (Muy baja, Baja,
+  Consola, Alta, Ultra; F2 > Gráficos changes it). **Cuadros dibujados** (drawn frames) keeps the game at 60 frames
+  a second and draws one picture in two (half the graphics card's work), always or only while the PC cannot keep
+  up; a fight goes at the same speed either way. **Ahorro de memoria** (memory saving) turns itself on with 6 GB of
+  RAM or less. F2 > Pantalla e idioma > Mostrar FPS shows the frame rate.
+- Keyboard and controllers (Xbox, PlayStation and Switch Pro, through SDL), with vibration. The keyboard comes set
+  for fighting (WASD or arrows, U I J K, O, L, Ñ, P) and every key can be changed in F2 > Controles; the keyboard
+  can play player 1 or player 2, for a versus with a controller on the same PC.
+- The disc's six languages: English, French, German, Spanish (with the dubbed Story mode), Italian and Portuguese.
+- A first-start installer: choose your disc image (or the folder you extracted it to); it checks that it is the
+  right release and copies the ~7 GB the game uses next to the program. At every start the game checks its files
+  and names a missing or damaged one.
+- In the game, **F1** opens the online screens and **F2** the settings (Gráficos, Controles, Pantalla e idioma,
+  Online). **F11** or **Alt+Enter** switch between full screen and a window. After a crash, `logs` keeps the log and
+  a `crash_*.dmp` of it.
 
-- Windows 10 u 11 de 64 bits.
-- Una placa de video compatible con DirectX 12 o Vulkan (también sirven las integradas).
-- 4 GB de RAM o más.
-- ~8 GB libres en el disco.
-- Tu copia de **Mortal Kombat Komplete Edition** de Xbox 360 como imagen `.iso` del disco (la versión europea: inglés,
-  francés, alemán, español, italiano, portugués). No sirven las imágenes comprimidas (CCI, GOD, ZAR).
+- **Online play, experimental:** the main menu's **ONLINE (F1)**. Choose a name, then **Partida rápida** (quick
+  match: the room that has waited longest, or a new one of yours), **Crear sala pública**, **Crear sala privada** (a
+  six-character code to pass to a friend) or **Unirse con código**. A room has its own chat, and the lobby a global
+  one. When both players press **Estoy listo** (ready), the game starts again already connected. The game's own
+  menus are shared: either player chooses VERSUS (ONE VS ONE or TWO VS TWO), the other joins with START, and each
+  picks a fighter. Fights run with rollback: your own moves come out at once (with one frame of input delay unless
+  the host chooses 0 or 2) and the game corrects itself when the other player's buttons arrive. Menus and loads run
+  in lockstep, with their delay set from the ping. There is no pause in an online fight. The opponent's name and
+  ping show at the top right; when the match ends, the loser chooses REMATCH, another fighter or the menu.
 
-## Instalación
+Online play is new. It has been tested with two games on one PC over emulated networks (with ~90 ms of ping and
+0.5 % packet loss the two games stayed the same) and through the real lobby; it has not been played between two
+machines over the internet yet. With very bad networks (3 % loss and heavy jitter) details such as the stage's
+sounds can drift apart, and in the hardest tests a game has crashed. Both players need the same release.
+[docs/online/netplay-design.md](docs/online/netplay-design.md) is the working log of how it is built and what was
+checked.
 
-1. Bajá el `.zip` de la última versión en [Releases](../../releases) y descomprimilo donde quieras, en un disco con
-   ~8 GB libres (no adentro de "Archivos de programa").
-2. Abrí `mk9.exe`. La primera vez se abre el instalador: elegí tu `.iso` (o la carpeta del juego, la que tiene
-   `default.xex`). Se revisa que sea la versión correcta y se copian los archivos del juego a `game_root`. Es una sola
-   vez: después arranca directo.
-   - Si Windows muestra "Windows protegió tu PC" (el programa no tiene firma digital): "Más información" y "Ejecutar
-     de todas formas".
-   - La primera vez que entrás al online, Windows pregunta si dejás que el juego use la red: "Permitir" (redes
-     privadas y públicas).
-3. La primera vez tarda un poco más en arrancar mientras prepara los gráficos de tu placa de video.
+Rooms, quick matches and chat go through a lobby server (a WebSocket service). The game sends it the name you
+choose and, in a room, the messages the two games exchange to find each other. The games then send to each other
+directly. Where the routers do not allow that, the match goes through a relay (Cloudflare's TURN service), which
+passes the match's packets on. `mk9_lobby_url` in `mk9.toml` points the game at another lobby.
 
-## Jugar online
+## Requirements
 
-**F1** abre el online. La primera vez te pide un nombre. Para pelear con un amigo, uno toca **Crear sala privada** y
-le pasa el código de 6 letras; el otro lo pone en **Unirse con código**. Cuando los dos tocan **Estoy listo**, el juego
-se vuelve a abrir solo, ya conectado. En el menú del juego, VERSUS: uno elige el modo y el otro se suma con START.
+- Windows 10 or 11, 64-bit.
+- A graphics card with Direct3D 12 or Vulkan (integrated graphics work too; see the presets above).
+- 4 GB of RAM or more.
+- About 8 GB of disk space, and your disc image as a plain `.iso` file (the PAL release: English, French, German,
+  Spanish, Italian, Portuguese). Compressed images (CCI, GOD, ZAR) are not read.
 
-Todo el detalle (salas, controles, opciones y qué hacer si algo falla): **[guía para jugadores](docs/online/guia-jugadores.md)**.
+## Installing a release
 
-## Si algo falla
+Unpack the release where you like (not inside "Program Files"), start `mk9.exe` and choose your disc image, or the
+folder with the extracted disc (the one with `default.xex`). The installer checks the release, copies the game's
+files to `game_root` next to the program and starts the game; later starts go straight in.
 
-- La carpeta `logs` (junto a `mk9.exe`) tiene lo que pasó: el último `mk9_*.log` y, si el juego se cerró de golpe, el
-  `crash_*.dmp` de la misma hora. Abrí un [issue](../../issues) con eso.
-- El juego anda lento: F2 > Gráficos > Calidad "Baja" o "Muy baja", y "Mostrar FPS" para ver cómo va.
-- Se ve mal o no arranca el video: F2 > Pantalla > API gráfica: probá con la otra (Vulkan o DirectX 12).
+Windows SmartScreen may say "Windows protected your PC", as the program has no signature: "More info", "Run
+anyway". The first time you go online, Windows asks whether the game may use the network: allow it on private and
+public networks. The first start takes a little longer while the graphics are prepared for your card.
 
-## Compilar
+## Building from source
 
-[docs/building.md](docs/building.md). El diseño del online: [docs/online](docs/online/README.md).
+[docs/building.md](docs/building.md): Visual Studio 2022 Build Tools, LLVM clang 20, Python 3 and Git, about 30 GB
+free. The build extracts your disc, builds the code generator, translates the game's code from your `default.xex`
+(into `app/generated`, which is not in this repository) and builds the program.
+`tools/release/make_release.ps1 -Zip` packs a release (the program, Visual C++'s runtime, the guide and the
+licences; no game data).
 
-## Créditos
+## Layout
 
-mk9-lauta existe gracias a [mk9-nx](https://github.com/Thorhax/mk9-nx) de **Thorhax** y a todo lo que mk9-nx usa:
-[usf4-nx](https://github.com/Thorhax/usf4-nx), [sa2-nx](https://github.com/ChanseyIsTheBest/sa2-nx) de
-ChanseyIsTheBest, [masseffect-nx](https://github.com/nebadasSwifty/masseffect-nx) de NebadasSwifty,
-[nfsmw-nx](https://github.com/StevensND/nfsmw-nx) de StevensND, el [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk)
-de Tom Clay (con partes de [Xenia](https://xenia.jp)), el renderer [reNut](https://github.com/masterspike52/reNut) de
-masterspike52 (con su permiso, como lo usan banjo-nx, sa2-nx y usf4-nx), [plume](https://github.com/renderbag/plume),
-[XenosRecomp](https://github.com/hedge-dev/XenosRecomp), [libjuice](https://github.com/paullouisageneau/libjuice),
-[SDL](https://www.libsdl.org), [FFmpeg](https://ffmpeg.org), [Dear ImGui](https://github.com/ocornut/imgui) y más:
-la lista completa con sus licencias está en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+| Path | Contents |
+|---|---|
+| `app/src/` | The PC side: the settings and controls windows, the installer, hardware detection, texts, frame pacing |
+| `app/src/online/` | Online play: lobby, rooms, ICE (libjuice), sessions, the netcode (lockstep and rollback), the memory timeline, sound synchronization |
+| `app/src/renut_engine/` | Renut's renderer, retargeted to MK9's Direct3D (Direct3D 12 and Vulkan through plume) |
+| `app/thirdparty/` | libjuice, plume, Dear ImGui, the shader translator and its tools |
+| `sdk/` | The ReXGlue SDK: code generator, Xbox 360 kernel and runtime, audio, input, files (with the port's changes) |
+| `shaders/` | XenosRecomp, the Xbox 360 shader translator |
+| `tools/` | Build, test (`tools/online`) and release (`tools/release`) scripts |
+| `docs/` | Notes on the game and the port; `docs/online/` on the netcode, and the players' guide (Spanish) |
 
-## Licencia
+This project was made with the help of AI.
 
-GPL-3.0, ver [LICENSE](LICENSE). Los componentes de terceros tienen sus propias licencias
-([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+## Credits
 
-Proyecto de fans, gratuito y sin fines de lucro. Mortal Kombat es una marca de Warner Bros. Entertainment; este
-proyecto no está afiliado ni respaldado por Warner Bros. Games, NetherRealm Studios ni Microsoft, y no incluye ningún
-archivo del juego.
+- [mk9-nx](https://github.com/Thorhax/mk9-nx) by **Thorhax**: the static recompilation of the game this port is
+  built on (the first commit here is mk9-nx 1.0.4, unchanged). mk9-nx comes from
+  [usf4-nx](https://github.com/Thorhax/usf4-nx) by Thorhax, which comes from
+  [sa2-nx](https://github.com/ChanseyIsTheBest/sa2-nx) by ChanseyIsTheBest,
+  [masseffect-nx](https://github.com/nebadasSwifty/masseffect-nx) by NebadasSwifty,
+  [nfsmw-nx](https://github.com/StevensND/nfsmw-nx) by StevensND and
+  [NFSMW Recompiled](https://github.com/madelrandel-blip/NFSMW-Recompiled) by madelrandel-blip.
+- The [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) by Tom Clay, with parts of [Xenia](https://xenia.jp);
+  [reNut](https://github.com/masterspike52/reNut) by masterspike52, used with its author's permission;
+  [plume](https://github.com/renderbag/plume), [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
+  [libjuice](https://github.com/paullouisageneau/libjuice), [SDL](https://www.libsdl.org),
+  [FFmpeg](https://ffmpeg.org) and [Dear ImGui](https://github.com/ocornut/imgui).
+
+The full list, with every licence: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Licence
+
+The port's code in `app/`, `tools/` and `docs/` is under the [GNU General Public License, version 3](LICENSE)
+(GPL-3.0); the SDK (`sdk/`) under BSD-3-Clause ([sdk/LICENSE](sdk/LICENSE)) and the shader translator (`shaders/`)
+under MIT ([shaders/LICENSE.md](shaders/LICENSE.md)). Third-party components keep their own licences
+([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)). Whoever passes the program on, changed or not, has to offer its
+source under the same licence. The game's code, translated from the disc when the program is built, is not ours to
+license: it belongs to the game's rights holders.
+
+## Legal
+
+This project is not affiliated with or endorsed by Warner Bros. Games, NetherRealm Studios, Microsoft or any other
+rights holder of the game. It exists for preservation, study and interoperability, and distributes none of the
+game's assets. Mortal Kombat is a trademark of Warner Bros. Entertainment; all rights to the game belong to their
+owners. You need your own legally obtained copy of the game to use it.
