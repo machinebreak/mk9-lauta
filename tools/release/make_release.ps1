@@ -78,8 +78,8 @@ foreach ($f in 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_ato
 # --- the guide, the notice, the game files' place ---
 $guide = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'docs\online\guia-jugadores.md')
 $install = @"
-mk9-lauta v$version: Mortal Kombat Komplete Edition para PC, con online con rollback
-https://github.com/machinebreake/mk9-lauta
+mk9-lauta v${version}: Mortal Kombat Komplete Edition para PC, con online con rollback
+https://github.com/machinebreak/mk9-lauta
 
 INSTALACIÓN
 ===========
@@ -117,7 +117,7 @@ Todas las marcas pertenecen a sus dueños.
 
 El código de este programa se distribuye bajo la licencia GNU GPL versión 3 (licencias\mk9-lauta GPL-3.0.txt); las
 bibliotecas de terceros, bajo las suyas (carpeta licencias, y los créditos en licencias\THIRD_PARTY_NOTICES.md).
-El código fuente: https://github.com/machinebreake/mk9-lauta
+El código fuente: https://github.com/machinebreak/mk9-lauta
 "@
 [IO.File]::WriteAllText((Join-Path $dst 'AVISO.txt'), $notice.Replace("`r`n", "`n").Replace("`n", "`r`n"),
     [Text.UTF8Encoding]::new($true))
@@ -141,7 +141,7 @@ foreach ($dir in (Get-ChildItem (Join-Path $root 'app\thirdparty') -Directory) +
 $size = (Get-ChildItem $dst -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 '{0}: {1} files, {2:n1} MB' -f $dst, (Get-ChildItem $dst -Recurse -File).Count, $size
 if ($Zip) {
-    $zipPath = Join-Path (Split-Path $dst -Parent) "mk9-lauta-v$version-windows-x64.zip"
+    $zipPath = Join-Path (Split-Path $dst -Parent) "mk9-lauta-v${version}-windows-x64.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath }
     Compress-Archive -Path (Join-Path $dst '*') -DestinationPath $zipPath -CompressionLevel Optimal
     '{0}: {1:n1} MB' -f $zipPath, ((Get-Item $zipPath).Length / 1MB)

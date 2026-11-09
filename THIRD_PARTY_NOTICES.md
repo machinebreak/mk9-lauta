@@ -1,10 +1,10 @@
 # Third-party notices
 
-mk9-lauta (the native PC port with online play, by machinebreake) is built on [mk9-nx](https://github.com/Thorhax/mk9-nx)
+mk9-lauta (the native PC port with online play, by machinebreak) is built on [mk9-nx](https://github.com/Thorhax/mk9-nx)
 by Thorhax and on the work of the projects below. Their licenses apply to their code and to the parts of this
 repository derived from it. The code mk9-nx added is copyright (c) 2026 Thorhax; the code mk9-lauta added (the online
 play in `app/src/online`, the PC installer, the options and controls windows, the low-end PC settings, the release
-tools) is copyright (c) 2026 machinebreake. Both are under the license of the folder they are in (see below).
+tools) is copyright (c) 2026 machinebreak. Both are under the license of the folder they are in (see below).
 
 ## Projects this port is derived from
 
