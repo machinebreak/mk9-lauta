@@ -3,7 +3,9 @@
 #include "online/online_ui.h"
 
 #include "mk9_overlay_input.h"
+#include "options_ui.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <ctime>
@@ -76,6 +78,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   void Draw() override {
+    ImGui::GetStyle().FontScaleMain = options_ui::UiScale();
     room::Pump();
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false) || overlay_input::ToggleOnlinePressed()) {
       visible_ = !visible_;
@@ -109,6 +112,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       focus_ = false;
     }
     ImGui::SetNextWindowSize(ImVec2(620, 560), ImGuiCond_FirstUseEver);
+    // inside the window however small it is (1366x768, a small window)
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 200),
+                                        ImVec2(std::max(320.0f, io.DisplaySize.x - 16), std::max(200.0f, io.DisplaySize.y - 16)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
     if (!ImGui::Begin("Online  (F1 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse)) {

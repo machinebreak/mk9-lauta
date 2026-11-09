@@ -21,4 +21,7 @@ void Install();
 const std::vector<std::pair<const char*, const char*>>* PresetValues(const std::string& name);
 bool SaveToConfig(const std::vector<std::pair<std::string, std::string>>& values);
 
+// mk9-lauta: the overlay windows' text size (mk9_ui_scale; inside an overlay frame, on the UI thread).
+float UiScale();
+
 }  // namespace mk9::options_ui

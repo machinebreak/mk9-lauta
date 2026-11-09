@@ -10,7 +10,9 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -21,6 +23,9 @@
 #include <vector>
 
 #include "imgui.h"
+
+#include <SDL3/SDL_video.h>
+#include <fmt/format.h>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -37,6 +42,9 @@
 
 REXCVAR_DEFINE_BOOL(mk9_options_show, false, "MK9", "The options window (F2) opens at start");
 REXCVAR_DEFINE_BOOL(mk9_show_fps, false, "MK9", "The frames a second, top left (the options window, F2)");
+REXCVAR_DEFINE_STRING(mk9_ui_scale, "auto", "MK9",
+                      "The size of the overlay's windows (F1, F2): auto (by the window's height, 1080 lines = 100 %) or "
+                      "a factor (1, 1.25, 1.5, 2)");
 extern std::atomic<uint32_t> g_mk9_fps_game, g_mk9_fps_shown;  // mk9_frame_counter.cpp
 REXCVAR_DEFINE_STRING(mk9_options_tab, "", "MK9",
                       "The options window's tab shown first (Gráficos, Controles, Pantalla e idioma, Online); empty = "
@@ -111,6 +119,10 @@ const std::vector<Option>& DisplayOptions() {
       {"mk9_show_fps", "Mostrar FPS",
        {{"false", "No"}, {"true", "Sí, arriba a la izquierda"}},
        "Los cuadros por segundo que se ven y, si se saltean, los que se dibujan."},
+      {"mk9_ui_scale", "Tamaño de los menús F1 y F2",
+       {{"auto", "Automático (según la pantalla)"}, {"1", "100 %"}, {"1.25", "125 %"}, {"1.5", "150 %"},
+        {"2", "200 %"}},
+       "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K)."},
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},
@@ -210,6 +222,16 @@ std::string TomlLine(const std::string& key, const std::string& value) {
 // The keys' lines in mk9.toml replaced (or added at its end) with these values; every other line as it was.
 }  // namespace
 
+float UiScale() {
+  const std::string value = REXCVAR_GET(mk9_ui_scale);
+  if (value.empty() || value == "auto") {
+    const float height = ImGui::GetIO().DisplaySize.y;
+    return std::clamp(height / 1080.0f, 1.0f, 2.5f);
+  }
+  const float factor = std::strtof(value.c_str(), nullptr);
+  return factor >= 0.5f && factor <= 3.0f ? factor : 1.0f;
+}
+
 const std::vector<std::pair<const char*, const char*>>* PresetValues(const std::string& name) {
   for (const Preset& p : Presets()) {
     if (name == p.label) return &p.values;
@@ -252,6 +274,7 @@ namespace {
 class OptionsWindow : public renut::gpu::overlay::Dialog {
  public:
   void Draw() override {
+    ImGui::GetStyle().FontScaleMain = UiScale();
     if (static bool tested = false; !tested) {
       tested = true;
       for (const Preset& p : Presets()) {
@@ -275,6 +298,9 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (!visible_) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowSize(ImVec2(760, 660), ImGuiCond_FirstUseEver);
+    // inside the window however small it is (1366x768, a small window)
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 200),
+                                        ImVec2(std::max(320.0f, io.DisplaySize.x - 16), std::max(200.0f, io.DisplaySize.y - 16)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
     if (!ImGui::Begin("Opciones  (F2 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse)) {
@@ -313,6 +339,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem("Pantalla e idioma", nullptr, TabFlags("Pantalla e idioma"))) {
         if (!select_tab_) tab_ = "Pantalla e idioma";
         for (const Option& o : DisplayOptions()) DrawOption(o);
+        DrawMonitor();
+        DrawWindowSize();
         ImGui::EndTabItem();
       }
       if (ImGui::BeginTabItem("Online", nullptr, TabFlags("Online"))) {
@@ -337,6 +365,87 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
  private:
+  // The monitor the game opens on (the SDK's monitor: 1-based in SDL's order, 0 the system's default).
+  void DrawMonitor() {
+    if (!rex::cvar::GetFlagInfo("monitor")) return;
+    int count = 0;
+    SDL_DisplayID* displays = SDL_GetDisplays(&count);
+    std::vector<std::pair<std::string, std::string>> choices = {{"0", "Automático (el principal)"}};
+    for (int i = 0; i < count && displays; ++i) {
+      const char* name = SDL_GetDisplayName(displays[i]);
+      const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(displays[i]);
+      char label[160];
+      std::snprintf(label, sizeof(label), "%d: %s%s", i + 1, name ? name : "monitor",
+                    mode ? fmt::format(" ({}x{})", mode->w, mode->h).c_str() : "");
+      choices.emplace_back(std::to_string(i + 1), label);
+    }
+    if (displays) SDL_free(displays);
+    if (count < 2) return;  // one monitor: nothing to choose
+    DrawChoices("monitor", "Monitor", choices,
+                "En qué monitor se abre el juego (en pantalla completa, ese). Se aplica al volver a abrir el juego.",
+                {{"monitor", ""}});
+  }
+
+  // The window's size at start (the SDK's window_width / window_height, 0 = 1280x720); dragging its border works too.
+  void DrawWindowSize() {
+    if (!rex::cvar::GetFlagInfo("window_width")) return;
+    static const std::vector<std::pair<std::string, std::string>> sizes = {
+        {"0x0", "Automático (1280x720)"}, {"1280x720", "1280x720"}, {"1600x900", "1600x900"},
+        {"1920x1080", "1920x1080"},       {"2560x1440", "2560x1440"},
+    };
+    const std::string current = Current("window_width") + "x" + Current("window_height");
+    ImGui::PushID("window_size");
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Tamaño de la ventana");
+    ImGui::SameLine(250);
+    ImGui::SetNextItemWidth(-1);
+    const char* shown = current.c_str();
+    for (const auto& [value, label] : sizes) {
+      if (value == current) shown = label.c_str();
+    }
+    if (ImGui::BeginCombo("##value", shown)) {
+      for (const auto& [value, label] : sizes) {
+        if (ImGui::Selectable(label.c_str(), value == current) && value != current) {
+          const size_t x = value.find('x');
+          Set({{"window_width", value.substr(0, x)}, {"window_height", value.substr(x + 1)}}, "Tamaño de la ventana");
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1));
+    ImGui::TextWrapped("El tamaño con el que abre en ventana (también se puede arrastrar el borde). Se aplica al volver a "
+                       "abrir el juego.");
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::PopID();
+  }
+
+  // A choice of values made at run time (the monitors).
+  void DrawChoices(const char* key, const char* label, const std::vector<std::pair<std::string, std::string>>& choices,
+                   const char* help, const std::vector<std::pair<std::string, std::string>>&) {
+    const std::string current = Current(key);
+    const char* shown = current.c_str();
+    for (const auto& [value, text] : choices) {
+      if (value == current) shown = text.c_str();
+    }
+    ImGui::PushID(key);
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("%s", label);
+    ImGui::SameLine(250);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##value", shown)) {
+      for (const auto& [value, text] : choices) {
+        if (ImGui::Selectable(text.c_str(), value == current) && value != current) Set({{key, value}}, label);
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1));
+    ImGui::TextWrapped("%s", help);
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::PopID();
+  }
+
   // mk9-lauta: the version, the updater, the logs folder and the project's page.
   void DrawAbout() {
     const updater::Status st = updater::GetStatus();
