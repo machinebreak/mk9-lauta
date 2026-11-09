@@ -45,6 +45,10 @@ class InputSystem : public system::IInputSystem {
 
   X_RESULT GetCapabilities(uint32_t user_index, uint32_t flags, X_INPUT_CAPABILITIES* out_caps);
   X_RESULT GetState(uint32_t user_index, X_INPUT_STATE* out_state);
+  // Fork addition (mk9-lauta): every real controller's state merged into one (no keyboard or mouse, no scripted
+  // input), whichever player it is assigned to, for an overlay's navigation. The drivers answer only while the active
+  // callback says yes. False: no controller connected.
+  bool GetControllersState(X_INPUT_STATE* out_state);
   X_RESULT SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration);
   X_RESULT GetKeystroke(uint32_t user_index, uint32_t flags, X_INPUT_KEYSTROKE* out_keystroke);
 

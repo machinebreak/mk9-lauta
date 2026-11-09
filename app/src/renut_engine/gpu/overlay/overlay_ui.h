@@ -46,4 +46,21 @@ void Stop();
 // latest overlay frame over it.
 void DrawLocked(plume::RenderCommandList *cmd, uint32_t width, uint32_t height);
 
+// mk9-lauta: a controller for the overlay's ImGui (gamepad navigation). The
+// reader runs on the UI thread at each build; false: no controller.
+struct Pad {
+  uint16_t buttons = 0;  // XINPUT_GAMEPAD's
+  uint8_t lt = 0, rt = 0;
+  int16_t lx = 0, ly = 0;
+};
+using PadReader = bool (*)(Pad *out);
+void SetPadReader(PadReader reader);
+
+// mk9-lauta: the window's close (its X, Alt+F4) goes through 'filter' (UI
+// thread): true lets it close; false keeps the window (the caller asks the
+// player first, and CloseNow closes it past the filter).
+using CloseFilter = bool (*)();
+void SetCloseFilter(CloseFilter filter);
+void CloseNow();
+
 } // namespace renut::gpu::overlay

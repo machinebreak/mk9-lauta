@@ -241,8 +241,13 @@ set(REXGLUE_FLOOR_VERSION
 rex_version_channel(REXGLUE_VERSION_CHANNEL VERSION "${REXGLUE_FULL_VERSION}")
 
 # Generate version header -- must run after REX_PLATFORM is set
-# Timestamp is set at configure time -- intentionally not updated on every rebuild
-string(TIMESTAMP REXGLUE_BUILD_TIMESTAMP "%Y%m%d_%H%M")
+# Timestamp is set at configure time -- intentionally not updated on every rebuild. mk9-lauta: kept in the cache from
+# the first configure, so a later reconfigure (a source added) leaves version.h as it is: a new stamp there rebuilt
+# the code generator, which then translated the game's code again and every translated file was compiled again.
+if(NOT DEFINED CACHE{REXGLUE_BUILD_TIMESTAMP})
+    string(TIMESTAMP _rex_stamp "%Y%m%d_%H%M")
+    set(REXGLUE_BUILD_TIMESTAMP "${_rex_stamp}" CACHE INTERNAL "The SDK's build stamp (the first configure's time)")
+endif()
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/include/rex/version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/include/rex/version.h

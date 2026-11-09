@@ -417,6 +417,35 @@ X_RESULT InputSystem::GetState(uint32_t user_index, X_INPUT_STATE* out_state) {
   return X_ERROR_SUCCESS;
 }
 
+bool InputSystem::GetControllersState(X_INPUT_STATE* out_state) {
+  RefreshDevices();
+  X_INPUT_STATE merged = {};
+  bool any = false;
+  for (const DeviceInfo& device : devices_) {
+    if (device.synthetic) {
+      continue;
+    }
+    auto* driver = DriverForDevice(device.id);
+    if (!driver) {
+      continue;
+    }
+    X_INPUT_STATE state = {};
+    if (driver->GetDeviceState(device.id, &state) != X_ERROR_SUCCESS) {
+      continue;
+    }
+    if (!any) {
+      merged = state;
+      any = true;
+    } else {
+      MergeInto(merged, state);
+    }
+  }
+  if (any && out_state) {
+    *out_state = merged;
+  }
+  return any;
+}
+
 X_RESULT InputSystem::SetState(uint32_t user_index, X_INPUT_VIBRATION* vibration) {
   SCOPE_profile_cpu_f("hid");
   if (!assignment_) {

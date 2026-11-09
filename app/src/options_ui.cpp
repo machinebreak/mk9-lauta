@@ -27,6 +27,8 @@
 #include <rex/ui/keybinds.h>
 
 #include "mk9_controls.h"
+#include "mk9_overlay_input.h"
+#include "mk9_updater.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
 #if defined(MK9_BUILTIN_CONFIG)
@@ -256,7 +258,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         if (REXCVAR_GET(mk9_options_test_preset) == p.label) Apply(p);
       }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false) || overlay_input::ToggleOptionsPressed()) {
       visible_ = !visible_;
       if (visible_) ImGui::SetNextWindowFocus();  // over the online screens if they are open too
       if (!visible_) StopCapture();
@@ -269,6 +271,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     }
     if (capturing_ >= 0) TakeKey();
     if (REXCVAR_GET(mk9_show_fps)) DrawFps();
+    overlay_input::SetOpen(overlay_input::kOptions, visible_);
     if (!visible_) return;
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowSize(ImVec2(760, 660), ImGuiCond_FirstUseEver);
@@ -278,29 +281,53 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       ImGui::End();
       return;
     }
+    // the controller: B closes, LB / RB change tabs
+    if (overlay_input::ClosePressed()) {
+      visible_ = false;
+      StopCapture();
+    }
+    if (const int step = overlay_input::TabStep(); step && capturing_ < 0) {
+      static const char* const kTabs[] = {"Gráficos", "Controles", "Pantalla e idioma", "Online", "Acerca de"};
+      int current = 0;
+      for (int i = 0; i < 5; ++i) {
+        if (tab_ == kTabs[i]) current = i;
+      }
+      tab_ = kTabs[(current + step + 5) % 5];
+      select_tab_ = true;
+    }
     if (ImGui::BeginTabBar("options_tabs")) {
       if (ImGui::BeginTabItem("Gráficos", nullptr, TabFlags("Gráficos"))) {
+        if (!select_tab_) tab_ = "Gráficos";
         DrawPresets();
         ImGui::Separator();
         for (const Option& o : GraphicsOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
       if (ImGui::BeginTabItem("Controles", nullptr, TabFlags("Controles"))) {
+        if (!select_tab_) tab_ = "Controles";
         DrawControls();
         ImGui::EndTabItem();
       } else {
         StopCapture();
       }
       if (ImGui::BeginTabItem("Pantalla e idioma", nullptr, TabFlags("Pantalla e idioma"))) {
+        if (!select_tab_) tab_ = "Pantalla e idioma";
         for (const Option& o : DisplayOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
       if (ImGui::BeginTabItem("Online", nullptr, TabFlags("Online"))) {
+        if (!select_tab_) tab_ = "Online";
         for (const Option& o : OnlineOptions()) DrawOption(o);
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem("Acerca de", nullptr, TabFlags("Acerca de"))) {
+        if (!select_tab_) tab_ = "Acerca de";
+        DrawAbout();
         ImGui::EndTabItem();
       }
       ImGui::EndTabBar();
       first_tabs_ = false;
+      select_tab_ = false;
     }
     ImGui::Separator();
     if (!note_.empty()) ImGui::TextColored(note_ok_ ? ImVec4(0.45f, 0.9f, 0.5f, 1) : ImVec4(1, 0.45f, 0.4f, 1), "%s",
@@ -310,6 +337,41 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
  private:
+  // mk9-lauta: the version, the updater, the logs folder and the project's page.
+  void DrawAbout() {
+    const updater::Status st = updater::GetStatus();
+    ImGui::Text("mk9-lauta v%s", st.current.c_str());
+    ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "Mortal Kombat Komplete Edition para PC, con online con rollback.");
+    ImGui::Separator();
+    bool check = rex::cvar::GetFlagByName("mk9_update_check") != "false";
+    if (ImGui::Checkbox("Buscar una versión nueva al iniciar", &check)) {
+      Set({{"mk9_update_check", check ? "true" : "false"}}, check ? "Buscar versiones nuevas: sí" : "Buscar versiones nuevas: no");
+    }
+    const bool busy = st.phase == updater::Phase::kChecking || st.phase == updater::Phase::kDownloading;
+    if (busy) ImGui::BeginDisabled();
+    if (ImGui::Button("Buscar ahora")) updater::CheckNow();
+    if (busy) ImGui::EndDisabled();
+    if (!st.message.empty()) {
+      ImGui::SameLine();
+      ImGui::TextUnformatted(st.message.c_str());
+    }
+    if (st.phase == updater::Phase::kAvailable) {
+      if (ImGui::Button("Actualizar ahora")) updater::Download();
+    } else if (st.phase == updater::Phase::kDownloading) {
+      ImGui::ProgressBar(float(st.progress), ImVec2(-1, 0));
+    } else if (st.phase == updater::Phase::kReady) {
+      if (ImGui::Button("Reiniciar ahora")) updater::InstallAndRestart();
+    }
+    ImGui::Separator();
+    ImGui::TextWrapped("Si algo falla, la carpeta logs tiene lo que pasó: mandá el último mk9_*.log (y el crash_*.dmp de "
+                       "la misma hora si el juego se cerró de golpe).");
+    if (ImGui::Button("Abrir la carpeta de logs")) updater::Open(updater::LogsFolder());
+    ImGui::SameLine();
+    if (ImGui::Button("Reportar un problema")) updater::Open("https://github.com/machinebreak/mk9-lauta/issues");
+    ImGui::SameLine();
+    if (ImGui::Button("Página del proyecto")) updater::Open("https://github.com/machinebreak/mk9-lauta");
+  }
+
   // The frames a second, top left: the shown ones, and the game's when they differ (the performance mode).
   void DrawFps() {
     const uint32_t game = g_mk9_fps_game.load(std::memory_order_relaxed);
@@ -330,7 +392,9 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
   // The tab mk9_options_tab names is selected the first time the tabs are drawn.
+  // The tab to select: the one LB / RB asked for, or mk9_options_tab the first time.
   ImGuiTabItemFlags TabFlags(const char* tab) const {
+    if (select_tab_) return tab_ == tab ? ImGuiTabItemFlags_SetSelected : 0;
     return first_tabs_ && REXCVAR_GET(mk9_options_tab) == tab ? ImGuiTabItemFlags_SetSelected : 0;
   }
 
@@ -536,6 +600,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   bool visible_ = REXCVAR_GET(mk9_options_show), note_ok_ = true;
   int capturing_ = -1;  // the action waiting for its key (Controles), -1: none
   bool first_tabs_ = true;
+  bool select_tab_ = false;            // LB / RB asked for tab_
+  std::string tab_ = "Gráficos";       // the tab showing (as the last frame drew it)
   std::string note_;
   std::map<std::string, std::string> pending_;
 };

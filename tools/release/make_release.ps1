@@ -5,7 +5,7 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\release\make_release.ps1 [-Out out\release\mk9-lauta] [-Zip]
 #
 # The version is app/CMakeLists.txt's MK9_LAUTA_VERSION; -Zip writes mk9-lauta-v<version>-windows-x64.zip beside the
-# folder.
+# folder and its signature for the in-game updater (.zip.sig; both go up to the GitHub release).
 #
 # What goes in:
 #   mk9.exe, rexruntimerd.dll, rexgpu-xenosrd.dll       the build (out\pc)
@@ -145,4 +145,12 @@ if ($Zip) {
     if (Test-Path $zipPath) { Remove-Item $zipPath }
     Compress-Archive -Path (Join-Path $dst '*') -DestinationPath $zipPath -CompressionLevel Optimal
     '{0}: {1:n1} MB' -f $zipPath, ((Get-Item $zipPath).Length / 1MB)
+    # the updater's signature (tools\release\sign_release.py: the release key, kept outside the repository)
+    $python = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if ($python) {
+        & $python (Join-Path $root 'tools\release\sign_release.py') $zipPath
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'not signed: the in-game updater will not install this release' }
+    } else {
+        Write-Warning 'no python: not signed, the in-game updater will not install this release'
+    }
 }

@@ -141,6 +141,51 @@ void ApplyQueuedInput(ImGuiIO &io);
 // window's key presses and characters go to it only, not on to the game (its releases still go, so no key stays down).
 std::atomic<bool> g_wants_keyboard{false};
 
+// mk9-lauta: the controller for the overlay's navigation, and the window's close.
+std::atomic<PadReader> g_pad_reader{nullptr};
+std::atomic<CloseFilter> g_close_filter{nullptr};
+std::atomic<bool> g_close_now{false};
+
+// The controller's state as ImGui's gamepad keys.
+void ApplyPad(ImGuiIO &io) {
+  const PadReader reader = g_pad_reader.load(std::memory_order_acquire);
+  if (!reader)
+    return;
+  Pad pad;
+  const bool have = reader(&pad);
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+  if (have)
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+  else
+    io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
+  if (!have)
+    pad = Pad{};
+  const struct { uint16_t bit; ImGuiKey key; } buttons[] = {
+      {0x0001, ImGuiKey_GamepadDpadUp},    {0x0002, ImGuiKey_GamepadDpadDown},
+      {0x0004, ImGuiKey_GamepadDpadLeft},  {0x0008, ImGuiKey_GamepadDpadRight},
+      {0x0010, ImGuiKey_GamepadStart},     {0x0020, ImGuiKey_GamepadBack},
+      {0x0040, ImGuiKey_GamepadL3},        {0x0080, ImGuiKey_GamepadR3},
+      {0x0100, ImGuiKey_GamepadL1},        {0x0200, ImGuiKey_GamepadR1},
+      {0x1000, ImGuiKey_GamepadFaceDown},  {0x2000, ImGuiKey_GamepadFaceRight},
+      {0x4000, ImGuiKey_GamepadFaceLeft},  {0x8000, ImGuiKey_GamepadFaceUp},
+  };
+  for (const auto &b : buttons)
+    io.AddKeyEvent(b.key, (pad.buttons & b.bit) != 0);
+  io.AddKeyAnalogEvent(ImGuiKey_GamepadL2, pad.lt > 30, pad.lt / 255.0f);
+  io.AddKeyAnalogEvent(ImGuiKey_GamepadR2, pad.rt > 30, pad.rt / 255.0f);
+  // the left stick, past a dead zone
+  auto axis = [&](ImGuiKey key, float v) {
+    const float dead = 0.30f;
+    const float a = v > dead ? (v - dead) / (1.0f - dead) : 0.0f;
+    io.AddKeyAnalogEvent(key, a > 0.10f, a);
+  };
+  const float lx = pad.lx / 32767.0f, ly = pad.ly / 32767.0f;
+  axis(ImGuiKey_GamepadLStickLeft, -lx);
+  axis(ImGuiKey_GamepadLStickRight, lx);
+  axis(ImGuiKey_GamepadLStickUp, ly);
+  axis(ImGuiKey_GamepadLStickDown, -ly);
+}
+
 // One overlay frame: the dialogs' widgets, turned into the frame the renderer
 // draws. On the UI thread.
 void BuildFrame(float width, float height) {
@@ -153,6 +198,7 @@ void BuildFrame(float width, float height) {
   io.DeltaTime = std::max(std::chrono::duration<float>(now - g_last_build).count(), 1.0e-4f);
   g_last_build = now;
   ApplyQueuedInput(io);
+  ApplyPad(io);
 
   ImGui::NewFrame();
   {
@@ -332,6 +378,11 @@ LRESULT CALLBACK OverlayWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
   }
   if ((msg == WM_KEYDOWN || msg == WM_CHAR) && g_wants_keyboard.load(std::memory_order_relaxed))
     return 0;  // typed into the overlay
+  // mk9-lauta: the window's close asks first (the filter's dialog), unless CloseNow sent it
+  if (msg == WM_CLOSE && !g_close_now.load(std::memory_order_relaxed)) {
+    if (const CloseFilter filter = g_close_filter.load(std::memory_order_acquire); filter && !filter())
+      return 0;
+  }
   return CallWindowProcW(g_original_proc, hwnd, msg, wparam, lparam);
 }
 
@@ -465,6 +516,18 @@ bool EnsurePipeline() {
 }
 
 } // namespace
+
+void SetPadReader(PadReader reader) { g_pad_reader.store(reader, std::memory_order_release); }
+
+void SetCloseFilter(CloseFilter filter) { g_close_filter.store(filter, std::memory_order_release); }
+
+void CloseNow() {
+#if defined(_WIN32)
+  g_close_now.store(true, std::memory_order_relaxed);
+  if (g_window)
+    PostMessageW(g_window, WM_CLOSE, 0, 0);
+#endif
+}
 
 void AddDialog(Dialog *dialog) {
   std::lock_guard lock(g_dialogs_mutex);

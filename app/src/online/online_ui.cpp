@@ -2,11 +2,14 @@
 
 #include "online/online_ui.h"
 
+#include "mk9_overlay_input.h"
+
 #include <chrono>
 #include <cstring>
 #include <ctime>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "imgui.h"
 
@@ -74,7 +77,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
   void Draw() override {
     room::Pump();
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false) || overlay_input::ToggleOnlinePressed()) {
       visible_ = !visible_;
       focus_ = visible_;  // over the options if they are open too
     }
@@ -94,6 +97,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
     }
     DrawSessionBadge(room);
+    overlay_input::SetOpen(overlay_input::kOnline, visible_);
     if (!visible_) {
       DrawToast(room);
       return;
@@ -111,6 +115,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::End();
       return;
     }
+    // the controller: B closes, LB / RB change tabs
+    if (overlay_input::ClosePressed()) visible_ = false;
+    tab_step_ = overlay_input::TabStep();
     if (!lobby::Configured()) {
       ImGui::TextWrapped("El online está apagado (mk9_lobby_url vacío).");
       ImGui::End();
@@ -125,19 +132,39 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     DrawHeader(lobby);
     if (ImGui::BeginTabBar("online_tabs")) {
       const bool in_room = room.phase != room::Phase::kNone && room.phase != room::Phase::kSearching;
+      // the tabs there are, for LB / RB
+      std::vector<const char*> tabs;
+      if (in_room) tabs.push_back("Sala");
+      if (!room.in_session) tabs.push_back("Salas");
+      tabs.push_back("Chat global");
+      const char* wanted = nullptr;
+      if (tab_step_) {
+        int current = 0;
+        for (int i = 0; i < int(tabs.size()); ++i) {
+          if (tab_ == tabs[i]) current = i;
+        }
+        wanted = tabs[(current + tab_step_ + int(tabs.size())) % int(tabs.size())];
+      }
+      auto tab_flags = [&](const char* name, ImGuiTabItemFlags flags) -> ImGuiTabItemFlags {
+        if (!wanted) return flags;
+        return std::string(wanted) == name ? ImGuiTabItemFlags_SetSelected : 0;
+      };
       if (in_room) {
         const ImGuiTabItemFlags flags = in_room && !was_in_room_ ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Sala", nullptr, flags)) {
+        if (ImGui::BeginTabItem("Sala", nullptr, tab_flags("Sala", flags))) {
+          tab_ = "Sala";
           DrawRoom(room);
           ImGui::EndTabItem();
         }
       }
       was_in_room_ = in_room;
-      if (!room.in_session && ImGui::BeginTabItem("Salas")) {
+      if (!room.in_session && ImGui::BeginTabItem("Salas", nullptr, tab_flags("Salas", 0))) {
+        tab_ = "Salas";
         DrawRooms(lobby, room);
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Chat global")) {
+      if (ImGui::BeginTabItem("Chat global", nullptr, tab_flags("Chat global", 0))) {
+        tab_ = "Chat global";
         DrawGlobalChat(lobby);
         ImGui::EndTabItem();
       }
@@ -450,6 +477,8 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   bool visible_ = false, editing_name_ = false, was_in_room_ = false, leaving_ = false, focus_ = false;
+  int tab_step_ = 0;                 // LB / RB this frame
+  std::string tab_ = "Salas";        // the tab showing
   std::string name_, name_note_, toast_;
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;

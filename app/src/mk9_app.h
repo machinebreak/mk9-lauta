@@ -24,6 +24,10 @@
 #include "mk9_localization.h"
 #include "mk9_installer.h"
 #include "mk9_hardware.h"
+#include "mk9_overlay_input.h"
+#if defined(_WIN32)
+#include <rex/input/input_system.h>
+#endif
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
@@ -188,6 +192,11 @@ class Mk9App : public rex::ReXApp {
   void OnPostSetup() override {
     // The options' key capture, ahead of the game's keyboard (mk9_controls.h), on the window's thread.
     app_context().CallInUIThreadDeferred([this] { mk9::controls::AttachWindow(window()); });
+#if defined(_WIN32)
+    // mk9-lauta: F1 and F2 with a controller, the game's input held while one is open, the window's close asked
+    // first (mk9_overlay_input.h)
+    mk9::overlay_input::Install(static_cast<rex::input::InputSystem*>(runtime()->input_system()));
+#endif
 #if defined(MK9_LAUTA_VERSION)
     // mk9-lauta: the window's title names the port and its version (the SDK's names the build)
     app_context().CallInUIThreadDeferred(
