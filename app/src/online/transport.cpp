@@ -13,6 +13,9 @@
 REXCVAR_DEFINE_INT32(mk9_net_lag_ms, 0, "MK9 Online", "Tests: added one-way delay of every datagram sent, ms");
 REXCVAR_DEFINE_INT32(mk9_net_jitter_ms, 0, "MK9 Online", "Tests: a random 0..this ms on top of mk9_net_lag_ms");
 REXCVAR_DEFINE_INT32(mk9_net_loss_pct, 0, "MK9 Online", "Tests: the share of datagrams sent that are dropped, %");
+REXCVAR_DEFINE_INT32(mk9_net_late_path_ms, 0, "MK9 Online",
+                     "Tests: for this long after the session's link is made there is no path to send on (sends "
+                     "dropped) while datagrams still come in, as an ICE link before its pair is chosen");
 
 namespace mk9::net {
 namespace {
@@ -25,11 +28,15 @@ uint64_t NowUs() {
 
 }  // namespace
 
-LaggedTransport::LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct)
+LaggedTransport::LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct,
+                                 int late_path_ms)
     : inner_(std::move(inner)),
       lag_ms_(std::max(0, lag_ms)),
       jitter_ms_(std::max(0, jitter_ms)),
-      loss_pct_(std::clamp(loss_pct, 0, 100)) {}
+      loss_pct_(std::clamp(loss_pct, 0, 100)),
+      path_from_us_(NowUs() + uint64_t(std::max(0, late_path_ms)) * 1000) {}
+
+bool LaggedTransport::HasPeer() const { return NowUs() >= path_from_us_ && inner_->HasPeer(); }
 
 std::string LaggedTransport::PeerText() const {
   return fmt::format("{} (emulated: +{} ms, jitter {} ms, loss {}%)", inner_->PeerText(), lag_ms_, jitter_ms_,
@@ -46,6 +53,7 @@ void LaggedTransport::Pump() {
 
 bool LaggedTransport::Send(const void* data, size_t size) {
   Pump();
+  if (NowUs() < path_from_us_) return false;  // no path yet (mk9_net_late_path_ms)
   if (loss_pct_ && int(rng_() % 100) < loss_pct_) return true;  // lost on the way
   uint64_t due = NowUs() + uint64_t(lag_ms_) * 1000;
   if (jitter_ms_) due += uint64_t(rng_() % uint32_t(jitter_ms_ * 1000 + 1));
@@ -75,10 +83,11 @@ bool LaggedTransport::WaitReadable(int timeout_ms) {
 
 std::unique_ptr<Transport> WithTestConditions(std::unique_ptr<Transport> transport) {
   const int lag = REXCVAR_GET(mk9_net_lag_ms), jitter = REXCVAR_GET(mk9_net_jitter_ms),
-            loss = REXCVAR_GET(mk9_net_loss_pct);
-  if (lag <= 0 && jitter <= 0 && loss <= 0) return transport;
-  REXLOG_WARN("[net] emulated network conditions: +{} ms one way, jitter {} ms, loss {}% (tests)", lag, jitter, loss);
-  return std::make_unique<LaggedTransport>(std::move(transport), lag, jitter, loss);
+            loss = REXCVAR_GET(mk9_net_loss_pct), late = REXCVAR_GET(mk9_net_late_path_ms);
+  if (lag <= 0 && jitter <= 0 && loss <= 0 && late <= 0) return transport;
+  REXLOG_WARN("[net] emulated network conditions: +{} ms one way, jitter {} ms, loss {}%, no path for {} ms (tests)",
+              lag, jitter, loss, late);
+  return std::make_unique<LaggedTransport>(std::move(transport), lag, jitter, loss, late);
 }
 
 }  // namespace mk9::net

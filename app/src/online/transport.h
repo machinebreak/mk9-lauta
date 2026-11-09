@@ -35,8 +35,10 @@ class Transport {
 // order) and some are dropped. Created by WithTestConditions when the cvars ask for it.
 class LaggedTransport : public Transport {
  public:
-  LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct);
-  bool HasPeer() const override { return inner_->HasPeer(); }
+  LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct, int late_path_ms = 0);
+  // late_path_ms (tests): for that long no path to send on (HasPeer false, sends dropped) while datagrams still come
+  // in, as an ICE link before its pair is chosen
+  bool HasPeer() const override;
   std::string PeerText() const override;
   bool Send(const void* data, size_t size) override;
   int Receive(void* buffer, size_t capacity) override;
@@ -50,6 +52,7 @@ class LaggedTransport : public Transport {
   void Pump();
   std::unique_ptr<Transport> inner_;
   int lag_ms_, jitter_ms_, loss_pct_;
+  uint64_t path_from_us_ = 0;
   std::deque<Held> held_;
   uint64_t last_due_us_ = 0;
   std::mt19937 rng_{12345};
