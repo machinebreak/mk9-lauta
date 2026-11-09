@@ -412,3 +412,50 @@ experimental).
    (el menú de 1 jugador, no el Versus). Queda por ver qué espera de ese camino termina con el reloj de cada máquina;
    los registros están en `out/f3/desync_menu_20261109` (las dos grabaciones, los logs y las nativas, sorteos y
    chequeos de los cuadros 3700-4430).
+
+### Lo que encontraron los testers de la 0.1.0 (2026-11-10)
+
+Logs de un tester (Radeon RX 570; partidas Argentina-Venezuela, 140-220 ms de ida y vuelta, varias por el relevo
+TURN de Cloudflare). Lo que había y lo que se hizo:
+
+1. **Sesiones congeladas al reiniciarse el juego** (6 de 6 que empezaron "with no path yet"): por ICE el HELLO del
+   invitado llega antes de que este lado tenga un par elegido para contestar (`IceLink::Send` sin camino). El host
+   terminaba el handshake con cualquier palabra del otro, su HELLO se perdía y arrancaba; el invitado esperaba ese
+   HELLO y el host las entradas del invitado: los dos parados para siempre. Ahora los dos esperan el HELLO del otro
+   *y* un camino, y un lado que ya arrancó contesta cada HELLO que le llega (`AnswerHello`). Prueba:
+   `mk9_net_late_path_ms=3000` en el host (sin camino 3 s, recibiendo): las dos arrancan y llegan a la pelea en el
+   mismo cuadro.
+2. **Menús trabados por el ping**: el retraso del lockstep salía del piso de los pings (131 ms con 179 de promedio):
+   8 s de espera cada 10. Ahora del percentil 75 de los últimos 8 (`RoundTripTypical`), y cada época arranca con el
+   retraso ya medido (antes volvía al del host y tardaba 2 s en subir).
+3. **La pelea arrancaba en cámara lenta** ("se ralentizaba al iniciar la pelea"): sus primeros 120 cuadros (la intro,
+   mientras la línea de tiempo aprende) van en lockstep, con el retraso de la pelea (1): ~13 cuadros por segundo con
+   150 ms. Ahora la intro usa el retraso del ping, y al encender el rollback la pelea toma el suyo (`FightDelay`):
+   el del host, subido con un ping largo para que un rollback vuelva unos 5 cuadros (`mk9_net_auto_delay`: 180 ms ->
+   2, 220 ms -> 3, 4 como mucho). La predicción llega a 10 cuadros.
+4. **Cierres en la pelea con ping alto** (`sub_82A4F710` con el árbol roto; justo antes "PhysicalHeap::Release failed",
+   10 veces en sus logs): la línea de tiempo devuelve la memoria del juego pero no qué bloques tiene reservados; un
+   rollback sobre las reservas y liberaciones de un X-Ray dejaba punteros a bloques liberados o liberaba dos veces.
+   `heap_undo.cpp`: en una pelea con rollback las reservas del juego (memoria física, `XamAlloc`, `ExAllocatePool`;
+   el SDK avisa por `rex::memory::NotifyGuestHeap`) quedan con su cuadro y sus liberaciones se aguantan hasta que
+   ningún rollback llegue a ese cuadro; un rollback libera lo que reservaron los cuadros que deshace y olvida lo que
+   liberaron. Con 80 ms por lado, jitter 15 y 1 % de pérdida: 21 minutos, 11 peleas, 74.919 cuadros iguales, ninguna
+   "Release failed", ningún cierre (antes, cierre a los ~110 s de pelea); los rollbacks que pasan sobre esas
+   operaciones son pocos (6 en 21 minutos).
+5. **Bordes de 13-22 ms y hilos sin estacionar** (riesgo de desync): el hilo de streaming de FMOD copiaba música o
+   voces desde un disco lento dentro del callback de archivos del juego, que el park espera (8 ms y seguía sin él).
+   La copia sólo escribe el buffer de FMOD, en el arena del sonido: ahora corre exenta del park
+   (`park::LendExempt` / `TakeBackExempt`) y vuelve a ser del juego antes de tocar su memoria. Con cada copia 25 ms
+   más lenta (`MK9_TEST_SLOW_STREAM=25`): park de 0,01 ms, ningún hilo suelto.
+6. **Parpadeos negros y polígonos que parpadean en algunos escenarios**: los cuadros que un rollback vuelve a correr
+   no dibujaban pero sí hacían sus clears y resolves: texturas negras (un reflejo o captura del escenario que se
+   actualiza cada tantos cuadros, un efecto que lee el cuadro anterior) leídas por el cuadro siguiente que se ve.
+   Ahora esos cuadros (y los que saltea el modo de rendimiento) no hacen clears ni resolves.
+7. **Desyncs de pelea en casi todas las partidas**: eran los dos bugs de entradas ya arreglados en la 0.2.0 (arriba);
+   los dos desyncs de menú de sus logs se corrigieron solos en la barrera de la pelea (los dos llegaron al mismo
+   cuadro), como el que atrapó `hunt.ps1`.
+
+Pendiente: los personajes con "pixelado azul, verde, rojo" con un traje elegido (un solo tester; no se reprodujo:
+las peleas con trajes alternativos de la Escalera se ven bien); el costo del borde en los cuadros que se vuelven a
+correr (~3 ms del hilo de render de UE3 + 2,3 ms de la línea de tiempo cada uno: un rollback de 5 cuadros es un
+cuadro de 40-70 ms).

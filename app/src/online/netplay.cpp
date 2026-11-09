@@ -1330,7 +1330,11 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   WatchFrames();
   g_frame_started_us = NowUs();
   if (!g.started) {
-    if (!Handshake()) {
+    // the handshake can wait seconds for the peer's path (ICE): not a hang for the watchdog
+    g_frame_started_us = 0;
+    const bool shook = Handshake();
+    g_frame_started_us = NowUs();
+    if (!shook) {
       g.failed = true;
       return;
     }
