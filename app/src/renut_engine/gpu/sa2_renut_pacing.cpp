@@ -38,6 +38,7 @@
 
 #include "cpu/sa2_enhancements.h"
 #include "renut_engine/gpu/backend/queued.h"
+#include "renut_engine/gpu/render/surfaces.h"
 #include "renut_engine/display_sync.h"  // sa2-nx (2026-10-20): banjo_display_sync
 #include "renut_engine/gpu/guest/guest_memory.h"
 
@@ -47,6 +48,10 @@ REXCVAR_DEFINE_BOOL(sa2_renut_vblank_pacing, true, "SA2",
                     "frame rate. Off: the game runs as fast as the host renders (tests only)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
+REXCVAR_DEFINE_BOOL(mk9_dynamic_resolution, false, "MK9/Renderer",
+                    "The internal resolution goes down a step (1080p to 720p to 480p) while the frames take too long "
+                    "(over 15.5 ms: an X-Ray, many effects) and up again when there is room, never above "
+                    "renut_resolution; drawing every other frame (mk9_draw_mode auto) only once at 480p");
 REXCVAR_DEFINE_STRING(mk9_draw_mode, "all", "MK9/Renderer",
                       "Which frames are drawn: all; half (every other frame: the game keeps its 60 frames a second, "
                       "the GPU draws 30, for a PC whose graphics cannot keep up); auto (all while the PC keeps up, "
@@ -201,8 +206,79 @@ double Median(double* values, uint32_t count) {
   return values[count / 2];
 }
 
+// mk9-lauta (2026-11-09): the dynamic resolution (mk9_dynamic_resolution), on the same windows of 60 frames: over
+// 15.5 ms a step down (over 25 ms two; 2 s at least before another change), 3 to 10 ms three windows in a row a step
+// up (towards renut_resolution; a load's near-empty frames do not count); a step up undone within 6 s doubles the
+// wait before the next one (3 s up to 2 minutes).
+struct Dynamic {
+  int cap = 4;          // the level drawn at most (0 480p ... 4 4K)
+  bool latched = false;
+  double work[60] = {};
+  uint32_t count = 0, roomy = 0;
+  Clock::time_point hold_until{}, raised_at{};
+  Clock::duration wait = std::chrono::seconds(3);
+};
+Dynamic g_dynamic;
+
+const char* LevelName(int level) {
+  static const char* const kNames[5] = {"480p", "720p", "1080p", "1440p", "4K"};
+  return kNames[std::clamp(level, 0, 4)];
+}
+
+// True while the dynamic resolution can still go down (the draw mode's auto waits for it).
+bool DynamicResolutionAbove480p() {
+  return REXCVAR_GET(mk9_dynamic_resolution) && g_dynamic.cap > 0 &&
+         std::min(g_dynamic.cap, ::renut::gpu::ResolutionLevel()) > 0;
+}
+
+void NoteWorkForResolution(double work_ms) {
+  Dynamic& d = g_dynamic;
+  const int chosen = ::renut::gpu::ResolutionLevel();
+  if (!REXCVAR_GET(mk9_dynamic_resolution)) {
+    if (d.latched) {  // turned off: the player's resolution again
+      d = Dynamic{};
+      ::renut::gpu::SetResolutionCap(4);
+    }
+    return;
+  }
+  if (!d.latched) {
+    d.latched = true;
+    d.cap = chosen;
+  }
+  if (d.cap > chosen) d.cap = chosen;  // the player lowered it
+  d.work[d.count++] = std::min(work_ms, 100.0);
+  if (d.count < 60) return;
+  const double median = Median(d.work, d.count);
+  d.count = 0;
+  const auto now = Clock::now();
+  if (now < d.hold_until) return;
+  if (median > 15.5 && d.cap > 0) {
+    if (d.raised_at != Clock::time_point{} && now - d.raised_at < std::chrono::seconds(6)) {
+      d.wait = std::min<Clock::duration>(d.wait * 2, std::chrono::minutes(2));
+    }
+    d.cap = std::max(0, d.cap - (median > 25.0 ? 2 : 1));  // far over: two steps at once
+    d.roomy = 0;
+    d.hold_until = now + std::chrono::seconds(2);
+    ::renut::gpu::SetResolutionCap(d.cap);
+    REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms: {}", median, LevelName(d.cap));
+  } else if (median >= 3.0 && median < 10.0 && d.cap < chosen) {  // a load's or a menu's near-empty frames say nothing
+    if (++d.roomy >= 3) {
+      ++d.cap;
+      d.roomy = 0;
+      d.raised_at = now;
+      d.hold_until = now + d.wait;
+      ::renut::gpu::SetResolutionCap(d.cap);
+      REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms: {}", median, LevelName(d.cap));
+    }
+  } else {
+    d.roomy = 0;
+  }
+}
+
 void NoteWork(double work_ms, bool drawn) {
+  NoteWorkForResolution(work_ms);
   if (DrawMode() != 2) return;
+  if (!g_auto.skipping && DynamicResolutionAbove480p()) return;  // the resolution goes down first
   Auto& a = g_auto;
   if (a.skipping && !drawn) return;  // undrawn frames say nothing about drawing
   a.work[a.count++] = std::min(work_ms, 100.0);  // a load's long frames count as late, no more

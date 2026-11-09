@@ -104,6 +104,10 @@ struct HostSurface {
 // and resolve destinations of another scale are rebuilt on their next use.
 RenderScale ResolutionScale();
 void LatchResolutionScaleLocked();
+// mk9-lauta: the dynamic resolution's cap, by level (0 480p, 1 720p, 2 1080p, 3 1440p, 4 4K; any thread): the frames
+// draw at the lower of it and renut_resolution. ResolutionLevel: renut_resolution's level.
+void SetResolutionCap(int level);
+int ResolutionLevel();
 
 // The host target for the D3DSurface at 'surface_va', created or rebuilt as
 // needed. nullptr for 0 or when the target cannot be created.

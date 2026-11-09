@@ -95,6 +95,10 @@ const std::vector<Option>& GraphicsOptions() {
       {"renut_vsync", "Sincronización vertical",
        {{"true", "Activada (sin cortes de imagen)"}, {"false", "Desactivada"}},
        "Activada, la imagen no se corta. Desactivada puede bajar un poco la latencia en monitores de más de 60 Hz."},
+      {"mk9_dynamic_resolution", "Resolución dinámica",
+       {{"false", "Apagada"}, {"true", "Activada"}},
+       "Si la PC no llega a 60 (un X-Ray, muchos efectos), baja la resolución interna un escalón (1080p, 720p, "
+       "480p) y la vuelve a subir cuando sobra tiempo; nunca pasa de la que elegiste arriba."},
       {"banjo_renut_memory_policy", "Ahorro de memoria",
        {{"false", "Apagado"}, {"true", "Activado (PCs con 4-6 GB de RAM)"}},
        "Suelta las texturas que no se usan y guarda menos copias: menos memoria a cambio de volver a armarlas cuando "
@@ -154,19 +158,24 @@ const std::vector<Preset>& Presets() {
        "Para netbooks y PCs con gráficos integrados viejos o 4 GB de RAM: 480p, todo como en la consola y, si la PC no "
        "llega a 60, se dibuja uno de cada dos cuadros (el juego sigue a su velocidad).",
        {{"renut_resolution", "480p"}, {"renut_shadow_resolution", "1x"}, {"renut_ambient_occlusion", "Half"},
-        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "auto"}}},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"},
+        {"mk9_draw_mode", "auto"}, {"mk9_dynamic_resolution", "false"}}},
       {"Baja", "Para PCs con poca placa de video: 480p, sombras y efectos como en la consola.",
        {{"renut_resolution", "480p"}, {"renut_shadow_resolution", "1x"}, {"renut_ambient_occlusion", "Half"},
-        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "all"}}},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"},
+        {"mk9_draw_mode", "all"}, {"mk9_dynamic_resolution", "false"}}},
       {"Consola", "Como en la Xbox 360: 720p.",
        {{"renut_resolution", "720p"}, {"renut_shadow_resolution", "Resolution"}, {"renut_ambient_occlusion", "Half"},
-        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"}, {"mk9_draw_mode", "all"}}},
+        {"renut_anisotropic_filtering", "Game"}, {"renut_post_process_precision", "Game"},
+        {"mk9_draw_mode", "all"}, {"mk9_dynamic_resolution", "false"}}},
       {"Alta", "1080p, sombras nítidas, texturas filtradas.",
        {{"renut_resolution", "1080p"}, {"renut_shadow_resolution", "2x"}, {"renut_ambient_occlusion", "Full"},
-        {"renut_anisotropic_filtering", "8x"}, {"renut_post_process_precision", "High"}, {"mk9_draw_mode", "all"}}},
+        {"renut_anisotropic_filtering", "8x"}, {"renut_post_process_precision", "High"},
+        {"mk9_draw_mode", "all"}, {"mk9_dynamic_resolution", "true"}}},
       {"Ultra", "1440p y todo al máximo: para placas de video potentes.",
        {{"renut_resolution", "1440p"}, {"renut_shadow_resolution", "4x"}, {"renut_ambient_occlusion", "Full"},
-        {"renut_anisotropic_filtering", "16x"}, {"renut_post_process_precision", "High"}, {"mk9_draw_mode", "all"}}},
+        {"renut_anisotropic_filtering", "16x"}, {"renut_post_process_precision", "High"},
+        {"mk9_draw_mode", "all"}, {"mk9_dynamic_resolution", "true"}}},
   };
   return presets;
 }

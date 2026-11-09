@@ -7,7 +7,7 @@
 #       [-Snapshots "60,90"] [-Hash] [-HashFrom 1] [-Checks] [-SyncRanges "83380000-834D0000"]
 #       [-Room CODE -Lobby ws://127.0.0.1:8791/lobby?game=mk9pc] [-Extra "--name=value ..."] [-Profiles inst]
 #       [-HostExtra "--name=value ..."] [-GuestExtra "--name=value ..."] [-HostAffinity 0x0F] [-GuestAffinity 0xF0]
-#       [-SkipLogos]
+#       [-SkipLogos] [-Dir out\pc_test]   (-Dir: a copy of the build to run, so the build can go on meanwhile)
 #
 # The test scripts are timed with the boot's logo movies playing, so the sessions here keep them
 # (mk9_net_skip_logos=false); -SkipLogos skips them as the game's sessions do.
@@ -38,10 +38,11 @@ param(
     [string]$Room = '',
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$Profiles = 'inst',
-    [ValidateSet('vulkan', 'd3d12')][string]$Backend = 'd3d12'
+    [ValidateSet('vulkan', 'd3d12')][string]$Backend = 'd3d12',
+    [string]$Dir = 'out\pc'
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$dir = Join-Path $root 'out\pc'
+$dir = if ([IO.Path]::IsPathRooted($Dir)) { $Dir } else { Join-Path $root $Dir }
 $exe = Join-Path $dir 'mk9.exe'
 New-Item -ItemType Directory -Force (Join-Path $root 'out\f3'), (Join-Path $root "out\$($Profiles)_host"), (Join-Path $root "out\$($Profiles)_guest") | Out-Null
 

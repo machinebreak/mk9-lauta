@@ -4,6 +4,9 @@
 #include "renut_engine/gpu/render/surfaces.h"
 
 #include <algorithm>
+#include <atomic>
+
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -266,15 +269,25 @@ RenderScale ResolutionScale() {
   return g_resolution_scale;
 }
 
+namespace {
+// mk9-lauta: the dynamic resolution's cap (SetResolutionCap), and the levels' RenderScale codes.
+std::atomic<int> g_resolution_cap{4};
+constexpr uint32_t kLevelCodes[5] = {1u, 0u, 2u, 3u, 4u};  // 480p, 720p, 1080p, 1440p, 4K
+int LevelOf(const std::string &resolution) {
+  return resolution == "480p" ? 0 : resolution == "1080p" ? 2 : resolution == "1440p" ? 3 : resolution == "4K" ? 4 : 1;
+}
+} // namespace
+
+void SetResolutionCap(int level) { g_resolution_cap.store(std::clamp(level, 0, 4), std::memory_order_relaxed); }
+
+int ResolutionLevel() { return LevelOf(REXCVAR_GET(renut_resolution)); }
+
 void LatchResolutionScaleLocked() {
   LatchGraphicsOptionsLocked();
   const std::string resolution = REXCVAR_GET(renut_resolution);
-  // Codes of RenderScale.
-  RenderScale scale{resolution == "480p"    ? 1u
-                    : resolution == "1080p" ? 2u
-                    : resolution == "1440p" ? 3u
-                    : resolution == "4K"    ? 4u
-                                            : 0u};
+  // Codes of RenderScale; mk9-lauta: no finer than the dynamic resolution's cap
+  const int level = std::min(LevelOf(resolution), g_resolution_cap.load(std::memory_order_relaxed));
+  RenderScale scale{kLevelCodes[level]};
   // banjo-nx (2026-10-18): the deko3d renderer draws at the console's resolution only; its shaders are made for it
   // (tools/deko3d_glsl_opt.py, pass scale1: no per-texture scale divisor, resolution_scale 1).
   if (IsDeko3D() && scale.code != 0) {
