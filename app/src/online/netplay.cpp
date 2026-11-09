@@ -70,12 +70,22 @@
 
 #include "online/netplay.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <algorithm>
 #include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <ctime>
 #include <random>
 #include <string>
 #include <thread>
@@ -123,6 +133,10 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_BOOL(mk9_net_record, true, "MK9 Online",
+                    "Each session's final frames (both players' inputs and the sync hash) go to "
+                    "logs/session_<date>_<player>.mk9net: the two players' files say where the games parted "
+                    "(tools/online/session_report.py); the newest 10 are kept");
 REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, false, "MK9 Online",
                     "The session ends when the two games' sync hashes differ (false: it goes on and the log says so). "
                     "Off since the hashes are compared all along (2026-11-09): what they catch most is the game's random "
@@ -241,6 +255,105 @@ struct Session {
 
 Session g;
 
+// mk9_net_record: the session's final frames, to a file in logs. Records (little-endian):
+//   header   "MK9NET1\0", u32 version 1, u8 player, u32 seed, u8 rollback, u8 lockstep delay, u8 rollback delay
+//   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
+//   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
+struct Recorder {
+  FILE* file = nullptr;
+  std::string path;
+  int64_t upto = -1;  // the epoch's frames written
+  uint64_t frames = 0;
+};
+Recorder g_rec;
+
+void RecordPut(const void* data, size_t size) {
+  if (g_rec.file) std::fwrite(data, 1, size, g_rec.file);
+}
+
+template <typename T>
+void RecordValue(T v) {
+  RecordPut(&v, sizeof(v));
+}
+
+void RecordPad(const Pad& pad) {
+  RecordPut(pad.bytes, 12);
+  RecordValue(pad.busy);
+  RecordValue(pad.ready);
+  RecordValue(pad.sound);
+}
+
+void RecordOpen() {
+  if (!REXCVAR_GET(mk9_net_record) || g_rec.file) return;
+  wchar_t exe[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
+  std::error_code ec;
+  std::filesystem::create_directories(logs, ec);
+  // the newest 10 stay
+  std::vector<std::filesystem::path> old;
+  for (const auto& entry : std::filesystem::directory_iterator(logs, ec)) {
+    const std::wstring name = entry.path().filename().wstring();
+    if (name.rfind(L"session_", 0) == 0 && entry.path().extension() == L".mk9net") old.push_back(entry.path());
+  }
+  std::sort(old.begin(), old.end());
+  while (old.size() >= 10) {
+    std::filesystem::remove(old.front(), ec);
+    old.erase(old.begin());
+  }
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+  localtime_s(&local, &now);
+  char name[64];
+  std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
+  const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
+  g_rec.file = _wfopen(path.c_str(), L"wb");
+  if (!g_rec.file) return;
+  g_rec.path = path.string();
+  RecordPut("MK9NET1", 8);
+  RecordValue<uint32_t>(1);
+  RecordValue<uint8_t>(uint8_t(g.player));
+  RecordValue<uint32_t>(g.seed);
+  RecordValue<uint8_t>(g.rollback_wanted ? 1 : 0);
+  RecordValue<uint8_t>(uint8_t(g.lockstep_delay));
+  RecordValue<uint8_t>(uint8_t(g.rollback_delay));
+  REXLOG_INFO("[net] the session's inputs go to {}", g_rec.path);
+}
+
+void RecordEpoch() {
+  if (!g_rec.file) return;
+  RecordValue<uint8_t>('E');
+  RecordValue<uint32_t>(g.epoch);
+  RecordValue<uint64_t>(g.start_game_frame);
+  RecordValue<uint8_t>(g.rollback ? 1 : 0);
+  g_rec.upto = -1;
+}
+
+int64_t FinalUpto();
+
+// The frames that are final now (both players' real inputs, their last run done), in order.
+void RecordFinal() {
+  if (!g_rec.file) return;
+  const int64_t upto = std::min(FinalUpto(), g.frame - 1);
+  for (int64_t f = g_rec.upto + 1; f <= upto; ++f) {
+    if (!g.have_remote[size_t(f)]) break;
+    RecordValue<uint8_t>('F');
+    RecordValue<uint32_t>(uint32_t(f));
+    RecordPad(g.local[size_t(f)]);
+    RecordPad(g.remote[size_t(f)]);
+    RecordValue<uint64_t>(g.local_hash[size_t(f)]);
+    g_rec.upto = f;
+    ++g_rec.frames;
+  }
+  if ((g_rec.frames & 1023) == 0) std::fflush(g_rec.file);
+}
+
+void RecordClose() {
+  if (!g_rec.file) return;
+  std::fclose(g_rec.file);
+  g_rec.file = nullptr;
+}
+
 // The online screens' requests to the game thread (Leave, PeerLeft) and how the session ended: any thread.
 std::atomic<int> g_end_request{0};             // 1: this player leaves; 2: the room says the other one left
 std::atomic<uint8_t> g_end_reason{0};          // EndReason
@@ -350,6 +463,11 @@ void CompareFinalHashes() {
                     "(mk9_net_end_on_desync); a fight may look different on the two screens from here",
                     frame, g.epoch);
       }
+      if (g_rec.file) {
+        std::fflush(g_rec.file);
+        REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
+                    "says where the two games parted", g_rec.path);
+      }
     }
     if (++g.desync_frames <= 10) {
       REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, peer {:016x}", g.epoch,
@@ -387,6 +505,7 @@ void EndSession(EndReason why, bool goodbye) {
   g_end_reason.store(uint8_t(why), std::memory_order_release);
   g_frame_started_us = 0;  // frames go on without the session: no hang to watch for
   REXLOG_INFO("[net] session ended: {}", ReasonText(why));
+  RecordClose();
 }
 
 // The online screens' requests (Leave, PeerLeft), taken on the game thread.
@@ -794,6 +913,7 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.delay = rollback ? g.rollback_delay : g.lockstep_delay;
   g.delay_check_at = 120;
   g.lower_votes = 0;
+  RecordEpoch();
   g.local_made_upto = g.delay - 1;  // the epoch's first delay frames: neutral on both sides
   Ensure(g.delay + 1);
   g.last_heard_us = NowUs();
@@ -952,6 +1072,7 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
   WaitFor([&] { return g.remote_upto >= g.frame || gap(); });
   if (g.ended) return;
   CompareFinalHashes();
+  RecordFinal();
   if (gap()) {
     SetFramePads(Pad{}, Pad{});
     g.frame_busy = g.local[size_t(g.frame)].busy;
@@ -980,13 +1101,18 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   const bool live = g.frame == g.latest;
   if (live) {
     Ensure(g.latest + g.delay + 1);
-    Pad pad = ReadLocalPad();
-    // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
-    // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
-    if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
-    pad.sound = sound_sync::AnnounceFor(g.latest + g.delay);
-    g.local[size_t(g.latest + g.delay)] = pad;
-    g.local_made_upto = std::max(g.local_made_upto, g.latest + g.delay);
+    // the input of frame latest + delay, once: a rollback in the call that made it leaves the live frame where it
+    // was, and making it again here would replace an input the peer already has (the two games would then play
+    // that frame with different buttons: the desyncs of bad networks, 2026-11-09)
+    if (g.latest + g.delay > g.local_made_upto) {
+      Pad pad = ReadLocalPad();
+      // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
+      // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
+      if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
+      pad.sound = sound_sync::AnnounceFor(g.latest + g.delay);
+      g.local[size_t(g.latest + g.delay)] = pad;
+      g.local_made_upto = g.latest + g.delay;
+    }
     SendInputs();
     Ping();
   }
@@ -1044,6 +1170,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   quiesce::Release();
   g.rollback_to = -1;
   CompareFinalHashes();
+  RecordFinal();
   // a mode change every frame up to which is final: the rest of the epoch in lockstep
   if (g.mode_change_at >= 0 && g.mode_change_at < g.frame && FinalUpto() >= g.mode_change_at) {
     REXLOG_INFO("[net] the fight's mode ended at frame {}: lockstep from frame {} ({} rollbacks, {} frames run again)",
@@ -1139,6 +1266,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
       return;
     }
     g.started = true;
+    RecordOpen();
     StartEpoch(game_frame, 0, false);
     g.seed_pending = true;
     REXLOG_INFO("[net] session started at game frame {} with {} as the peer; you are player {}; lockstep delay {}, "
