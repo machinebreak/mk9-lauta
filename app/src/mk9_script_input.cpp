@@ -33,6 +33,7 @@
 #include <rex/logging.h>
 
 #include "mk9_controls.h"
+#include "online/snapshot.h"
 
 extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
 
@@ -137,7 +138,9 @@ class ScriptInputDriver final : public rex::input::InputDriver {
   X_RESULT GetDeviceState(DeviceId id, rex::input::X_INPUT_STATE* out_state) override {
     if (id != kScriptDevice) return X_ERROR_DEVICE_NOT_CONNECTED;
     if (!out_state) return X_ERROR_SUCCESS;
-    const double now = REXCVAR_GET(mk9_input_script_frames)
+    const int64_t synctest_frame = mk9::snapshot::SyncTestScriptFrame();
+    const double now = synctest_frame >= 0 && REXCVAR_GET(mk9_input_script_frames) ? double(synctest_frame) / 60.0
+        : REXCVAR_GET(mk9_input_script_frames)
         ? double(g_mk9_game_frames.load(std::memory_order_relaxed)) / 60.0
         : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
     uint16_t buttons = 0;

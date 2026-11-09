@@ -129,6 +129,15 @@ class Timeline {
 
 // A frame's start (the gamepad read's hook, game thread): mk9_rollback_test and mk9_synctest.
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame);
+// mk9_synctest under way: the frame the scripted gamepad goes by (mk9_input_script_frames' count when the test's
+// timeline started, plus the simulation's frame, which goes back with a rollback: a frame run again is given its first
+// run's scripted input, as a session's rollback gives it the same pads); -1 when no test runs.
+int64_t SyncTestScriptFrame();
+// mk9_synctest with F = 0 starts at the next fight's start (its barrier's hook, game thread) ...
+void SyncTestFightStart(uint64_t frame);
+// ... and any test stops for good at a package load (UObject::LoadPackageAsync: the fight decided), which a rollback
+// cannot undo (the async loader goes on with what the memory forgot).
+void SyncTestStop(const char* why);
 // A check of the game's (the capture interface's sub_82A1C5C0; game thread): mk9_synctest compares a frame's checks
 // when it runs again (tag 9 is the game's frame number since boot, which rolls back with the rest).
 void OnCheck(uint32_t tag, uint32_t value);

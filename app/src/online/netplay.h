@@ -30,6 +30,9 @@ enum ReadyFlag : uint8_t {
 
 // A session is configured (mk9_net_host / mk9_net_join).
 bool Active();
+// Test logs: the epoch and the epoch's frame running, and whether it runs again (a rollback's hidden frames); -1 when no
+// session runs.
+int64_t FrameRunning(uint32_t* epoch = nullptr, bool* again = nullptr);
 // The frame boundary (game thread; ctx: the hook's, for the guest calls a rollback makes). game_frame: the game's
 // frame number (1-based, mk9_capture.cpp).
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame);

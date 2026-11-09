@@ -44,12 +44,15 @@ REXCVAR_DEFINE_BOOL(mk9_write_trace, false, "MK9 Online",
                     "mk9_synctest: once the timeline has learnt the pages written with no card, log who writes them "
                     "(write_trace.h; use with no rollback, P larger than the run)");
 REXCVAR_DEFINE_STRING(mk9_synctest, "", "MK9 Online",
-                      "F,P,K: from frame F on, keep the simulation's memory frame by frame and every P frames roll it "
-                      "back K frames; the frames that run again must give the game's same checks (rollback's test)");
+                      "F,P,K: from frame F on (0: from the next fight's start), keep the simulation's memory frame by "
+                      "frame and every P frames roll it back K frames; the frames that run again must give the game's "
+                      "same checks (rollback's test). A package load (the fight decided) ends it. With "
+                      "mk9_input_script_frames a frame run again gets its first run's scripted input");
 REXCVAR_DEFINE_BOOL(mk9_synctest_hidden, true, "MK9 Online",
                     "mk9_synctest: the frames run again are not shown and not paced, as in a session's rollback");
 
 extern "C" REX_FUNC(__imp__sub_82747FE0);  // FlushRenderingCommands
+extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
 
 namespace mk9::snapshot {
 namespace {
@@ -480,6 +483,8 @@ namespace {
 
 struct SyncTest {
   bool configured = false;
+  bool at_fight = false;          // F = 0: from the next fight's start
+  bool stopped = false;           // a package load: no rollback any more
   uint64_t from = 0, period = 0, back = 0;
   Timeline timeline;
   uint64_t sim = 0;               // the simulation's frame number (goes back with a rollback)
@@ -494,6 +499,8 @@ struct SyncTest {
   size_t pages = 0;
 };
 SyncTest g_sync;
+std::atomic<int64_t> g_sync_script_frame{-1};  // SyncTestScriptFrame
+uint64_t g_sync_script_base = 0;
 
 void FinishCheckFrame() {
   if (!g_sync.key) return;
@@ -558,8 +565,9 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (!g_sync.configured) {
     g_sync.configured = true;
     unsigned long long f = 0, p = 0, k = 0;
-    if (std::sscanf(sync.c_str(), "%llu,%llu,%llu", &f, &p, &k) == 3 && f > 0 && p > k && k > 0) {
-      g_sync.from = f;
+    if (std::sscanf(sync.c_str(), "%llu,%llu,%llu", &f, &p, &k) == 3 && p > k && k > 0) {
+      g_sync.at_fight = f == 0;
+      g_sync.from = f ? f : ~0ull;  // F = 0: set by SyncTestFightStart
       g_sync.period = p;
       g_sync.back = k;
     } else {
@@ -569,6 +577,11 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (!g_sync.from) return;
   FinishCheckFrame();
   if (frame < g_sync.from) return;
+  if (g_sync.stopped) {
+    sa2::renut::SetFrameHidden(false);
+    g_sync_script_frame.store(-1, std::memory_order_relaxed);
+    return;
+  }
   // the boundary at rest (quiesce.h) until this function returns
   quiesce::Settle(ctx, base);
   struct Released {
@@ -577,12 +590,15 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (!g_sync.timeline.started()) {
     g_sync.timeline.Start(base, 0, int(g_sync.back) + 2, false);  // as a session keeps it: every page in
     g_sync.sim = 0;
+    g_sync_script_base = g_mk9_game_frames.load(std::memory_order_relaxed);
+    g_sync_script_frame.store(int64_t(g_sync_script_base), std::memory_order_relaxed);
     g_sync.next_rollback = 120 + g_sync.period;  // after the 2 s that learn the pages written with no card
     return;
   }
   if (REXCVAR_GET(mk9_write_trace)) write_trace::Rearm();
   auto start = std::chrono::steady_clock::now();
   ++g_sync.sim;
+  g_sync_script_frame.store(int64_t(g_sync_script_base + g_sync.sim), std::memory_order_relaxed);
   g_sync.timeline.Advance(base, g_sync.sim);
   g_sync.ms_advance += MsSince(start);
   // the first 2 s learn the pages written with no card (each frame compared whole); mk9_timeline_verify keeps it on
@@ -603,6 +619,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
     const uint64_t to = g_sync.sim - g_sync.back;
     if (g_sync.timeline.RollBack(base, to)) {
       g_sync.sim = to;
+      g_sync_script_frame.store(int64_t(g_sync_script_base + to), std::memory_order_relaxed);
       ++g_sync.rollbacks;
       g_sync.ms_rollback += MsSince(start);
       static uint64_t advances = 0;
@@ -620,6 +637,24 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
     g_sync.next_rollback += g_sync.period;  // the frames run again, then the next rollback
   }
   sa2::renut::SetFrameHidden(REXCVAR_GET(mk9_synctest_hidden) && g_sync.sim < g_sync.latest);
+}
+
+int64_t SyncTestScriptFrame() { return g_sync_script_frame.load(std::memory_order_relaxed); }
+
+void SyncTestFightStart(uint64_t frame) {
+  if (!g_sync.at_fight || g_sync.from != ~0ull) return;
+  g_sync.from = frame + 1;
+  REXLOG_INFO("[synctest] the fight starts at frame {}: the test runs from frame {}", frame, g_sync.from);
+}
+
+void SyncTestStop(const char* why) {
+  if (!g_sync.timeline.started() || g_sync.stopped) return;
+  g_sync.stopped = true;
+  // the scripted input goes on from the frame this run is at (no frame runs again from here)
+  g_mk9_game_frames.store(g_sync_script_base + g_sync.sim, std::memory_order_relaxed);
+  REXLOG_INFO("[synctest] {} at simulation frame {}: the test stops ({} rollbacks of {} frames: {} frames compared, "
+              "{} differed)",
+              why, g_sync.sim, g_sync.rollbacks, g_sync.back, g_sync.compared, g_sync.differed);
 }
 
 }  // namespace mk9::snapshot

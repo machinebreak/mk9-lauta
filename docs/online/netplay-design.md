@@ -318,3 +318,49 @@ Falta (F5):
   sorteos, nativas de los cuadros 3700-4430);
 - copiar páginas en paralelo (el `keeping a frame` de ~1.4 ms);
 - una sesión de más de 15 minutos seguidos; dos PCs reales.
+
+### El X-Ray con rollback, el detector y los sonidos en la pelea (2026-11-09)
+
+Prueba: dos instancias con `out/f3/make_xray.py` (Versus, los dos atacan y aprietan LT+RT cada pocos golpes, así
+el que tiene la barra llena tira el X-Ray) y red mala (`--mk9_net_lag_ms=45 --mk9_net_jitter_ms=25
+--mk9_net_loss_pct=3`); `out/f3/xray_loop.sh N` la repite hasta que aparece un DESYNC y guarda los registros en
+`out/f3/desync_run`.
+
+1. **El detector estaba ciego en las peleas.** Cada paquete lleva el hash de un solo cuadro final, y la comparación
+   se frenaba en el primer cuadro sin hash del otro (un paquete perdido, o varios cuadros que una rollback deja
+   finales de golpe): con pérdida o jitter dejaba de comparar a los pocos segundos. Y con red buena no comparaba
+   nada: el paquete sale antes de que el cuadro recién corrido tenga su hash, así que iba "sin hash". Ahora se saltean
+   los cuadros cuyo hash el otro ya no va a mandar (`remote_hash_newest`) y se manda el último hash calculado; la línea
+   de estado dice cuántos cuadros se compararon ("N frames' sync checked").
+2. **Lo que encuentra:** casi siempre un script del escenario (la nativa `8248CC88`, un sorteo de `UtilsCore.cpp:2497`)
+   que se despierta un cuadro antes en una máquina: los sorteos del juego salen en otro orden en ese cuadro (el chequeo
+   del tick, tag 10, difiere uno o dos cuadros y vuelve a coincidir). El script espera un sonido, y el aviso de FMOD
+   llega con el reloj de cada mezclador.
+3. **Avisos perdidos en los cuadros que se vuelven a correr.** En la pelea los avisos pasan como vienen y marcan la
+   fuente en la memoria del juego; una rollback la vuelve a antes de la marca y FMOD no avisa dos veces: en la máquina
+   que volvió atrás el juego no veía terminar ese sonido. Ahora cada aviso queda con el cuadro que lo recibió y, cuando
+   una rollback corre ese cuadro de nuevo, se le da otra vez al empezar el siguiente (`PassedFrameStart`; la línea de
+   estado: "given again in frames run again"), si la fuente todavía toca ese evento (`+0x108` de la fuente).
+4. **Probado (la versión de la release):** red local (rtt 15 ms, sin rollbacks): una pelea entera de 8320 cuadros con
+   X-Rays, todos comparados, ninguna diferencia, y las capturas de las dos iguales. Red realista (30 ms por lado,
+   jitter 5, 0,5 % de pérdida: rtt ~90 ms, 274/748 rollbacks): 8870 cuadros, 2 o 3 cuadros sueltos distintos que
+   vuelven a coincidir, capturas iguales. Red muy mala (45 ± 25 ms, 3 %): diferencias sueltas parecidas y, en 2 de 2
+   corridas largas, un cierre: el renderer leyendo vértices o índices de direcciones que no son (`ReadIndices`,
+   `SwapDword`) o el hilo de render del juego con un árbol roto (`sub_82A4F710`): la memoria vuelta atrás bajo el hilo
+   de render, a investigar.
+5. **`mk9_net_end_on_desync` pasa a false**: lo que el detector agarra es casi siempre ese orden de sorteos, no una
+   pelea distinta; con el detector andando, terminar la sesión cortaba casi todas las peleas con red mala. Queda en el
+   registro ("the two games' checks differ from frame N").
+6. **Experimental, apagado** (`mk9_sound_sync_fights`, `sound_sync.h` Mode::kFrames): los avisos de la pelea al mismo
+   cuadro en las dos por números de cuadro (anunciados una vez con las entradas, dados en el cuadro max(L, R) en cada
+   corrida, la rollback si la palabra del otro llega tarde). Funciona como mecanismo, pero no alcanza: FMOD empieza
+   algunos sonidos un cuadro o dos aparte en las dos máquinas (sus instancias ocupadas y sus cargas con el reloj de
+   cada una: `sub_825CA9B8` saca otra instancia por cada una que FMOD dice ocupada), así que los números de las dos no
+   coinciden siempre, y un aviso que nunca se da puede dejar un script esperando. Para que el sonido de la pelea sea
+   igual en las dos hay que hacer deterministas esas preguntas a FMOD (ocupado, cargado) desde el juego.
+
+Herramientas nuevas: `mk9_synctest=0,P,K` empieza al empezar la pelea y para en la primera carga (el fin de la
+pelea); con `mk9_input_script_frames` el script de mandos sigue el cuadro de la simulación, así un cuadro que se vuelve
+a correr recibe los mismos botones (un synctest con golpes y X-Rays: 492 rollbacks de 7 cuadros, 3444 comparados, 0
+distintos). `mk9_sound_log=<archivo>` escribe los avisos de sonido (y `<archivo>.frames`, la numeración del modo
+experimental).

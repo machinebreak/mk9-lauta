@@ -564,6 +564,7 @@ REX_HOOK_RAW(sub_826D91E8) {
 extern "C" REX_FUNC(__imp__sub_82495660);
 REX_HOOK_RAW(sub_82495660) {
   mk9::netplay::Barrier(base, "fight start");
+  mk9::snapshot::SyncTestFightStart(mk9::online::CurrentFrame());
   __imp__sub_82495660(ctx, base);
 }
 

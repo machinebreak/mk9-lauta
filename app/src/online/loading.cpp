@@ -11,6 +11,7 @@
 #include <rex/hook.h>
 
 #include "online/netplay.h"
+#include "online/snapshot.h"
 
 REXCVAR_DEFINE_BOOL(mk9_flush_loads, false, "MK9 Online",
                     "Finish the game's pending package loads at the start of each frame, so they end at the same frame "
@@ -59,5 +60,6 @@ void FlushPending(PPCContext& ctx, uint8_t* base) {
 extern "C" REX_FUNC(__imp__sub_82730F70);
 REX_HOOK_RAW(sub_82730F70) {
   if (!mk9::netplay::AboutToLoad()) return;
+  mk9::snapshot::SyncTestStop("a package load");
   __imp__sub_82730F70(ctx, base);
 }

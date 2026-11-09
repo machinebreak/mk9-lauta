@@ -3,9 +3,14 @@
 #include "online/sound_sync.h"
 
 #include <algorithm>
+#include <climits>
+#include <cstdio>
+#include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -16,13 +21,19 @@
 #include <rex/ppc.h>
 #include <rex/system/guest_park.h>
 
+#include "online/netplay.h"
+
 REXCVAR_DEFINE_BOOL(mk9_sound_sync, true, "MK9 Online",
-                    "In lockstep the sounds' callbacks (a sync point, an end) reach the game at the same frame on both "
+                    "In a session the sounds' callbacks (a sync point, an end) reach the game at the same frame on both "
                     "machines, once both have had them (sound_sync.h); false: as FMOD calls them");
 REXCVAR_DEFINE_INT32(mk9_test_sound_late, 0, "MK9 Online",
                      "Tests: this machine's sounds' callbacks come this many frames late (as a slower mixer would): "
                      "with mk9_sound_sync their announcement waits, without it the game gets them late")
     .range(0, 600);
+REXCVAR_DEFINE_STRING(mk9_sound_log, "", "MK9 Online",
+                      "Tests: write the sounds' callbacks to this file as they reach the game: \"<epoch> <frame> "
+                      "<again> <type> <source> <event> <how> <key>\" (frame: the session's frame running; how: p = as "
+                      "they come, d = given at both machines' word, with its key)");
 
 extern "C" REX_FUNC(__imp__sub_82E46F78);  // FMOD::Event::setCallback(event, callback, userdata)
 extern "C" REX_FUNC(__imp__sub_82603360);  // the game's event callback (event, type, param1, param2, source)
@@ -32,12 +43,22 @@ namespace {
 
 constexpr uint32_t kGameCallback = 0x82603360;
 constexpr uint32_t kForget = 4096;  // numbers this far behind the newest leave the decision (a sound long gone)
+// The game's sound source keeps the FMOD event it plays at +0x108 (found 2026-11-09: every hand-off's event there).
+// A source's address and an event's handle differ between the two machines (the game's heap is not laid out the same
+// after a barrier; FMOD's instance pools fill on each mixer's clock), but what a source plays is the game's state.
+constexpr uint32_t kSourceEvent = 0x108;
+
+uint32_t Load32(const uint8_t* base, uint32_t address) {
+  const uint8_t* p = base + address;
+  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
+}
 
 struct Callback {
   uint32_t event = 0, type = 0, param1 = 0, param2 = 0, source = 0;
   uint64_t kept_at = 0;  // the boundary it came after (mk9_test_sound_late)
 };
 
+// A sound handed to FMOD in lockstep, by its source.
 struct Source {
   uint32_t number = 0;  // 0: not numbered (its callbacks go through)
   uint32_t event = 0;   // the FMOD event it was handed with
@@ -45,20 +66,61 @@ struct Source {
   bool ended = false;
 };
 
+// A fight's epoch: one hand-off of an FMOD event instance with the game's callback, made by a run of a frame.
+struct Handoff {
+  uint32_t source = 0, event = 0;
+  int64_t frame = -1;          // -1: outside the frames (an epoch's start)
+  uint32_t number = 0;         // 0 until its frame is final
+  uint32_t sync_points = 0;
+  bool ended = false;
+  bool dead = false;           // the latest run of its frame did not make it
+  std::vector<std::pair<uint32_t, Callback>> early;  // slot and callback, come before it was numbered
+};
+
+// A fight's epoch: a callback of a numbered sound, by key (number << 8 | slot).
+struct Kept {
+  Callback cb;
+  bool announced = false;  // this machine's inputs said it (once an epoch)
+  int64_t due = -1;        // max(L, R): the frame it goes to the game at
+};
+
 // What the callbacks touch (they come on FMOD's thread or the game's).
 std::mutex g_mutex;
-bool g_deferring = false;
+Mode g_mode = Mode::kOff;
+uint32_t g_epoch = 0;
+bool g_deferring = false;  // lockstep (or the tests' late callbacks)
 std::thread::id g_game_thread;
 uint32_t g_next_number = 0;
 uint64_t g_boundary = 0;
-std::unordered_map<uint32_t, Source> g_sources;  // source address -> the sound it plays
-std::map<uint32_t, Callback> g_waiting;           // number << 8 | slot (0: the end, 1-255: sync points) -> callback
+std::unordered_map<uint32_t, Source> g_sources;  // source address -> the sound it plays (lockstep)
+std::map<uint32_t, Callback> g_waiting;           // lockstep: number << 8 | slot (0: the end, 1-255: sync points)
 std::vector<Callback> g_late;                     // mk9_test_sound_late without mk9_sound_sync: given late here
 Stats g_stats;
 
-// Decided from the two machines' inputs only (game thread): the same on both.
+// Lockstep: decided from the two machines' inputs only (game thread): the same on both.
 std::set<uint32_t> g_local_said, g_remote_said, g_delivered;
 uint32_t g_last_announced = 0;
+
+// A fight's epoch.
+std::deque<std::unique_ptr<Handoff>> g_handoffs;            // every hand-off of the epoch (and the live ones before)
+std::unordered_map<uint32_t, Handoff*> g_by_event;          // an event instance's newest hand-off
+std::map<int64_t, std::vector<Handoff*>> g_frame_runs;      // a frame not numbered yet: the hand-offs of its latest run
+std::vector<Handoff*> g_prev_run;                           // the running frame's run before (a rollback's frame)
+int64_t g_running = -1;                                     // the frame running (-1: none)
+size_t g_run_order = 0;                                     // its hand-offs so far
+int64_t g_numbered_upto = -1;
+std::map<uint32_t, Kept> g_kept;
+
+// A fight with rollback, the callbacks as they come (PassedFrameStart): by the frame whose run got them.
+struct Passed {
+  Callback cb;
+  bool given = false;  // the frame's latest run has it (given as it came, or again)
+};
+bool g_passed_on = false;
+int64_t g_passed_frame = -1;                         // the frame running
+std::map<int64_t, std::vector<Passed>> g_passed;
+std::unordered_map<uint32_t, int64_t> g_first_local, g_first_remote;  // key -> the frame of its first word
+std::map<int64_t, std::set<uint32_t>> g_due;                           // frame -> the keys given at its start
 
 void Call(PPCContext& ctx, uint8_t* base, const Callback& cb) {
   rex::CallFrame frame(ctx);
@@ -70,9 +132,151 @@ void Call(PPCContext& ctx, uint8_t* base, const Callback& cb) {
   __imp__sub_82603360(frame, base);
 }
 
-// The game handed a source to FMOD with its callback (any thread): in lockstep on the game thread, a new number.
+// mk9_sound_log: a callback that reaches the game (how: 'p' as it comes, 'd' at both machines' word).
+void LogCallback(uint32_t event, uint32_t type, uint32_t source, char how, uint32_t key = 0) {
+  static const std::string path = REXCVAR_GET(mk9_sound_log);
+  if (path.empty()) return;
+  static FILE* file = std::fopen(path.c_str(), "w");
+  if (!file) return;
+  uint32_t epoch = 0;
+  bool again = false;
+  const int64_t frame = mk9::netplay::FrameRunning(&epoch, &again);
+  std::fprintf(file, "%u %lld %d %u %08X %08X %c %08X\n", epoch, static_cast<long long>(frame), again ? 1 : 0, type,
+               source, event, how, key);
+  std::fflush(file);
+}
+
+// mk9_sound_log: a line of the fight epoch's bookkeeping (h: a hand-off numbered; x: a callback not given, its
+// source playing another event; a: this machine said a key; r: the peer said one).
+void LogLine(const char* what, int64_t frame, uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+  static const std::string path = REXCVAR_GET(mk9_sound_log);
+  if (path.empty()) return;
+  static FILE* file = std::fopen((path + ".frames").c_str(), "w");
+  if (!file) return;
+  std::fprintf(file, "%s %lld %08X %08X %08X %08X\n", what, static_cast<long long>(frame), a, b, c, d);
+  std::fflush(file);
+}
+
+// --- a fight's epoch (g_mutex held) ---
+
+Handoff* NewHandoff(uint32_t source, uint32_t event, int64_t frame) {
+  g_handoffs.push_back(std::make_unique<Handoff>());
+  Handoff* h = g_handoffs.back().get();
+  h->source = source;
+  h->event = event;
+  h->frame = frame;
+  return h;
+}
+
+// A hand-off's frame is final: its number, its frame's and its place among the frame's hand-offs (so a sound one
+// machine's FMOD could not start, its instances busy on that mixer's clock, changes no other sound's number), and the
+// callbacks it already had.
+void NumberHandoff(Handoff* h, uint32_t index) {
+  h->number = (uint32_t(h->frame < 0 ? 0xFFFF : (h->frame & 0xFFFF)) << 8) | (index & 0xFF);
+  ++g_stats.numbered;
+  LogLine("h", h->frame, h->number, h->source, h->event, uint32_t(h->early.size()));
+  for (const auto& [slot, cb] : h->early) g_kept[h->number << 8 | slot] = Kept{cb};
+  h->early.clear();
+}
+
+// The running frame's run is over: what its run before made and this one did not is gone (sound_replay stops it).
+void EndRun() {
+  for (Handoff* h : g_prev_run) {
+    if (!h) continue;
+    h->dead = true;
+    h->early.clear();
+    if (auto it = g_by_event.find(h->event); it != g_by_event.end() && it->second == h) g_by_event.erase(it);
+  }
+  g_prev_run.clear();
+}
+
+// The game handed an event instance to FMOD with its callback (game thread, the frame g_running's run).
+void HandOff(uint32_t source, uint32_t event) {
+  if (g_running < 0) {
+    // between frames (an epoch's start): the same on both machines, numbered now
+    static uint32_t between = 0;
+    Handoff* h = NewHandoff(source, event, -1);
+    NumberHandoff(h, between++);
+    g_by_event[event] = h;
+    return;
+  }
+  ++g_run_order;
+  Handoff* h = nullptr;
+  for (Handoff*& p : g_prev_run) {
+    if (p && p->event == event && p->source == source) {
+      h = p;  // the same hand-off as in the frame's run before (sound_replay gives the run the same instance)
+      p = nullptr;
+      break;
+    }
+  }
+  if (!h) h = NewHandoff(source, event, g_running);
+  g_frame_runs[g_running].push_back(h);
+  g_by_event[event] = h;
+}
+
+void SetDue(uint32_t key, int64_t frame) {
+  g_due[frame].insert(key);
+  if (auto it = g_kept.find(key); it != g_kept.end()) it->second.due = frame;
+}
+
+// Forgets what a final frame decided: the callbacks given (or no longer to be given) and the word about them.
+void Collect(int64_t final_upto) {
+  for (auto it = g_due.begin(); it != g_due.end() && it->first <= final_upto;) {
+    for (uint32_t key : it->second) {
+      g_kept.erase(key);
+      g_first_local.erase(key);
+      g_first_remote.erase(key);
+    }
+    it = g_due.erase(it);
+  }
+}
+
+// Leaves a fight's epoch (the session ends, or a lockstep epoch follows): every callback kept goes to the game now, as
+// lockstep's do when the session ends.
+void LeaveFrames(std::vector<Callback>& give) {
+  EndRun();
+  for (auto& [key, kept] : g_kept) give.push_back(kept.cb);
+  for (const auto& h : g_handoffs) {
+    if (h->dead) continue;
+    for (const auto& [slot, cb] : h->early) give.push_back(cb);
+  }
+  g_stats.flushed += give.size();
+  g_kept.clear();
+  g_handoffs.clear();
+  g_by_event.clear();
+  g_frame_runs.clear();
+  g_first_local.clear();
+  g_first_remote.clear();
+  g_due.clear();
+  g_running = -1;
+  g_numbered_upto = -1;
+}
+
+// Starts a fight's epoch. Both machines start its frames at the same game moment, but not having run the same frames
+// before it (a barrier: the one that got there first waited while the other played on to it), so the sounds handed to
+// FMOD before it may differ: their callbacks go to the game as they come, and what was kept goes now (as when a fight
+// started before); the epoch's sounds are numbered from its own base, the same on both machines.
+void EnterFrames(uint32_t epoch, std::vector<Callback>& give) {
+  LeaveFrames(give);
+  for (const auto& [key, cb] : g_waiting) give.push_back(cb);
+  g_stats.flushed += g_waiting.size();
+  g_waiting.clear();
+  g_local_said.clear();
+  g_remote_said.clear();
+  g_delivered.clear();
+  g_sources.clear();
+  g_next_number = (epoch & 0xFF) << 16;
+}
+
+// --- lockstep ---
+
+// The game handed a source to FMOD with its callback (any thread): in a session on the game thread, a new number.
 void Numbered(uint32_t source, uint32_t event) {
   std::lock_guard lock(g_mutex);
+  if (g_mode == Mode::kFrames && std::this_thread::get_id() == g_game_thread) {
+    HandOff(source, event);
+    return;
+  }
   Source& s = g_sources[source];
   if (s.number) {
     // the source's last sound: what it still had waiting goes (both machines start the source again at this frame)
@@ -90,24 +294,83 @@ void Numbered(uint32_t source, uint32_t event) {
   }
 }
 
+// The slot of a callback of a sound (0: its end, then its sync points in order); false: not one to keep.
+bool Slot(uint32_t type, uint32_t& sync_points, bool& ended, uint32_t& slot, bool& drop) {
+  drop = false;
+  if (type == 0) {
+    if (sync_points >= 255) return false;
+    slot = ++sync_points;
+    return true;
+  }
+  if (ended) {
+    drop = true;  // stolen, then finished: one end
+    return true;
+  }
+  ended = true;
+  slot = 0;
+  return true;
+}
+
 // FMOD's callback (any thread): true if it waits (the game gets it later), false if it goes through now.
 bool Keep(uint32_t event, uint32_t type, uint32_t param1, uint32_t param2, uint32_t source) {
   static const bool sync = REXCVAR_GET(mk9_sound_sync);
   static const int32_t late = REXCVAR_GET(mk9_test_sound_late);
   if (type != 0 && type != 3 && type != 4) return false;  // the ones that mark the source
   std::lock_guard lock(g_mutex);
+  const Callback cb{event, type, param1, param2, source, g_boundary};
+  if (sync && g_mode == Mode::kFrames) {
+    uint32_t slot = 0;
+    bool drop = false;
+    auto h = g_by_event.find(event);
+    if (h != g_by_event.end() && !h->second->dead && h->second->source == source) {
+      Handoff& ho = *h->second;
+      if (!Slot(type, ho.sync_points, ho.ended, slot, drop)) {
+        ++g_stats.passed;
+        LogCallback(event, type, source, 'p');
+        return false;
+      }
+      if (drop) return true;
+      if (ho.number) {
+        g_kept[ho.number << 8 | slot] = Kept{cb};
+      } else {
+        ho.early.emplace_back(slot, cb);
+      }
+      ++g_stats.deferred;
+      return true;
+    }
+    // a sound numbered in lockstep, before the fight's epoch
+    auto s = g_sources.find(source);
+    if (s != g_sources.end() && s->second.number && s->second.event == event) {
+      if (!Slot(type, s->second.sync_points, s->second.ended, slot, drop)) {
+        ++g_stats.passed;
+        LogCallback(event, type, source, 'p');
+        return false;
+      }
+      if (drop) return true;
+      g_kept[s->second.number << 8 | slot] = Kept{cb};
+      ++g_stats.deferred;
+      return true;
+    }
+    ++g_stats.passed;
+    LogCallback(event, type, source, 'p');
+    return false;
+  }
   if (!g_deferring) {
     ++g_stats.passed;
+    LogCallback(event, type, source, 'p');
+    // a fight with rollback: kept with the frame that got it, for a rollback's run of that frame
+    if (g_passed_on && g_passed_frame >= 0) g_passed[g_passed_frame].push_back(Passed{cb, true});
     return false;
   }
   if (!sync) {
     if (late <= 0) return false;
-    g_late.push_back(Callback{event, type, param1, param2, source, g_boundary});
+    g_late.push_back(cb);
     return true;
   }
   auto it = g_sources.find(source);
   if (it == g_sources.end() || it->second.number == 0) {
     ++g_stats.passed;
+    LogCallback(event, type, source, 'p');
     return false;
   }
   Source& s = it->second;
@@ -116,50 +379,63 @@ bool Keep(uint32_t event, uint32_t type, uint32_t param1, uint32_t param2, uint3
     return true;
   }
   uint32_t slot = 0;
-  if (type == 0) {
-    if (s.sync_points >= 255) {
-      ++g_stats.passed;
-      return false;
-    }
-    slot = ++s.sync_points;
-  } else {
-    if (s.ended) return true;  // stolen, then finished: one end
-    s.ended = true;
+  bool drop = false;
+  if (!Slot(type, s.sync_points, s.ended, slot, drop)) {
+    ++g_stats.passed;
+    return false;
   }
-  g_waiting[s.number << 8 | slot] = Callback{event, type, param1, param2, source, g_boundary};
+  if (drop) return true;
+  g_waiting[s.number << 8 | slot] = cb;
   ++g_stats.deferred;
   return true;
 }
 
-}  // namespace
-
-void SetDeferring(PPCContext& ctx, uint8_t* base, bool on) {
+// Lockstep's switch (and mk9_test_sound_late's): on in a lockstep epoch.
+void SetDeferringLocked(bool on, std::vector<Callback>& give) {
   static const bool sync = REXCVAR_GET(mk9_sound_sync);
   static const int32_t late = REXCVAR_GET(mk9_test_sound_late);
+  if (!sync) {
+    // the test's late callbacks, given by this machine alone
+    for (auto it = g_late.begin(); it != g_late.end();) {
+      if (!on || it->kept_at + uint64_t(late) <= g_boundary) {
+        give.push_back(*it);
+        it = g_late.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  } else if (!on && g_deferring) {
+    for (const auto& [key, cb] : g_waiting) give.push_back(cb);
+    g_stats.flushed += g_waiting.size();
+    g_waiting.clear();
+    g_local_said.clear();
+    g_remote_said.clear();
+    g_delivered.clear();
+  }
+  g_deferring = on;
+}
+
+}  // namespace
+
+void SetMode(PPCContext& ctx, uint8_t* base, Mode mode, uint32_t epoch) {
+  static const bool sync = REXCVAR_GET(mk9_sound_sync);
+  if (!sync && mode == Mode::kFrames) mode = Mode::kOff;  // as FMOD calls them
   std::vector<Callback> give;
   {
     std::lock_guard lock(g_mutex);
     g_game_thread = std::this_thread::get_id();
     ++g_boundary;
-    if (!sync) {
-      // the test's late callbacks, given by this machine alone
-      for (auto it = g_late.begin(); it != g_late.end();) {
-        if (!on || it->kept_at + uint64_t(late) <= g_boundary) {
-          give.push_back(*it);
-          it = g_late.erase(it);
-        } else {
-          ++it;
-        }
+    if (mode != g_mode || (mode == Mode::kFrames && epoch != g_epoch)) {
+      if (mode == Mode::kFrames) {
+        EnterFrames(epoch, give);
+        g_deferring = false;
+      } else if (g_mode == Mode::kFrames) {
+        LeaveFrames(give);
       }
-    } else if (!on && g_deferring) {
-      for (const auto& [key, cb] : g_waiting) give.push_back(cb);
-      g_stats.flushed += g_waiting.size();
-      g_waiting.clear();
-      g_local_said.clear();
-      g_remote_said.clear();
-      g_delivered.clear();
+      g_mode = mode;
+      g_epoch = epoch;
     }
-    g_deferring = on;
+    if (mode != Mode::kFrames) SetDeferringLocked(mode == Mode::kLockstep, give);
   }
   for (const Callback& cb : give) Call(ctx, base, cb);
 }
@@ -214,15 +490,135 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote) {
     }
     if (!have) continue;  // its source started another sound since (dropped on both)
     Call(ctx, base, cb);
+    LogCallback(cb.event, cb.type, cb.source, 'd', key);
     ++g_stats.delivered;
   }
+}
+
+uint32_t AnnounceFor(int64_t input_frame) {
+  std::lock_guard lock(g_mutex);
+  if (g_mode != Mode::kFrames) return 0;
+  for (auto& [key, kept] : g_kept) {
+    if (kept.announced) continue;
+    kept.announced = true;
+    ++g_stats.announced;
+    LogLine("a", input_frame, key, kept.cb.source, kept.cb.event, 0);
+    g_first_local.emplace(key, input_frame);
+    if (auto r = g_first_remote.find(key); r != g_first_remote.end()) SetDue(key, std::max(input_frame, r->second));
+    return key;
+  }
+  return 0;
+}
+
+int64_t RemoteAnnounced(uint32_t key, int64_t frame) {
+  std::lock_guard lock(g_mutex);
+  if (g_mode != Mode::kFrames || !key) return -1;
+  if (!g_first_remote.emplace(key, frame).second) return -1;
+  LogLine("r", frame, key, 0, 0, 0);
+  auto l = g_first_local.find(key);
+  if (l == g_first_local.end()) return -1;
+  const int64_t due = std::max(l->second, frame);
+  SetDue(key, due);
+  return due;
+}
+
+void FrameStart(PPCContext& ctx, uint8_t* base, int64_t frame, int64_t final_upto) {
+  std::vector<Callback> give;
+  std::vector<uint32_t> keys;
+  {
+    std::lock_guard lock(g_mutex);
+    if (g_mode != Mode::kFrames) return;
+    EndRun();
+    // the frames no rollback runs again: their hand-offs numbered in order, the same count on both machines
+    for (auto it = g_frame_runs.begin(); it != g_frame_runs.end() && it->first <= final_upto;) {
+      uint32_t index = 0;
+      for (Handoff* h : it->second) NumberHandoff(h, index++);
+      it = g_frame_runs.erase(it);
+    }
+    g_numbered_upto = std::max(g_numbered_upto, final_upto);
+    // this frame's run: its run before (a rollback's frame) is matched hand-off by hand-off
+    g_running = frame;
+    g_run_order = 0;
+    if (auto it = g_frame_runs.find(frame); it != g_frame_runs.end()) {
+      g_prev_run = std::move(it->second);
+      g_frame_runs.erase(it);
+    }
+    // the callbacks due here, in their keys' order, to the sources that still play their sounds (one the game has
+    // since given another sound, or let go, does not get them: the game's state, the same on both machines)
+    if (auto due = g_due.find(frame); due != g_due.end()) {
+      for (uint32_t key : due->second) {
+        auto kept = g_kept.find(key);
+        if (kept == g_kept.end()) continue;
+        const Callback& cb = kept->second.cb;
+        if (Load32(base, cb.source + kSourceEvent) != cb.event) {
+          LogLine("x", frame, key, cb.source, cb.event, Load32(base, cb.source + kSourceEvent));
+          ++g_stats.dropped;
+          continue;
+        }
+        give.push_back(cb);
+        keys.push_back(key);
+      }
+    }
+    Collect(final_upto);
+  }
+  for (size_t i = 0; i < give.size(); ++i) {
+    Call(ctx, base, give[i]);
+    LogCallback(give[i].event, give[i].type, give[i].source, 'd', keys[i]);
+  }
+  std::lock_guard lock(g_mutex);
+  g_stats.delivered += give.size();
+}
+
+void PassedFrameStart(PPCContext& ctx, uint8_t* base, int64_t frame, bool again, int64_t final_upto) {
+  std::vector<Callback> give;
+  {
+    std::lock_guard lock(g_mutex);
+    g_passed_on = true;
+    // the frame before this one: what its runs before its latest one got, its latest run did not have (the memory had
+    // gone back), so it goes now, where the game first saw it (after that frame); a source the game has since given
+    // another sound (a corrected run) does not get it
+    if (auto it = g_passed.find(frame - 1); it != g_passed.end()) {
+      for (Passed& p : it->second) {
+        if (p.given) continue;
+        p.given = true;
+        if (Load32(base, p.cb.source + kSourceEvent) != p.cb.event) continue;
+        give.push_back(p.cb);
+      }
+    }
+    // this frame runs again: what its runs before got is gone from the memory
+    if (again) {
+      if (auto it = g_passed.find(frame); it != g_passed.end()) {
+        for (Passed& p : it->second) p.given = false;
+      }
+    }
+    g_passed_frame = frame;
+    // final frames are not run again
+    while (!g_passed.empty() && g_passed.begin()->first < final_upto - 1) g_passed.erase(g_passed.begin());
+    g_stats.regiven += give.size();
+  }
+  for (const Callback& cb : give) {
+    Call(ctx, base, cb);
+    LogCallback(cb.event, cb.type, cb.source, 'r');
+  }
+}
+
+void PassedEnd() {
+  std::lock_guard lock(g_mutex);
+  g_passed_on = false;
+  g_passed_frame = -1;
+  g_passed.clear();
 }
 
 Stats GetStats() {
   std::lock_guard lock(g_mutex);
   Stats s = g_stats;
-  s.waiting = g_waiting.size();
+  s.waiting = g_waiting.size() + g_kept.size();
   return s;
+}
+
+void NoteRollback() {
+  std::lock_guard lock(g_mutex);
+  ++g_stats.rollbacks;
 }
 
 }  // namespace mk9::sound_sync

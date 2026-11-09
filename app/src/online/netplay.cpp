@@ -123,8 +123,15 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
-REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, true, "MK9 Online",
-                    "The session ends when the two games' sync hashes differ (false: it goes on, for tests)");
+REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, false, "MK9 Online",
+                    "The session ends when the two games' sync hashes differ (false: it goes on and the log says so). "
+                    "Off since the hashes are compared all along (2026-11-09): what they catch most is the game's random "
+                    "draws in another order when a script waits on a sound, whose end comes on each machine's own "
+                    "mixer (sound_sync.h), not always a fight that goes another way");
+REXCVAR_DEFINE_BOOL(mk9_sound_sync_fights, false, "MK9 Online",
+                    "Experimental: a fight's sounds' callbacks at the same frame on both machines by frame numbers "
+                    "(sound_sync.h, Mode::kFrames); off: as they come, as before. Not enough yet: FMOD starts some "
+                    "sounds a frame or two apart on the two machines (its instances and loads on its own clock)");
 REXCVAR_DEFINE_STRING(mk9_net_sync_ranges, "", "MK9 Online",
                       "Guest ranges (hex lo-hi, comma-separated) that also go into the sync hash both players compare");
 REXCVAR_DEFINE_INT32(mk9_net_sync_every, 1, "MK9 Online", "Hash mk9_net_sync_ranges every this many frames");
@@ -188,6 +195,10 @@ struct Session {
   int64_t peer_acked = -1;           // the peer has every local frame <= this
   std::vector<uint64_t> local_hash, remote_hash;  // by frame; 0 = not known yet
   int64_t compared_upto = -1;        // final frames compared so far
+  // the newest frame the peer sent its hash of: each packet carries only its newest final frame's, so the frames it
+  // skipped (a lost packet, or several frames made final at once by a rollback) never come and are not waited for
+  int64_t remote_hash_newest = -1;
+  uint64_t hashes_compared = 0;
   std::vector<std::pair<uint32_t, uint32_t>> sync_ranges;
   uint64_t check_hash = 0;           // this frame's checks so far
   uint32_t checks = 0;
@@ -207,6 +218,7 @@ struct Session {
   uint32_t packet_base[2] = {};      // the packet numbers at the epoch's start
   // rollback (a fight's epoch)
   bool rollback = false;             // this epoch runs with rollback
+  bool frames_sound = false;         // this epoch started with rollback: its sounds' callbacks by frame (sound_sync.h)
   bool speculating = false;          // past the learning frames: frames may run on predicted inputs
   snapshot::Timeline timeline;
   int64_t latest = 0;                // the live edge: the newest frame started + 1 (frame < latest while replaying)
@@ -326,10 +338,19 @@ void CompareFinalHashes() {
   while (g.compared_upto < upto) {
     const int64_t frame = g.compared_upto + 1;
     const uint64_t local = g.local_hash[size_t(frame)], remote = g.remote_hash[size_t(frame)];
-    if (!remote) break;  // the peer's hash of it has not come (or the peer has not finished it)
+    if (!remote && frame >= g.remote_hash_newest) break;  // the peer's hash of it may still come
     g.compared_upto = frame;
-    if (!local || local == remote) continue;
-    if (g.desync_at < 0) g.desync_at = frame;
+    if (!local || !remote) continue;  // one the peer skipped
+    ++g.hashes_compared;
+    if (local == remote) continue;
+    if (g.desync_at < 0) {
+      g.desync_at = frame;
+      if (!REXCVAR_GET(mk9_net_end_on_desync)) {
+        REXLOG_WARN("[net] the two games' checks differ from frame {} of epoch {} on: the session goes on "
+                    "(mk9_net_end_on_desync); a fight may look different on the two screens from here",
+                    frame, g.epoch);
+      }
+    }
     if (++g.desync_frames <= 10) {
       REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, peer {:016x}", g.epoch,
                    frame, g.start_game_frame + frame, local, remote);
@@ -409,8 +430,10 @@ void SendInputs() {
     p.push_back(g.local[size_t(f)].ready);
     Put32(p, g.local[size_t(f)].sound);
   }
-  // the newest final frame's sync hash
-  const int64_t final_frame = std::min(FinalUpto(), g.frame - 1);
+  // the newest final frame's sync hash (a fight's frame sends before the frame that just ran has its hash: the one
+  // before then)
+  int64_t final_frame = std::min(FinalUpto(), g.frame - 1);
+  for (int back = 0; back < 4 && final_frame > 0 && !g.local_hash[size_t(final_frame)]; ++back) --final_frame;
   if (final_frame >= 0 && g.local_hash[size_t(final_frame)]) {
     Put32(p, uint32_t(final_frame));
     Put64(p, g.local_hash[size_t(final_frame)]);
@@ -479,6 +502,14 @@ void Receive() {
           ++g.mispredicted;
           g.rollback_to = g.rollback_to < 0 ? f : std::min(g.rollback_to, f);
         }
+        // a sound callback both machines have now said: given at a frame that may have run without it
+        if (g.frames_sound && pad.sound) {
+          const int64_t due = sound_sync::RemoteAnnounced(pad.sound, f);
+          if (g.rollback && due >= 0 && due < g.frame) {
+            g.rollback_to = g.rollback_to < 0 ? due : std::min(g.rollback_to, due);
+            sound_sync::NoteRollback();
+          }
+        }
       }
       while (size_t(g.remote_upto + 1) < g.have_remote.size() && g.have_remote[size_t(g.remote_upto + 1)]) {
         ++g.remote_upto;
@@ -488,6 +519,7 @@ void Receive() {
       if (hash_frame != kNoHash && Get64(h + 4) != 0) {
         Ensure(hash_frame);
         g.remote_hash[hash_frame] = Get64(h + 4);
+        g.remote_hash_newest = std::max<int64_t>(g.remote_hash_newest, hash_frame);
       }
       g.peer_latest = std::max<int64_t>(g.peer_latest, int64_t(Get32(h + 12)));
     } else if (type == kBarrier && left >= 8) {
@@ -743,6 +775,8 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
     g.packet[p].clear();
   }
   g.compared_upto = -1;
+  g.remote_hash_newest = -1;
+  g.hashes_compared = 0;
   g.remote_upto = -1;
   g.peer_acked = -1;
   g.peer_last_frame = -1;
@@ -752,6 +786,7 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.desync_at = -1;
   g.desync_frames = 0;
   g.rollback = rollback;
+  g.frames_sound = rollback && REXCVAR_GET(mk9_sound_sync_fights);
   g.speculating = false;
   g.rollback_to = -1;
   g.mode_change_at = -1;
@@ -828,13 +863,15 @@ void LogStats() {
     }
     const sound_sync::Stats callbacks = sound_sync::GetStats();
     rb += fmt::format("; sound callbacks: {} sources numbered, {} kept for both, {} given, {} dropped, {} waiting, "
-                      "{} through at once, {} given at a fight's start",
+                      "{} through at once ({} given again in frames run again), {} given at an epoch's change, {} said "
+                      "in a fight, {} rollbacks for them",
                       callbacks.numbered, callbacks.deferred, callbacks.delivered, callbacks.dropped,
-                      callbacks.waiting, callbacks.passed, callbacks.flushed);
+                      callbacks.waiting, callbacks.passed, callbacks.regiven, callbacks.flushed, callbacks.announced,
+                      callbacks.rollbacks);
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
-                "longest {:.1f} ms), peer inputs to {}; sent {}, received {}{}{}",
+                "longest {:.1f} ms), peer inputs to {}; sent {}, received {}; {} frames' sync checked{}{}",
                 g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
-                g.wait_ms_max, g.remote_upto, g.sent, g.received, rb,
+                g.wait_ms_max, g.remote_upto, g.sent, g.received, g.hashes_compared, rb,
                 g.desync_at >= 0 ? fmt::format("; {} frame(s) out of sync, the first {}", g.desync_frames, g.desync_at)
                                  : "");
   }
@@ -901,7 +938,7 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
       mine.bytes[1] |= 0x10;
     }
     mine.ready = g.ready_seen;
-    mine.sound = sound_sync::Announcement();
+    mine.sound = g.frames_sound ? sound_sync::AnnounceFor(target) : sound_sync::Announcement();
     g.ready_seen = 0;
     g.local_made_upto = target;
   }
@@ -919,12 +956,17 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     SetFramePads(Pad{}, Pad{});
     g.frame_busy = g.local[size_t(g.frame)].busy;
     g.frame_ready = g.local[size_t(g.frame)].ready;
+    if (g.frames_sound) sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
   } else {
     SetFramePads(g.local[size_t(g.frame)], g.remote[size_t(g.frame)]);
     g.frame_busy = g.local[size_t(g.frame)].busy | g.remote[size_t(g.frame)].busy;
     g.frame_ready = g.local[size_t(g.frame)].ready & g.remote[size_t(g.frame)].ready;
     // the sounds' callbacks both machines' inputs have announced, before the frame (the same frame on both)
-    sound_sync::Deliver(ctx, base, g.local[size_t(g.frame)].sound, g.remote[size_t(g.frame)].sound);
+    if (g.frames_sound) {
+      sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
+    } else {
+      sound_sync::Deliver(ctx, base, g.local[size_t(g.frame)].sound, g.remote[size_t(g.frame)].sound);
+    }
   }
   ++g.frames_window;
   LogStats();
@@ -942,6 +984,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
     // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
     if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
+    pad.sound = sound_sync::AnnounceFor(g.latest + g.delay);
     g.local[size_t(g.latest + g.delay)] = pad;
     g.local_made_upto = std::max(g.local_made_upto, g.latest + g.delay);
     SendInputs();
@@ -1010,10 +1053,13 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     g.delay_check_at = 0;  // the lockstep after the fight: its delay for the round trip from the next frame
     g.timeline = snapshot::Timeline();
     sound_replay::OnFrame(ctx, base, 0, false);
+    sound_sync::PassedEnd();
     sa2::renut::SetFrameHidden(false);
     // this frame, as lockstep does it: its local input is the one this side already sent
     WaitFor([&] { return g.remote_upto >= g.frame; });
     if (g.ended) return;
+    Receive();
+    sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
     SetFramePads(g.local[size_t(g.frame)], g.remote[size_t(g.frame)]);
     ++g.frame;
     g.latest = g.frame;
@@ -1032,6 +1078,13 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   SetFramePads(g.local[size_t(g.frame)], remote);
   g.frame_busy = 0;
   g.frame_ready = 0xFF;
+  // the sounds' callbacks due at this frame (in each of its runs), and the sounds of the frames now final numbered; or,
+  // as they come, those a frame run again had lost
+  if (g.frames_sound) {
+    sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
+  } else {
+    sound_sync::PassedFrameStart(ctx, base, g.frame, g.frame < g.latest, FinalUpto());
+  }
   // a frame run again is not shown and not paced, and keeps the sounds its first run started (sound_replay.h)
   sound_replay::OnFrame(ctx, base, uint64_t(g.epoch) << 32 | uint64_t(g.frame + 1), g.frame < g.latest);
   sa2::renut::SetFrameHidden(g.frame < g.latest);
@@ -1072,7 +1125,8 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     if (g.started) {
       sa2::renut::SetFrameHidden(false);  // a session that ended shows every frame again
       sound_replay::OnFrame(ctx, base, 0, false);
-      sound_sync::SetDeferring(ctx, base, false);  // the sounds' callbacks go through again
+      sound_sync::SetMode(ctx, base, sound_sync::Mode::kOff, 0);  // the sounds' callbacks go through again
+      sound_sync::PassedEnd();
     }
     return;
   }
@@ -1103,8 +1157,13 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     REXLOG_INFO("[net] epoch {} started at game frame {} ({})", g.epoch, game_frame,
                 g.rollback ? fmt::format("rollback, delay {}", g.delay) : "lockstep");
   }
-  // the sounds' callbacks wait for both machines in lockstep (sound_sync.h)
-  sound_sync::SetDeferring(ctx, base, !g.rollback);
+  // the sounds' callbacks wait for both machines (sound_sync.h): in lockstep by their announcements, in a fight's
+  // epoch by frame numbers (mk9_sound_sync_fights) or else as they come
+  sound_sync::SetMode(ctx, base,
+                      g.frames_sound ? sound_sync::Mode::kFrames
+                      : g.rollback   ? sound_sync::Mode::kOff
+                                     : sound_sync::Mode::kLockstep,
+                      g.epoch);
   if (g.rollback) {
     RollbackFrame(ctx, base);
   } else {
@@ -1126,7 +1185,17 @@ uint32_t Busy(BusyFlag flag, uint32_t local) {
 
 uint32_t Ready(ReadyFlag flag, uint32_t local) {
   if (!g.started || g.ended || g.failed || std::this_thread::get_id() != g.game_thread) return local;
-  if (g.rollback) return local;  // a fight polls none of these (a mode change goes back to lockstep first)
+  if (g.rollback) {
+    // a fight polls none of these (a mode change goes back to lockstep first): one that does would answer each
+    // machine's own
+    static int logged = 0;
+    if (logged < 10) {
+      ++logged;
+      REXLOG_WARN("[net] readiness poll {} in a fight with rollback at frame {}: {} (each machine's own)", int(flag),
+                  g.frame - 1, local);
+    }
+    return local;
+  }
   int bit = 0;
   while (bit < 7 && !(flag & (1u << bit))) ++bit;
   if (local) {
@@ -1196,6 +1265,13 @@ bool TakeSessionSeed(uint32_t* seed) {
   g.seed_pending = false;
   *seed = g.seed;
   return true;
+}
+
+int64_t FrameRunning(uint32_t* epoch, bool* again) {
+  if (!g.started || g.ended || g.failed) return -1;
+  if (epoch) *epoch = g.epoch;
+  if (again) *again = g.rollback && g.frame < g.latest;
+  return g.frame - 1;
 }
 
 SessionInfo Info() {
