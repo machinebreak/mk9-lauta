@@ -10,8 +10,9 @@ sa2_renderer = "renut"
 # Internal resolution: "480p", "720p" (the console's), "1080p", "1440p" or "4K". Other options: docs/online/README.md.
 renut_resolution = "720p"
 
-# The game's button prompts: the Xbox controller's ("switch" draws Switch buttons).
-mk9_button_icons = "xbox"
+# The game's button prompts: "auto" (the first controller's kind when the game starts: PlayStation, Switch or Xbox;
+# the keyboard's keys without one), "xbox", "playstation", "switch" or "keyboard". Also in F2 > Controles.
+mk9_button_icons = "auto"
 
 log_level = "info"
 

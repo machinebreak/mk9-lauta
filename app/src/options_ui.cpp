@@ -136,6 +136,15 @@ const std::vector<Option>& DisplayOptions() {
   return options;
 }
 
+// mk9-lauta: the game's button prompts (F2 > Controles).
+const Option kButtonIconsOption = {
+    "mk9_button_icons", "Íconos de los botones",
+    {{"auto", "Automático (según el mando)"}, {"xbox", "Xbox"}, {"playstation", "PlayStation"}, {"switch", "Switch"},
+     {"keyboard", "Teclado"}},
+    "Los botones que muestra el juego en sus menús y en la lista de movimientos. Automático: los del primer mando "
+    "conectado al abrir el juego, o las teclas si no hay ninguno. Se aplica al volver a abrir el juego.",
+    true};
+
 const std::vector<Option>& OnlineOptions() {
   static const std::vector<Option> options = {
       {"mk9_net_rollback_delay", "Retraso de entrada en las peleas",
@@ -558,6 +567,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       DrawKeys();
     }
     ImGui::Separator();
+    DrawOption(kButtonIconsOption);
     bool rumble = rex::cvar::GetFlagByName("input_rumble") == "true";
     if (ImGui::Checkbox("Vibración del mando", &rumble)) {
       Set({{"input_rumble", rumble ? "true" : "false"}}, rumble ? "Vibración activada" : "Vibración desactivada");
@@ -706,6 +716,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         later = true;
       }
       for (const Option& o : DisplayOptions()) later |= o.restart && key == o.key;
+      later |= key == kButtonIconsOption.key;
     }
     note_ok_ = SaveToConfig(values);
     note_ = !note_ok_ ? "No se pudo guardar en mk9.toml"

@@ -6,12 +6,23 @@
 #include <cstring>
 #include <string>
 
+#include <cctype>
+
 #include <rex/cvar.h>
+#include <rex/logging.h>
+
+#if defined(_WIN32)
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_stdinc.h>
+#endif
 
 REXCVAR_DEFINE_STRING(mk9_button_icons, "switch", "MK9",
                       "The game's button prompts: \"switch\" draws Switch buttons in place of the Xbox ones (by "
                       "position with input_xbox_layout: Xbox A shows as B, B as A, X as Y, Y as X, LB/RB as L/R, LT/RT "
-                      "as ZL/ZR, START as +, BACK as -), \"xbox\" keeps the game's own icons");
+                      "as ZL/ZR, START as +, BACK as -), \"xbox\" keeps the game's own icons; mk9-lauta (PC): "
+                      "\"playstation\" (cross, circle, square, triangle, L1/R1/L2/R2), \"keyboard\" (the keys of "
+                      "F2 > Controles) and \"auto\" (the first controller's kind when the game starts, the keyboard "
+                      "without one). The menus take it when they are loaded: at the next start");
 
 namespace mk9::button_icons {
 namespace {
@@ -84,9 +95,27 @@ struct Glyph {
 };
 constexpr Glyph kLetters[] = {
     {'A', {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}}, {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
-    {'X', {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}}, {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}},
-    {'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}}, {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
-    {'Z', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}},
+    {'C', {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}}, {'D', {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E}},
+    {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}}, {'F', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}},
+    {'G', {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F}}, {'H', {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
+    {'I', {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}}, {'J', {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C}},
+    {'K', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}}, {'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}},
+    {'M', {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}}, {'N', {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11}},
+    {'O', {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}}, {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}},
+    {'Q', {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}}, {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
+    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}}, {'T', {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}}, {'V', {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}},
+    {'W', {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0A}}, {'X', {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}},
+    {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}}, {'Z', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}},
+    {'0', {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}}, {'1', {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+    {'2', {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}}, {'3', {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}},
+    {'4', {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}}, {'5', {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
+    {'6', {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}}, {'7', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
+    {'8', {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}}, {'9', {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
+    // N with a tilde (the key right of L on a Spanish keyboard), and the arrows
+    {'\x01', {0x0E, 0x00, 0x11, 0x19, 0x15, 0x13, 0x11}}, {'^', {0x04, 0x0E, 0x15, 0x04, 0x04, 0x04, 0x04}},
+    {'v', {0x04, 0x04, 0x04, 0x04, 0x15, 0x0E, 0x04}}, {'<', {0x00, 0x04, 0x08, 0x1F, 0x08, 0x04, 0x00}},
+    {'>', {0x00, 0x04, 0x02, 0x1F, 0x02, 0x04, 0x00}},
 };
 
 // The atlas as RGBA
@@ -176,6 +205,23 @@ void Key(Canvas &c, const Area &a, const char *text, float cx, float cy, float w
   Fill(c, a, kRing, key(0, 0));
   Fill(c, a, kFill, key(1.6f, 0));
   Label(c, a, text, cx, cy, label);
+}
+
+// mk9-lauta: a keyboard key: a rounded square (4.5 px corners), its top a little above its darker side.
+void KeyCap(Canvas &c, const Area &a, const char *text, float cx, float cy, float w, float h, float label) {
+  auto cap = [=](float inset, float dy, float below) {
+    const float x0 = cx - w / 2 + inset, x1 = cx + w / 2 - inset;
+    const float y0 = cy - h / 2 + inset + dy, y1 = cy + h / 2 - inset + dy + below;
+    const float r = std::max(0.5f, 4.5f - inset);
+    return [=](float x, float y) {
+      const float ax = std::clamp(x, x0 + r, x1 - r), ay = std::clamp(y, y0 + r, y1 - r);
+      return std::hypot(x - ax, y - ay) <= r;
+    };
+  };
+  Fill(c, a, kShadow, cap(-0.5f, 1.5f, 1.0f));
+  Fill(c, a, kRing, cap(0, 0, 1.5f));
+  Fill(c, a, kFill, cap(1.6f, -0.6f, 0));
+  Label(c, a, text, cx, cy - 0.6f, label);
 }
 
 // --- BC3 (DXT5): decoded to the canvas, and the blocks drawn over encoded again (from usf4-nx)
@@ -280,12 +326,134 @@ Area CellArea(const Atlas &atlas, const Cell &cell) {
           std::min(int(atlas.size), int((cell.row + 1) * atlas.pitch) + (atlas.row2_past && cell.row == 2 ? 4 : 0))};
 }
 
-// The cell drawn over: cleared, then the Switch button centred where the Xbox one was.
-void DrawCell(Canvas &c, const Atlas &atlas, const Cell &cell, bool by_position) {
+enum class Style { kXbox, kSwitch, kPlayStation, kKeyboard };
+
+// mk9-lauta: what each cell is on the Xbox pad (its by_letter: A, B, X, Y, L, R, ZL, ZR, + START, - BACK).
+// PlayStation: by position (cross bottom, circle right, square left, triangle top), drawn in their colours.
+constexpr uint8_t kCrossInk[4] = {124, 178, 232, 255};
+constexpr uint8_t kCircleInk[4] = {255, 102, 102, 255};
+constexpr uint8_t kSquareInk[4] = {224, 155, 216, 255};
+constexpr uint8_t kTriangleInk[4] = {64, 224, 176, 255};
+
+void PlayStationFace(Canvas &c, const Area &a, char xbox, float cx, float cy, float r) {
+  Fill(c, a, kShadow, [&](float x, float y) { return std::hypot(x - cx, y - (cy + 1.5f)) <= r + 0.5f; });
+  Fill(c, a, kRing, [&](float x, float y) { return std::hypot(x - cx, y - cy) <= r; });
+  Fill(c, a, kFill, [&](float x, float y) { return std::hypot(x - cx, y - cy) <= r - 1.6f; });
+  const float s = r * 0.52f, t = 1.7f;
+  switch (xbox) {
+    case 'A':  // cross
+      Fill(c, a, kCrossInk, [&](float x, float y) {
+        const float dx = x - cx, dy = y - cy;
+        return std::fabs(dx) <= s && std::fabs(dy) <= s && (std::fabs(dx - dy) <= t || std::fabs(dx + dy) <= t);
+      });
+      break;
+    case 'B':  // circle
+      Fill(c, a, kCircleInk, [&](float x, float y) {
+        const float d = std::hypot(x - cx, y - cy);
+        return d <= s && d >= s - 2 * t + 0.4f;
+      });
+      break;
+    case 'X':  // square
+      Fill(c, a, kSquareInk, [&](float x, float y) {
+        const float dx = std::fabs(x - cx), dy = std::fabs(y - cy), h = s * 0.85f;
+        return dx <= h && dy <= h && (dx >= h - 1.7f || dy >= h - 1.7f);
+      });
+      break;
+    default: {  // triangle (Y)
+      // the outline of a triangle pointing up: inside the outer one, outside the inner one
+      auto inside = [&](float x, float y, float size) {
+        const float top = cy - size * 0.95f, bottom = cy + size * 0.6f;
+        if (y < top || y > bottom) return false;
+        const float half = (y - top) / (bottom - top) * size * 1.1f;
+        return std::fabs(x - cx) <= half;
+      };
+      Fill(c, a, kTriangleInk, [&](float x, float y) { return inside(x, y, s * 1.1f) && !inside(x, y - 0.8f, s * 0.55f); });
+      break;
+    }
+  }
+}
+
+// START (OPTIONS: three bars) and BACK (SHARE: a small pad) of a PlayStation pad.
+void PlayStationSmall(Canvas &c, const Area &a, bool start, float cx, float cy, float r) {
+  Fill(c, a, kShadow, [&](float x, float y) { return std::hypot(x - cx, y - (cy + 1.5f)) <= r + 0.5f; });
+  Fill(c, a, kRing, [&](float x, float y) { return std::hypot(x - cx, y - cy) <= r; });
+  Fill(c, a, kFill, [&](float x, float y) { return std::hypot(x - cx, y - cy) <= r - 1.6f; });
+  if (start) {
+    Fill(c, a, kInk, [&](float x, float y) {
+      const float dy = y - cy;
+      return std::fabs(x - cx) <= r * 0.5f &&
+             (std::fabs(dy) <= 0.9f || std::fabs(dy - r * 0.38f) <= 0.9f || std::fabs(dy + r * 0.38f) <= 0.9f);
+    });
+  } else {
+    Fill(c, a, kInk, [&](float x, float y) {
+      const float dx = std::fabs(x - cx), dy = std::fabs(y - cy), w = r * 0.55f, h = r * 0.35f;
+      return dx <= w && dy <= h && (dx >= w - 1.4f || dy >= h - 1.4f);
+    });
+  }
+}
+
+// The keyboard: the first key bound to that button (F2 > Controles), as a short label.
+std::string KeyLabel(const char *xbox) {
+  const char *cvar = !std::strcmp(xbox, "A")    ? "keybind_a"
+                     : !std::strcmp(xbox, "B")  ? "keybind_b"
+                     : !std::strcmp(xbox, "X")  ? "keybind_x"
+                     : !std::strcmp(xbox, "Y")  ? "keybind_y"
+                     : !std::strcmp(xbox, "L")  ? "keybind_left_shoulder"
+                     : !std::strcmp(xbox, "R")  ? "keybind_right_shoulder"
+                     : !std::strcmp(xbox, "ZL") ? "keybind_left_trigger"
+                     : !std::strcmp(xbox, "ZR") ? "keybind_right_trigger"
+                     : !std::strcmp(xbox, "+")  ? "keybind_start"
+                                                : "keybind_back";
+  std::string key = rex::cvar::GetFlagByName(cvar);
+  key = key.substr(0, key.find(','));
+  if (key.empty()) return "";
+  if (key.size() == 1) return std::string(1, char(std::toupper(static_cast<unsigned char>(key[0]))));
+  struct Name {
+    const char *name, *label;
+  };
+  static const Name kNames[] = {
+      {"Semicolon", "\x01"}, {"Return", "ENT"}, {"Enter", "ENT"}, {"Escape", "ESC"}, {"Space", "ESP"},
+      {"Backspace", "<"},    {"Tab", "TAB"},   {"Up", "^"},      {"Down", "v"},     {"Left", "<"},
+      {"Right", ">"},        {"LShift", "SHF"}, {"RShift", "SHF"}, {"LCtrl", "CTL"}, {"RCtrl", "CTL"},
+      {"LAlt", "ALT"},       {"RAlt", "ALT"},
+  };
+  for (const Name &n : kNames) {
+    if (key == n.name) return n.label;
+  }
+  std::string label;
+  for (char ch : key) {
+    if (std::isalnum(static_cast<unsigned char>(ch)) && label.size() < 3) label += char(std::toupper(ch));
+  }
+  return label;
+}
+
+// The cell drawn over: cleared, then the button of the style centred where the Xbox one was.
+void DrawCell(Canvas &c, const Atlas &atlas, const Cell &cell, bool by_position, Style style) {
   const Area a = CellArea(atlas, cell);
   for (int y = a.y0; y < a.y1; ++y) std::memset(c.px + (size_t(y) * c.size + a.x0) * 4, 0, size_t(a.x1 - a.x0) * 4);
-  const char *text = by_position ? cell.by_position : cell.by_letter;
   const float cx = cell.col * atlas.pitch + atlas.centre, cy = cell.row * atlas.pitch + atlas.centre;
+  const char *xbox = cell.by_letter;
+  if (style == Style::kPlayStation) {
+    switch (cell.kind) {
+      case Kind::Face: PlayStationFace(c, a, xbox[0], cx, cy, 14.5f); break;
+      case Kind::Small: PlayStationSmall(c, a, xbox[0] == '+', cx, cy, 11.5f); break;
+      case Kind::Shoulder: Key(c, a, xbox[0] == 'L' ? "L1" : "R1", cx, cy, 29.0f, 19.0f, 11.0f); break;
+      case Kind::Trigger: Key(c, a, !std::strcmp(xbox, "ZL") ? "L2" : "R2", cx, cy, 30.0f, 19.0f, 11.0f); break;
+    }
+    return;
+  }
+  if (style == Style::kKeyboard) {
+    const std::string label = KeyLabel(xbox);
+    const float height = label.size() <= 1 ? 12.0f : label.size() == 2 ? 9.0f : 7.0f;
+    switch (cell.kind) {
+      case Kind::Face: KeyCap(c, a, label.c_str(), cx, cy, 26.0f, 24.0f, height); break;
+      case Kind::Small: KeyCap(c, a, label.c_str(), cx, cy, 24.0f, 19.0f, std::min(height, 9.0f)); break;
+      case Kind::Shoulder:
+      case Kind::Trigger: KeyCap(c, a, label.c_str(), cx, cy, 30.0f, 19.0f, std::min(height, 10.0f)); break;
+    }
+    return;
+  }
+  const char *text = by_position ? cell.by_position : cell.by_letter;
   switch (cell.kind) {
     case Kind::Face: Round(c, a, text, cx, cy, 14.5f, 15.0f); break;
     case Kind::Small: Round(c, a, text, cx, cy, 11.5f, 13.0f); break;
@@ -294,10 +462,45 @@ void DrawCell(Canvas &c, const Atlas &atlas, const Cell &cell, bool by_position)
   }
 }
 
-bool SwitchIconsOn() {
-  static const bool on = REXCVAR_GET(mk9_button_icons) != "xbox";
-  return on;
+// The style, decided once (the first atlas): "auto" by the first controller connected (SDL's kind of it), the
+// keyboard without one.
+Style ChosenStyle() {
+  static const Style style = [] {
+    const std::string value = REXCVAR_GET(mk9_button_icons);
+    if (value == "xbox") return Style::kXbox;
+    if (value == "playstation") return Style::kPlayStation;
+    if (value == "keyboard") return Style::kKeyboard;
+    if (value != "auto") return Style::kSwitch;
+#if defined(_WIN32)
+    int count = 0;
+    SDL_JoystickID *pads = SDL_GetGamepads(&count);
+    Style found = Style::kKeyboard;
+    if (pads && count > 0) {
+      switch (SDL_GetGamepadTypeForID(pads[0])) {
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5: found = Style::kPlayStation; break;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: found = Style::kSwitch; break;
+        default: found = Style::kXbox; break;
+      }
+    }
+    const char *name = pads && count > 0 ? SDL_GetGamepadNameForID(pads[0]) : nullptr;
+    if (pads) SDL_free(pads);
+    static const char *const kNames[] = {"Xbox", "Switch", "PlayStation", "keyboard"};
+    REXLOG_INFO("[icons] mk9_button_icons auto: {} ({})", kNames[int(found)],
+                count > 0 ? (name ? name : "a controller") : "no controller");
+    return found;
+#else
+    return Style::kSwitch;
+#endif
+  }();
+  return style;
 }
+
+bool SwitchIconsOn() { return ChosenStyle() != Style::kXbox; }
 
 }  // namespace
 
@@ -330,7 +533,7 @@ bool Paint(uint8_t *data, uint32_t width, uint32_t height, uint32_t row_pitch) {
   std::memset(touched, 0, sizeof(touched));
   for (int i = 0; i < atlas->count; ++i) {
     const Cell &cell = atlas->cells[i];
-    DrawCell(c, *atlas, cell, by_position);
+    DrawCell(c, *atlas, cell, by_position, ChosenStyle());
     const Area a = CellArea(*atlas, cell);
     for (uint32_t by = uint32_t(a.y0) / 4; by <= std::min(blocks - 1, uint32_t(a.y1 - 1) / 4); ++by)
       for (uint32_t bx = uint32_t(a.x0) / 4; bx <= std::min(blocks - 1, uint32_t(a.x1 - 1) / 4); ++bx)

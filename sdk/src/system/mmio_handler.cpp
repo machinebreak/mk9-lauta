@@ -49,6 +49,10 @@ std::string DescribeHostCode(uint64_t pc) {
 
 using namespace rex::arch;
 
+namespace rex::memory {
+bool QuietGuestFaults() noexcept;  // xmemory.cpp
+}  // namespace rex::memory
+
 namespace rex::runtime {
 
 MMIOHandler* MMIOHandler::global_handler_ = nullptr;
@@ -445,7 +449,7 @@ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
     if (access_violation_callback_) {
       const bool handled = access_violation_callback_(
           std::move(lock), access_violation_callback_context_, fault_host_address, is_write);
-      if (!handled) {
+      if (!handled && !rex::memory::QuietGuestFaults()) {
         REXLOG_ERROR("Unhandled guest access violation at host PC {:p}{}",
                      reinterpret_cast<const void*>(ex->pc()), DescribeHostCode(ex->pc()));
         rex::NotifyGuestCrash();

@@ -679,6 +679,17 @@ void DumpGuestCrashContext(uint8_t* virtual_membase) {
 }  // namespace
 #endif
 
+namespace {
+// mk9-nx (2026-11-09): host code that reads guest memory which may be gone by the time it reads (the renderer's
+// deferred vertex reads: a draw of a buffer the game no longer has) marks the read; a fault inside it is the reader's
+// to take (its __except), not the guest's crash: not logged, no crash hook.
+thread_local int g_quiet_guest_faults = 0;
+}  // namespace
+
+void BeginQuietGuestFaults() noexcept { ++g_quiet_guest_faults; }
+void EndQuietGuestFaults() noexcept { --g_quiet_guest_faults; }
+bool QuietGuestFaults() noexcept { return g_quiet_guest_faults > 0; }
+
 bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> global_lock_locked_once,
                                      void* host_address, bool is_write) {
   // Access via physical_membase_ is special, when need to bypass everything
@@ -691,6 +702,7 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
   uint32_t virtual_address = HostToGuestVirtual(host_address);
   BaseHeap* heap = LookupHeap(virtual_address);
   if (!heap || heap->heap_type() != memory::HeapType::kGuestPhysical) {
+    if (QuietGuestFaults()) return false;  // the reader's (BeginQuietGuestFaults)
     REXSYS_ERROR(
         "Unhandled guest access violation: {} of guest 0x{:08X} (host 0x{:016X}) on thread 0x{:X}",
         is_write ? "write" : "read", virtual_address, reinterpret_cast<uintptr_t>(host_address),

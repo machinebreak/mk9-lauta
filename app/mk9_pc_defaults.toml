@@ -52,3 +52,6 @@ keybind_rstick_right = ""
 bind_console = ""
 bind_settings = ""
 bind_sa2_docked = ""
+
+# --- The game's button prompts: the first controller's kind (PlayStation, Switch, Xbox), the keyboard without one
+mk9_button_icons = "auto"
