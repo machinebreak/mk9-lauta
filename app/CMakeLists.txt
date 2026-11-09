@@ -12,6 +12,8 @@ cmake_minimum_required(VERSION 3.25)
 project(mk9 VERSION 1.0.4 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
+# mk9-lauta: the PC port's own version (the window's title, the release's zip); MK9_VERSION stays mk9-nx's
+set(MK9_LAUTA_VERSION "0.1.0")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -262,7 +264,7 @@ if(NOT REXGLUE_PLATFORM_SWITCH)  # the Switch writes its mk9.toml itself (Defaul
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/mk9_builtin_config.h.in"
                    "${CMAKE_CURRENT_BINARY_DIR}/builtin_config/mk9_builtin_config.h" @ONLY)
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/builtin_config")
-    target_compile_definitions(mk9 PRIVATE MK9_BUILTIN_CONFIG=1)
+    target_compile_definitions(mk9 PRIVATE MK9_BUILTIN_CONFIG=1 MK9_LAUTA_VERSION="${MK9_LAUTA_VERSION}")
 endif()
 
 # The SDK compiles itself with these (directory scope), but they do not reach the generated game code, which is

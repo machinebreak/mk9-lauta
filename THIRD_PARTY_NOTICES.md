@@ -1,13 +1,16 @@
 # Third-party notices
 
-This port is built on the work of other projects. Their licenses apply to their code and to the parts of this
-repository derived from it. New code written for this port is copyright (c) 2026 Thorhax and is under the
-license of the folder it is in (see below).
+mk9-lauta (the native PC port with online play, by machinebreake) is built on [mk9-nx](https://github.com/Thorhax/mk9-nx)
+by Thorhax and on the work of the projects below. Their licenses apply to their code and to the parts of this
+repository derived from it. The code mk9-nx added is copyright (c) 2026 Thorhax; the code mk9-lauta added (the online
+play in `app/src/online`, the PC installer, the options and controls windows, the low-end PC settings, the release
+tools) is copyright (c) 2026 machinebreake. Both are under the license of the folder they are in (see below).
 
 ## Projects this port is derived from
 
 | Project | Used for | License |
 |---|---|---|
+| [mk9-nx](https://github.com/Thorhax/mk9-nx) by Thorhax | The port mk9-lauta was made from (2026-11): its whole tree, the static recompilation of Mortal Kombat Komplete Edition with Renut's renderer, which mk9-lauta turned into a native PC game with online play (rollback netcode, lobby, rooms and chat), a first-start installer and PC settings | GPL-3.0 |
 | [usf4-nx](https://github.com/Thorhax/usf4-nx) by Thorhax | The port this one was made from (2026-10-20): `app/`, `tools/`, `shaders/` and `sdk/` were copied from it and adapted to Mortal Kombat Komplete Edition, with its Renut renderer on deko3d, the Thorhax intro (`app/thorhax_intro`) and the Switch button icons' method; its installer page, [usf4-nx-installer](https://github.com/Thorhax/usf4-nx-installer), is the base of mk9-nx-installer | GPL-3.0 |
 | [sa2-nx](https://github.com/ChanseyIsTheBest/sa2-nx) by ChanseyIsTheBest | The port usf4-nx was made from, by its method (`docs/porting-a-360-game-prompt.md` there): `app/`, `tools/`, `shaders/` and `sdk/` were copied from it and adapted to USF4, then to MK9 (the `sa2_*` names they kept are from there); its installer page, [sa2-nx-installer](https://github.com/ChanseyIsTheBest/sa2-nx-installer), is the base of usf4-nx-installer and so of mk9-nx-installer | GPL-3.0 |
 | [masseffect-nx](https://github.com/nebadasSwifty/masseffect-nx) by NebadasSwifty | The tree this port started from: the native renderer (`app/src/me`), the structure of `app/`, the shader library tools (`shaders/tools`), the CPU enhancement framework and many scripts in `tools/` | GPL-3.0 |
@@ -23,6 +26,7 @@ license of the folder it is in (see below).
 | [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) (reblue fork, with reNut's, banjo-nx's and this port's changes) | `app/thirdparty/reblue-XenosRecomp`: the translator Renut's shader table is built with (a build tool, and the installer page's `renut_hlsl` module; DXC, zstd, smol-v and xxHash ship with it) | MIT (`app/thirdparty/reblue-XenosRecomp/LICENSE.md`) and the licenses of its `thirdparty/` |
 | [uam](https://github.com/devkitPro/uam) by fincs, with SwitchWakerHD's and banjo-nx's patches (`app/thirdparty/uam/PATCHES.md`) | `app/thirdparty/uam`: the deko3d shader compiler (Mesa's nouveau code generator), in the NRO and as a PC tool | zlib (uam), MIT (Mesa's files), MPL-2.0 (SwitchWakerHD's patches) |
 | [deko3d](https://github.com/devkitPro/deko3d) by fincs | The Switch's graphics API library the NRO's renderer uses (devkitPro's package) | zlib |
+| [libjuice](https://github.com/paullouisageneau/libjuice) 1.7.4 by Paul-Louis Ageneau | `app/thirdparty/libjuice`: ICE (STUN and TURN), the two players' direct UDP path for the online play, built into the PC executable | MPL-2.0 (`app/thirdparty/libjuice/LICENSE`) |
 
 The Horizon (Switch) layer added to `sdk/` is under the SDK's BSD-3-Clause license, and the changes in `shaders/`
 under XenosRecomp's MIT license, so they can be reused by other ports. The rest of this repository (`app/`, `tools/`,
@@ -68,8 +72,11 @@ submodules into `sdk/thirdparty`.
 | [libnx](https://github.com/switchbrew/libnx) and the devkitA64 runtime (newlib, libstdc++) | ISC; newlib and GCC runtime licenses |
 | zlib, Zstandard and Expat, from devkitPro's Switch portlibs (linked for Mesa) | zlib License; BSD-3-Clause; MIT |
 
-Only for builds on a computer or for the tests, never in the Switch NRO: SDL3 (zlib), MoltenVK and the Vulkan loader
-(Apache-2.0), Catch2 (BSL-1.0).
+On the PC: [SDL3](https://www.libsdl.org) (zlib License; controllers, keyboard and the window) and the community
+controller mappings of [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) (`gamecontrollerdb.txt`,
+zlib License), shipped with the PC release; for builds on a computer or for the tests only: MoltenVK and the Vulkan
+loader (Apache-2.0), Catch2 (BSL-1.0). The PC release also carries Microsoft's Visual C++ runtime DLLs, redistributed
+under the Visual Studio license terms.
 
 ### FFmpeg and libmspack (LGPL)
 

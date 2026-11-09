@@ -1,85 +1,96 @@
-<p align="center"><img src="app/icon.jpg" width="128" alt="mk9-nx icon"></p>
+<p align="center"><img src="app/icon.jpg" width="128" alt="mk9-lauta"></p>
 
-# mk9-nx
+# mk9-lauta
 
-A static recompilation of **Mortal Kombat Komplete Edition** (Xbox 360, title 575207FD) for PC and Nintendo Switch,
-made with the ReXGlue SDK. It is built on [usf4-nx](https://github.com/Thorhax/usf4-nx) (Ultra Street Fighter IV),
-which follows the method of [sa2-nx](https://github.com/ChanseyIsTheBest/sa2-nx)
-(`docs/porting-a-360-game-prompt.md`).
+**Mortal Kombat Komplete Edition nativo en PC, con online con rollback.**
 
-**This repository holds no game data.** You need your own copy of the game: the Xbox 360 disc, dumped to a plain
-`.iso`. The game files and the shaders made from them are never committed or published; the installer makes them from
-your own disc.
+*English: a native Windows port of Mortal Kombat Komplete Edition (Xbox 360, title 575207FD), made from the
+[mk9-nx](https://github.com/Thorhax/mk9-nx) static recompilation, with online play (rollback netcode, a lobby with
+rooms and chat), a first-start installer that takes your own game disc image, and settings for low-end PCs. No game
+files are included: you need your own copy of the game.*
 
-## Status
+mk9-lauta es el juego de Xbox 360 recompilado a un ejecutable de Windows: no es un emulador. Está hecho sobre
+[mk9-nx](https://github.com/Thorhax/mk9-nx) de Thorhax (la recompilación estática con el renderer Renut) y le suma el
+online, el instalador, las opciones y los controles de PC.
 
-- **Switch (Atmosphère, homebrew NRO):** the game draws with Renut's renderer on deko3d, the Switch's own graphics
-  API (reNut by masterspike52, used with the author's permission, as banjo-nx, sa2-nx and usf4-nx carry it), at
-  1280x720. Fights hold 60 fps on most stages (the heaviest, Hell, about 59), measured on a console with the CPU at
-  1785 MHz, the GPU at 768 MHz and the memory at 1800 MHz. Arcade and Tag Ladder, Practice, Challenge Tower, the
-  Krypt and Story mode's opening cutscene were played on the console. The menus, the move list and the
-  controller settings show Switch buttons (`mk9_button_icons` in `mk9.toml`: `"switch"` or `"xbox"`).
-- **PC:** the development build; not released.
+**Este repositorio no tiene ningún archivo del juego.** Hace falta una copia propia del juego original de Xbox 360,
+como imagen `.iso` del disco.
 
-Every finding and measurement: [docs/mk9-notes.md](docs/mk9-notes.md).
+## Qué trae
 
-## How to install (Switch)
+- **Online con rollback** (F1): lobby con nombre de usuario, partida rápida, salas públicas y privadas con código,
+  chat de la sala y chat global. Las peleas usan rollback (si la conexión tiene un salto, el juego se corrige solo
+  sin frenar) y los menús van sincronizados. Conexión directa entre las dos PCs, y por un servidor de relevo cuando
+  el router no la deja.
+- **Instalador**: la primera vez elegís la ISO del juego (o la carpeta donde ya está extraído) y se verifica y copia
+  solo.
+- **Opciones** (F2): calidad gráfica (Muy baja, Baja, Consola, Alta, Ultra), resolución de 480p a 4K, sombras,
+  oclusión ambiental, filtrado de texturas, antialiasing, pantalla completa, contador de FPS, DirectX 12 o Vulkan,
+  idioma del juego (español con el Modo Historia doblado, inglés, portugués, francés, alemán, italiano).
+- **PCs bajas**: la primera vez el juego elige la calidad según tu placa de video y tu memoria. En "Muy baja", si la
+  PC no llega a 60 cuadros, dibuja uno de cada dos y el juego sigue a su velocidad. Con 4 a 6 GB de RAM se activa solo
+  el ahorro de memoria.
+- **Controles**: mandos de Xbox, PlayStation y Switch Pro, con vibración, y el teclado listo para pelear, con cada
+  tecla cambiable.
 
-1. Open the installer page: **https://thorhax.github.io/mk9-nx-installer/**
-2. Choose your game's disc image (a plain `.iso` of the Xbox 360 disc, not a compressed CCI/GOD/ZAR image) or a folder
-   you extracted the disc into, then press **Create mk9-nx.zip**. Everything runs in your browser and your game files
-   never leave your computer: the page checks your copy, downloads the Switch build from this repository's releases,
-   and makes the shaders and the game folder from your files. Making the shaders (19,010 of them, on all the
-   computer's cores, then 5,841 of their variants compiled for the Switch) takes about 12 minutes on a PC with 8
-   cores; keep the tab open.
-3. Extract the downloaded `mk9-nx.zip` (about 7 GB) into `sdmc:/switch/`.
+## Requisitos
 
-Your `mk9-nx` folder then holds `mk9-nx.nro`, `LICENSES.txt`, the renderer's shaders (`deko3d_glsl.bin`, made from
-your disc, and `deko3d_shaders.bin`, the same compiled for the Switch), the list of the pipelines the game builds at
-start (`pipeline_list.bin`) and the game files in `game_root/`. The Homebrew Menu shows the folder as the game, with its icon (an NRO
-named after its folder). Start it with a title takeover (hold **R** while launching an installed game) or a forwarder
-with full memory; the album applet does not give the game enough memory. The game writes `mk9.toml` (your settings) at
-its first start.
+- Windows 10 u 11 de 64 bits.
+- Una placa de video compatible con DirectX 12 o Vulkan (también sirven las integradas).
+- 4 GB de RAM o más.
+- ~8 GB libres en el disco.
+- Tu copia de **Mortal Kombat Komplete Edition** de Xbox 360 como imagen `.iso` del disco (la versión europea: inglés,
+  francés, alemán, español, italiano, portugués). No sirven las imágenes comprimidas (CCI, GOD, ZAR).
 
-**Shaders:** since 1.0.4 the zip has the shaders already compiled for the Switch (every one the project has seen in
-its play tests), so the game does not stop to compile them while you play. A rare one it does not have is compiled the
-first time it is drawn (a short pause) and kept on the SD card for the next sessions.
+## Instalación
 
-**Language:** the game is in English unless you choose another of its languages. Add a line to `mk9.toml` (in
-`sdmc:/switch/mk9-nx/`, written at the first start), for example `user_language = 5` for Spanish, and start the game
-again. The numbers are the Xbox 360's language IDs; the disc has text for these six:
+1. Bajá el `.zip` de la última versión en [Releases](../../releases) y descomprimilo donde quieras, en un disco con
+   ~8 GB libres (no adentro de "Archivos de programa").
+2. Abrí `mk9.exe`. La primera vez se abre el instalador: elegí tu `.iso` (o la carpeta del juego, la que tiene
+   `default.xex`). Se revisa que sea la versión correcta y se copian los archivos del juego a `game_root`. Es una sola
+   vez: después arranca directo.
+   - Si Windows muestra "Windows protegió tu PC" (el programa no tiene firma digital): "Más información" y "Ejecutar
+     de todas formas".
+   - La primera vez que entrás al online, Windows pregunta si dejás que el juego use la red: "Permitir" (redes
+     privadas y públicas).
+3. La primera vez tarda un poco más en arrancar mientras prepara los gráficos de tu placa de video.
 
-| `user_language` | Language |
-| --- | --- |
-| 1 | English (the default) |
-| 3 | German |
-| 4 | French |
-| 5 | Spanish |
-| 6 | Italian |
-| 9 | Portuguese |
+## Jugar online
 
-**At every start** the game checks the size of its files (and, after a crash, the bytes of the files it was reading):
-a missing or damaged one is named in an error dialog. Make the disc image again if it says so.
+**F1** abre el online. La primera vez te pide un nombre. Para pelear con un amigo, uno toca **Crear sala privada** y
+le pasa el código de 6 letras; el otro lo pone en **Unirse con código**. Cuando los dos tocan **Estoy listo**, el juego
+se vuelve a abrir solo, ya conectado. En el menú del juego, VERSUS: uno elige el modo y el otro se suma con START.
 
-**Updating:** open the installer page again and press **Create mk9-nx-update.zip**: it only holds the new NRO and the
-shaders. Extract it over your folder; your settings, saves and game files stay. The game is `mk9-nx.nro` since 1.0.3;
-an older `mk9.nro` left in the folder (1.0.2 or earlier) is replaced by the new game when it starts (1.0.4 on), so a
-forwarder made for it keeps working.
+Todo el detalle (salas, controles, opciones y qué hacer si algo falla): **[guía para jugadores](docs/online/guia-jugadores.md)**.
 
-## Building
+## Si algo falla
 
-See [docs/building.md](docs/building.md): the PC build, and the Switch build in the `devkitpro/devkita64` Docker image
-(a release build: `-DSA2_RENUT_RELEASE_SHADERS=ON`, no game shader in the NRO). The disc goes in `assets/game_root`
-(the executable is `default.xex`, lower case); the decrypted image for the analysis tools comes from
-`python3 tools/xex_image.py assets/game_root/default.xex out/default_image.bin`.
+- La carpeta `logs` (junto a `mk9.exe`) tiene lo que pasó: el último `mk9_*.log` y, si el juego se cerró de golpe, el
+  `crash_*.dmp` de la misma hora. Abrí un [issue](../../issues) con eso.
+- El juego anda lento: F2 > Gráficos > Calidad "Baja" o "Muy baja", y "Mostrar FPS" para ver cómo va.
+- Se ve mal o no arranca el video: F2 > Pantalla > API gráfica: probá con la otra (Vulkan o DirectX 12).
 
-## Icon
+## Compilar
 
-`app/icon.jpg` is the project's own icon. To use your own on your Switch build, put a 256x256 JPEG at
-`app/icon_local.jpg` (git-ignored) and rebuild.
+[docs/building.md](docs/building.md). El diseño del online: [docs/online](docs/online/README.md).
 
-## License
+## Créditos
 
-GPL-3.0, see [LICENSE](LICENSE). Third-party components: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Mortal
-Kombat is a trademark of Warner Bros. Entertainment; this project is not affiliated with or endorsed by Warner Bros.
-or NetherRealm Studios.
+mk9-lauta existe gracias a [mk9-nx](https://github.com/Thorhax/mk9-nx) de **Thorhax** y a todo lo que mk9-nx usa:
+[usf4-nx](https://github.com/Thorhax/usf4-nx), [sa2-nx](https://github.com/ChanseyIsTheBest/sa2-nx) de
+ChanseyIsTheBest, [masseffect-nx](https://github.com/nebadasSwifty/masseffect-nx) de NebadasSwifty,
+[nfsmw-nx](https://github.com/StevensND/nfsmw-nx) de StevensND, el [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk)
+de Tom Clay (con partes de [Xenia](https://xenia.jp)), el renderer [reNut](https://github.com/masterspike52/reNut) de
+masterspike52 (con su permiso, como lo usan banjo-nx, sa2-nx y usf4-nx), [plume](https://github.com/renderbag/plume),
+[XenosRecomp](https://github.com/hedge-dev/XenosRecomp), [libjuice](https://github.com/paullouisageneau/libjuice),
+[SDL](https://www.libsdl.org), [FFmpeg](https://ffmpeg.org), [Dear ImGui](https://github.com/ocornut/imgui) y más:
+la lista completa con sus licencias está en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Licencia
+
+GPL-3.0, ver [LICENSE](LICENSE). Los componentes de terceros tienen sus propias licencias
+([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+Proyecto de fans, gratuito y sin fines de lucro. Mortal Kombat es una marca de Warner Bros. Entertainment; este
+proyecto no está afiliado ni respaldado por Warner Bros. Games, NetherRealm Studios ni Microsoft, y no incluye ningún
+archivo del juego.

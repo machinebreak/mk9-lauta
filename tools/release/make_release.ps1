@@ -1,7 +1,11 @@
-﻿# The PC release's folder, ready to zip: the game's executable and what it needs to run on a PC that has nothing
-# installed, the players' guide and the licences. No game files: each player copies the game_root of their own copy.
+﻿# mk9-lauta's PC release folder, ready to zip: the game's executable and what it needs to run on a PC that has nothing
+# installed, the players' guide and the licences. No game files: the first start's installer makes game_root from the
+# player's own disc image (app/src/mk9_installer.h).
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\release\make_release.ps1 [-Out out\release\mk9pc] [-Zip]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\release\make_release.ps1 [-Out out\release\mk9-lauta] [-Zip]
+#
+# The version is app/CMakeLists.txt's MK9_LAUTA_VERSION; -Zip writes mk9-lauta-v<version>-windows-x64.zip beside the
+# folder.
 #
 # What goes in:
 #   mk9.exe, rexruntimerd.dll, rexgpu-xenosrd.dll       the build (out\pc)
@@ -12,15 +16,19 @@
 #   msvcp140*.dll, vcruntime140*.dll                    Visual C++'s runtime beside the executable (Microsoft lets it
 #                                                       be deployed so): no installer needed
 #   LEEME.txt, AVISO.txt, licencias\                    the guide (docs\online\guia-jugadores.md), the notice, every
-#                                                       licence of the code in the executable
+#                                                       licence of the code in the executable and the third-party
+#                                                       notices
 #   (no game_root: the first start's installer makes it from the player's .iso, mk9_installer.h)
 # Nothing is published or uploaded: the folder (and the zip with -Zip) stays on this PC.
 param(
-    [string]$Out = 'out\release\mk9pc',
+    [string]$Out = 'out\release\mk9-lauta',
     [switch]$Zip
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$version = ([regex]::Match((Get-Content -Raw (Join-Path $root 'app\CMakeLists.txt')),
+    'set\(MK9_LAUTA_VERSION "([^"]+)"\)')).Groups[1].Value
+if (-not $version) { throw 'MK9_LAUTA_VERSION not found in app\CMakeLists.txt' }
 $pc = Join-Path $root 'out\pc'
 $dst = if ([IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $root $Out }
 
@@ -70,6 +78,9 @@ foreach ($f in 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_ato
 # --- the guide, the notice, the game files' place ---
 $guide = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'docs\online\guia-jugadores.md')
 $install = @"
+mk9-lauta v$version: Mortal Kombat Komplete Edition para PC, con online con rollback
+https://github.com/machinebreake/mk9-lauta
+
 INSTALACIÓN
 ===========
 
@@ -84,8 +95,9 @@ INSTALACIÓN
      (marcá redes privadas y públicas). Sin eso no se puede conectar con el rival.
 3. La primera vez tarda un poco más en arrancar: prepara los gráficos de tu placa de video.
 
-Requisitos: Windows 10 u 11 de 64 bits, una placa de video con DirectX 12 o Vulkan (casi todas desde 2013) y 4 GB de
-RAM o más. Para PCs con poca placa de video: F2 > Gráficos > Calidad "Baja".
+Requisitos: Windows 10 u 11 de 64 bits, una placa de video compatible con DirectX 12 o Vulkan (también sirven las
+integradas) y 4 GB de RAM o más. La primera vez el juego elige la calidad según tu PC; se cambia en F2 > Gráficos
+(para PCs con poca placa de video: "Baja" o "Muy baja").
 
 Si algo falla, la carpeta logs tiene lo que pasó: mandá el último archivo mk9_*.log (y, si el juego se cerró de
 golpe, el crash_*.dmp de la misma hora).
@@ -103,8 +115,9 @@ respaldado por Warner Bros. Games, NetherRealm Studios, Microsoft ni ningún otr
 original. No incluye ningún archivo del juego: hace falta una copia propia y legítima del juego original de Xbox 360.
 Todas las marcas pertenecen a sus dueños.
 
-El código de este programa se distribuye bajo la licencia GNU GPL versión 3 (licencias\mk9-nx GPL-3.0.txt); las
-bibliotecas de terceros, bajo las suyas (carpeta licencias).
+El código de este programa se distribuye bajo la licencia GNU GPL versión 3 (licencias\mk9-lauta GPL-3.0.txt); las
+bibliotecas de terceros, bajo las suyas (carpeta licencias, y los créditos en licencias\THIRD_PARTY_NOTICES.md).
+El código fuente: https://github.com/machinebreake/mk9-lauta
 "@
 [IO.File]::WriteAllText((Join-Path $dst 'AVISO.txt'), $notice.Replace("`r`n", "`n").Replace("`n", "`r`n"),
     [Text.UTF8Encoding]::new($true))
@@ -112,7 +125,8 @@ bibliotecas de terceros, bajo las suyas (carpeta licencias).
 
 # --- licences: this project's, the SDK's, every third-party component's, the controller database's, Visual C++'s ---
 $lic = Join-Path $dst 'licencias'
-Copy-Item (Join-Path $root 'LICENSE') (Join-Path $lic 'mk9-nx GPL-3.0.txt')
+Copy-Item (Join-Path $root 'LICENSE') (Join-Path $lic 'mk9-lauta GPL-3.0.txt')
+Copy-Item (Join-Path $root 'THIRD_PARTY_NOTICES.md') (Join-Path $lic 'THIRD_PARTY_NOTICES.md')
 Copy-Item (Join-Path $root 'sdk\LICENSE') (Join-Path $lic 'ReXGlue SDK.txt')
 Copy-Item (Join-Path $root 'app\gamecontrollerdb.LICENSE.txt') (Join-Path $lic 'SDL_GameControllerDB.txt')
 foreach ($dir in (Get-ChildItem (Join-Path $root 'app\thirdparty') -Directory) + (Get-ChildItem (Join-Path $root 'sdk\thirdparty') -Directory)) {
@@ -127,7 +141,7 @@ foreach ($dir in (Get-ChildItem (Join-Path $root 'app\thirdparty') -Directory) +
 $size = (Get-ChildItem $dst -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 '{0}: {1} files, {2:n1} MB' -f $dst, (Get-ChildItem $dst -Recurse -File).Count, $size
 if ($Zip) {
-    $zipPath = "$dst.zip"
+    $zipPath = Join-Path (Split-Path $dst -Parent) "mk9-lauta-v$version-windows-x64.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath }
     Compress-Archive -Path (Join-Path $dst '*') -DestinationPath $zipPath -CompressionLevel Optimal
     '{0}: {1:n1} MB' -f $zipPath, ((Get-Item $zipPath).Length / 1MB)

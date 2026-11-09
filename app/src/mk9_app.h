@@ -188,6 +188,11 @@ class Mk9App : public rex::ReXApp {
   void OnPostSetup() override {
     // The options' key capture, ahead of the game's keyboard (mk9_controls.h), on the window's thread.
     app_context().CallInUIThreadDeferred([this] { mk9::controls::AttachWindow(window()); });
+#if defined(MK9_LAUTA_VERSION)
+    // mk9-lauta: the window's title names the port and its version (the SDK's names the build)
+    app_context().CallInUIThreadDeferred(
+        [this] { window()->SetTitle("mk9-lauta " MK9_LAUTA_VERSION " - Mortal Kombat Komplete Edition"); });
+#endif
     mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
     // mk9-nx online (2026-11-07): the PC sampling profiler and stack dumper (sa2_cpu_profile_from_s, sa2_stack_dump_s)
     // were built but never started.

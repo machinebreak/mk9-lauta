@@ -40,7 +40,8 @@ En la pestaña **Chat global** se habla con todos los que están en línea.
 ## Controles
 
 Se juega con mando o con teclado. Los mandos de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero que
-se conecta es el Jugador 1 y el segundo el Jugador 2.
+se conecta es el Jugador 1 y el segundo el Jugador 2. Los mandos vibran como en la consola; la vibración se apaga en
+**F2 > Controles**.
 
 El teclado ya viene listo para pelear:
 
@@ -65,9 +66,27 @@ Qué golpe hace cada botón se cambia en el menú del juego, **OPCIONES > MANDO*
 
 ## Opciones (F2)
 
-- **Calidad**: Baja (480p, para PCs con poca placa de video), Consola (720p, como en la Xbox 360), Alta (1080p) y Ultra
-  (1440p). Cada opción se puede ajustar sola; los cambios se aplican al momento y quedan guardados.
-- **Pantalla e idioma**: pantalla completa o ventana (también con **F11** o **Alt+Enter** en cualquier momento) y el
-  idioma del juego: español (con el Modo Historia doblado), inglés, portugués, francés, alemán o italiano. El idioma se
-  aplica al volver a abrir el juego.
+- **Calidad**: un preset para todo de una vez. **Muy baja** (480p y, si la PC no llega a 60, se dibuja uno de cada dos
+  cuadros), **Baja** (480p, para PCs con poca placa de video), **Consola** (720p, como en la Xbox 360), **Alta** (1080p)
+  y **Ultra** (1440p). La primera vez que abrís el juego se elige solo según tu placa de video y tu memoria. Cada
+  opción se puede ajustar sola; los cambios se aplican al momento y quedan guardados.
+- **Gráficos**: resolución interna (480p a 4K), sombras, oclusión ambiental, filtrado de texturas, precisión de los
+  efectos, antialiasing (MSAA), **cuadros dibujados** y **ahorro de memoria** (ver abajo).
+- **Pantalla e idioma**: pantalla completa o ventana (también con **F11** o **Alt+Enter** en cualquier momento),
+  **mostrar FPS** (arriba a la izquierda), la **API gráfica** (DirectX 12 o Vulkan: si el juego anda mal o se ve raro
+  con una, probá la otra; se aplica al volver a abrir el juego) y el idioma del juego: español (con el Modo Historia
+  doblado), inglés, portugués, francés, alemán o italiano. El idioma se aplica al volver a abrir el juego.
+- **Controles**: las teclas, qué jugador maneja el teclado y la vibración del mando.
 - **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala.
+
+## PCs con poca placa de video o poca memoria
+
+- Elegí la calidad **Muy baja** o **Baja** y activá **Mostrar FPS** para ver cómo va.
+- **Cuadros dibujados**: "Todos" dibuja los 60 cuadros por segundo. "Uno de cada dos" dibuja 30 y el juego sigue a 60
+  (la mitad del trabajo de la placa de video; la pelea va a la misma velocidad). "Automático" dibuja todos mientras la
+  PC llega y pasa a uno de cada dos cuando no, por ejemplo con muchos efectos o en un X-Ray. Con el contador de FPS
+  activado, cuando se saltean cuadros ves "30 FPS (juego a 60)".
+- **Ahorro de memoria**: para PCs con 4 a 6 GB de RAM; se activa solo en ellas. Libera las texturas que no se usan.
+- Cerrá los programas que no uses mientras jugás (el navegador, sobre todo), y más en una notebook con gráficos
+  integrados: comparten la placa de video con el juego.
+- En el online, las peleas siguen a 60 aunque se dibujen menos cuadros: el rival no nota nada.
