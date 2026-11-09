@@ -24,7 +24,21 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $pc = Join-Path $root 'out\pc'
 $dst = if ([IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $root $Out }
 
-if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+# Links inside the old folder (a tester's game_root linked to the real game files) go first, as links: Windows
+# PowerShell's Remove-Item -Recurse would go through a junction and delete what it points to.
+function Remove-Links([string]$dir) {
+    foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName) } else { [IO.File]::Delete($item.FullName) }
+        } elseif ($item.PSIsContainer) {
+            Remove-Links $item.FullName
+        }
+    }
+}
+if (Test-Path $dst) {
+    Remove-Links $dst
+    Remove-Item -Recurse -Force $dst
+}
 New-Item -ItemType Directory -Force $dst, (Join-Path $dst 'licencias'), (Join-Path $dst 'game_root') | Out-Null
 
 # --- the build ---
