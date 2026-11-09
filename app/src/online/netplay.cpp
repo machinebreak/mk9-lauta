@@ -100,6 +100,7 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
+#include "online/heap_undo.h"
 #include "online/ice_link.h"
 #include "online/lobby.h"
 #include "online/net_udp.h"
@@ -133,6 +134,9 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
+                    "A fight's input delay grows with a long round trip (from the host's mk9_net_rollback_delay up to "
+                    "4 frames) so rollbacks stay about 5 frames deep: steadier characters with 150-300 ms of ping");
 REXCVAR_DEFINE_BOOL(mk9_net_record, true, "MK9 Online",
                     "Each session's final frames (both players' inputs and the sync hash) go to "
                     "logs/session_<date>_<player>.mk9net: the two players' files say where the games parted "
@@ -161,7 +165,11 @@ constexpr int kMaxPerPacket = 64;
 constexpr uint32_t kNoHash = 0xFFFFFFFFu;
 constexpr uint32_t kErrorDeviceNotConnected = 0x48F;
 constexpr int64_t kLearnFrames = 120;   // a fight's first frames, in lockstep while the timeline learns its pages
-constexpr int64_t kMaxPrediction = 8;   // frames run on predictions at most
+constexpr int64_t kMaxPrediction = 10;  // frames run on predictions at most (the timeline keeps 2 more)
+// mk9-lauta (2026-11-10): the fight's own input delay grows with the round trip so a rollback goes back about this
+// many frames at most (the 0.1.0 testers, Argentina-Venezuela over TURN, 140-220 ms: rollbacks of 5-7 frames with
+// delay 1, the characters jumping)
+constexpr int kTargetRollbackDepth = 5;
 constexpr uint32_t kAsyncPackagesNum = 0x834162A4 + 4;  // GObjAsyncPackages.Num (loading.h)
 
 using Clock = std::chrono::steady_clock;
@@ -506,6 +514,7 @@ void EndSession(EndReason why, bool goodbye) {
   g_frame_started_us = 0;  // frames go on without the session: no hang to watch for
   REXLOG_INFO("[net] session ended: {}", ReasonText(why));
   RecordClose();
+  heap_undo::End();
 }
 
 // The online screens' requests (Leave, PeerLeft), taken on the game thread.
@@ -522,7 +531,8 @@ void TakeEndRequest() {
   }
 }
 
-void SendHello() {
+// True when it went out: an ICE link has no path to send on until its pair is chosen (IceLink::Send).
+bool SendHello() {
   auto p = Header(kHello);
   p.push_back(uint8_t(g.player));
   p.push_back(uint8_t(g.lockstep_delay));
@@ -530,7 +540,18 @@ void SendHello() {
   Put32(p, g.seed);
   p.push_back(uint8_t(g.rollback_wanted ? 1 : 0));
   p.push_back(uint8_t(g.rollback_delay));
-  Send(p);
+  const bool sent = g.link->Send(p.data(), p.size());
+  g.last_sent_us = NowUs();
+  return sent;
+}
+
+// A HELLO heard after this side started: the peer is still in its handshake (it never got ours), so it gets ours
+// again, at most every 50 ms.
+void AnswerHello() {
+  static uint64_t answered_at = 0;
+  if (NowUs() - answered_at < 50000) return;
+  answered_at = NowUs();
+  SendHello();
 }
 
 void SendInputs() {
@@ -596,6 +617,7 @@ void Receive() {
       g.peer_seed = Get32(p + 6);
       g.peer_rollback = p[10];
       g.peer_rollback_delay = p[11];
+      if (g.started) AnswerHello();
     } else if (type == kInput && left >= 13) {
       const uint32_t epoch = Get32(p);
       if (epoch != g.epoch) {
@@ -834,7 +856,10 @@ bool Handshake() {
     Receive();
     TakeEndRequest();
     if (g.ended) return false;
-    if (g.heard_peer && (g.host || g.peer_hello)) {
+    // Both sides need the other's HELLO and a path to answer on. Over ICE a HELLO can arrive before the pair this side
+    // sends on is chosen: the host of 0.1.0 started on any word from the guest, its own HELLO went nowhere and the
+    // guest waited for it while the host waited for the guest's inputs (the sessions that froze at their start).
+    if (g.peer_hello && g.link->HasPeer()) {
       if (!g.host && g.peer_delay >= 0) {
         g.lockstep_delay = g.peer_delay;
         g.seed = uint32_t(g.peer_seed);
@@ -842,8 +867,9 @@ bool Handshake() {
         g.rollback_delay = g.peer_rollback_delay;
       }
       g.delay = g.lockstep_delay;
-      SendHello();  // the side that finished first lets the other finish too
-      return true;
+      // the side that finished first lets the other finish too; a peer that still misses it gets it again when its
+      // next HELLO arrives (AnswerHello)
+      if (SendHello()) return true;
     }
   }
   REXLOG_ERROR("[net] nobody answered in {} s: session off", timeout / 1000000);
@@ -877,6 +903,9 @@ bool WaitAtBarrier() {
   REXLOG_INFO("[net] barrier of epoch {}: this side waited {:.1f} ms at its frame {}", next, waited, last);
   return !g.ended;
 }
+
+double RoundTripTypical();
+int LockstepDelayFor(double rtt_ms);
 
 void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   // the packet numbers go on from where the last frame left them
@@ -913,8 +942,13 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.rollback_to = -1;
   g.mode_change_at = -1;
   g.advantage = 0;
-  g.delay = rollback ? g.rollback_delay : g.lockstep_delay;
-  g.delay_check_at = 120;
+  // the delay the round trip needs (from the pongs so far): a lockstep epoch starts with it instead of the host's
+  // and goes on adjusting from its first frame; a fight's first kLearnFrames (its intro, nobody plays yet) run in
+  // lockstep with it too, and the fight's own delay comes after them (FightDelay). With the host's 1 frame, 140-220
+  // ms of round trip ran the intros at ~13 frames a second (the 0.1.0 testers' "it slows down when the fight starts")
+  const int needed = g.rtt_count > 0 ? LockstepDelayFor(RoundTripTypical()) : g.lockstep_delay;
+  g.delay = rollback ? std::max(g.rollback_delay, needed) : std::max(g.lockstep_delay, needed);
+  g.delay_check_at = rollback ? 120 : 0;
   g.lower_votes = 0;
   RecordEpoch();
   g.local_made_upto = g.delay - 1;  // the epoch's first delay frames: neutral on both sides
@@ -1011,6 +1045,18 @@ double RoundTripFloor() {
   return *std::min_element(g.rtt_samples, g.rtt_samples + n);
 }
 
+// The round trip most frames see: the 75th percentile of the last pongs (the third highest of 8). The floor alone set
+// the delay for the best moments: with 130-180 ms (the 0.1.0 testers) the delay covered 131 ms and the menus waited
+// 8 s of every 10 for inputs that came a few ms late. 0 until one came.
+double RoundTripTypical() {
+  const int n = std::min(g.rtt_count, 8);
+  if (n == 0) return 0;
+  double sorted[8];
+  std::copy(g.rtt_samples, g.rtt_samples + n, sorted);
+  std::sort(sorted, sorted + n);
+  return sorted[(n * 3) / 4 < n ? (n * 3) / 4 : n - 1];
+}
+
 // The lockstep delay a round trip needs: the two sides' delays cover it and ~25 ms of jitter, from the host's
 // mk9_net_delay up to 12 frames.
 int LockstepDelayFor(double rtt_ms) {
@@ -1023,14 +1069,25 @@ void AdjustDelayForRoundTrip() {
   const double floor_ms = RoundTripFloor();
   if (g.frame < g.delay_check_at || floor_ms <= 0) return;
   g.delay_check_at = g.frame + 120;
-  const int wanted = LockstepDelayFor(floor_ms);
+  const int wanted = LockstepDelayFor(RoundTripTypical());
   if (wanted < g.delay && ++g.lower_votes < 3) return;
   if (wanted >= g.delay) g.lower_votes = 0;
   if (wanted == g.delay) return;
-  REXLOG_INFO("[net] lockstep delay {} -> {} frames at frame {} (round trip {:.0f} ms at least, {:.0f} on average)",
-              g.delay, wanted, g.frame, floor_ms, g.rtt_ms);
+  REXLOG_INFO("[net] lockstep delay {} -> {} frames at frame {} (round trip {:.0f} ms at least, {:.0f} typical, {:.0f} "
+              "on average)",
+              g.delay, wanted, g.frame, floor_ms, RoundTripTypical(), g.rtt_ms);
   g.delay = wanted;
   g.lower_votes = 0;
+}
+
+// The input delay of a fight with rollback, once its intro is over: the host's (mk9_net_rollback_delay, 0-2), raised
+// with a long round trip (mk9_net_auto_delay) so a wrong prediction goes back about kTargetRollbackDepth frames:
+// 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 4 at most. Each side picks its own (its inputs carry their frames).
+int FightDelay() {
+  const double rtt = RoundTripTypical();
+  if (!REXCVAR_GET(mk9_net_auto_delay) || rtt <= 0) return g.rollback_delay;
+  const int one_way = int(std::ceil(rtt / 2.0 / (1000.0 / 60.0)));
+  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 4);
 }
 
 // One frame of a lockstep epoch (the menus, the loads, a fight without rollback).
@@ -1142,8 +1199,13 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
       g.timeline.Verify(base);  // learning the pages written with no card (the fight's intro)
       if (g.frame >= kLearnFrames) {
         g.speculating = true;
-        REXLOG_INFO("[net] rollback on from frame {} of the fight ({} pages written with no card learnt)", g.frame,
-                    g.timeline.suspect_pages());
+        // the fight's own delay: lower than the intro's, so this side makes no input until the frames catch up with
+        // the ones it made already (the intro's last frames)
+        const int intro_delay = g.delay;
+        g.delay = FightDelay();
+        REXLOG_INFO("[net] rollback on from frame {} of the fight ({} pages written with no card learnt); input delay "
+                    "{} frames (the intro's {}; round trip {:.0f} ms typical)",
+                    g.frame, g.timeline.suspect_pages(), g.delay, intro_delay, RoundTripTypical());
       }
     }
   }
@@ -1152,6 +1214,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   if (g.rollback_to >= 0 && g.rollback_to < g.frame) {
     const int64_t to = g.rollback_to;
     const uint64_t t0 = NowUs();
+    heap_undo::RollBack(to);  // the allocations of the frames undone go, the frees held for them are forgotten
     if (!g.timeline.RollBack(base, uint64_t(to))) {
       quiesce::Release();
       // a wrong prediction that cannot be undone: from here the two games go their own ways
@@ -1174,6 +1237,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   g.rollback_to = -1;
   CompareFinalHashes();
   RecordFinal();
+  heap_undo::Confirm(FinalUpto());
   // a mode change every frame up to which is final: the rest of the epoch in lockstep
   if (g.mode_change_at >= 0 && g.mode_change_at < g.frame && FinalUpto() >= g.mode_change_at) {
     REXLOG_INFO("[net] the fight's mode ended at frame {}: lockstep from frame {} ({} rollbacks, {} frames run again)",
@@ -1182,6 +1246,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     g.mode_change_at = -1;
     g.delay_check_at = 0;  // the lockstep after the fight: its delay for the round trip from the next frame
     g.timeline = snapshot::Timeline();
+    heap_undo::End();
     sound_replay::OnFrame(ctx, base, 0, false);
     sound_sync::PassedEnd();
     sa2::renut::SetFrameHidden(false);
@@ -1218,6 +1283,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   // a frame run again is not shown and not paced, and keeps the sounds its first run started (sound_replay.h)
   sound_replay::OnFrame(ctx, base, uint64_t(g.epoch) << 32 | uint64_t(g.frame + 1), g.frame < g.latest);
   sa2::renut::SetFrameHidden(g.frame < g.latest);
+  heap_undo::SetFrame(g.frame);
   ++g.frame;
   ++g.frames_window;
   if (g.frame > g.latest) g.latest = g.frame;
@@ -1283,6 +1349,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     if (g.rollback) {
       quiesce::Settle(ctx, base);
       g.timeline.Start(base, 0, int(kMaxPrediction) + 2, false);
+      heap_undo::Begin();  // the game's allocations and frees in the rollback too (heap_undo.h)
       quiesce::Release();
     }
     REXLOG_INFO("[net] epoch {} started at game frame {} ({})", g.epoch, game_frame,

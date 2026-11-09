@@ -60,6 +60,12 @@ uint32_t FromXdkProtectFlags(uint32_t protect) {
   return result;
 }
 
+}  // namespace rex::kernel::xboxkrnl
+namespace rex::memory {
+bool NotifyGuestHeap(uint32_t op, uint32_t address, uint32_t size, uint32_t extra) noexcept;  // xmemory.cpp
+}  // namespace rex::memory
+namespace rex::kernel::xboxkrnl {
+
 u32 NtAllocateVirtualMemory_entry(mapped_u32 base_addr_ptr, mapped_u32 region_size_ptr,
                                   u32 alloc_type, u32 protect_bits, u32 debug_memory) {
   uint32_t input_base = base_addr_ptr ? static_cast<uint32_t>(*base_addr_ptr) : 0;
@@ -195,6 +201,7 @@ u32 NtAllocateVirtualMemory_entry(mapped_u32 base_addr_ptr, mapped_u32 region_si
   // Maybe set X_STATUS_ALREADY_COMMITTED if MEM_COMMIT?
   *base_addr_ptr = address;
   *region_size_ptr = adjusted_size;
+  memory::NotifyGuestHeap(5, address, adjusted_size, allocation_type | (was_commited ? 0x80000000u : 0u));
   REXKRNL_IMPORT_RESULT("NtAllocateVirtualMemory", "0x0 addr={:#x} size={:#x}", address,
                         adjusted_size);
   return X_STATUS_SUCCESS;
@@ -271,6 +278,7 @@ u32 NtFreeVirtualMemory_entry(mapped_u32 base_addr_ptr, mapped_u32 region_size_p
   if (heap->heap_type() != memory::HeapType::kGuestVirtual) {
     return X_STATUS_INVALID_PARAMETER;
   }
+  memory::NotifyGuestHeap(6, base_addr_value, region_size_value, free_type);
   bool result = false;
   if (free_type == X_MEM_DECOMMIT) {
     // If zero, we may need to query size (free whole region).
@@ -403,6 +411,7 @@ u32 MmAllocatePhysicalMemoryEx_entry(u32 flags, u32 region_size, u32 protect_bit
     return 0;
   }
   REXKRNL_IMPORT_RESULT("MmAllocatePhysicalMemoryEx", "addr={:#x}", base_address);
+  memory::NotifyGuestHeap(1, base_address, adjusted_size, 0);
 
   return base_address;
 }
@@ -416,6 +425,7 @@ void MmFreePhysicalMemory_entry(u32 type, u32 base_address) {
                        (uint32_t)base_address);
 
   assert_true((base_address & 0x1F) == 0);
+  if (memory::NotifyGuestHeap(2, base_address, 0, type)) return;  // held (app: heap_undo)
 
   auto heap = REX_KERNEL_MEMORY()->LookupHeap(base_address);
   heap->Release(base_address);
@@ -598,9 +608,12 @@ u32 ExAllocatePoolTypeWithTag_entry(u32 size, u32 tag, u32 zero) {
     auto header = REX_KERNEL_MEMORY()->TranslateVirtual<X_POOL_ALLOC_HEADER*>(addr);
     header->unk_2 = 170;  // magic marker
     header->tag = (uint32_t)tag;
+    memory::NotifyGuestHeap(3, addr, adjusted_size, 0);
     return addr + sizeof(X_POOL_ALLOC_HEADER);
   } else {
-    return REX_KERNEL_MEMORY()->SystemHeapAlloc(size, 4096);
+    const uint32_t addr = REX_KERNEL_MEMORY()->SystemHeapAlloc(size, 4096);
+    if (addr) memory::NotifyGuestHeap(3, addr, size, 0);
+    return addr;
   }
 }
 
@@ -613,9 +626,11 @@ void ExFreePool_entry(mapped_void base_address) {
   uint32_t addr = base_address.guest_address();
   if ((addr & (4096 - 1)) == 0) {
     // Page-aligned: large allocation with no pool header.
+    if (memory::NotifyGuestHeap(4, addr, 0, 0)) return;  // held (app: heap_undo)
     REX_KERNEL_MEMORY()->SystemHeapFree(addr);
   } else {
     // Small allocation: subtract pool header to get real alloc base.
+    if (memory::NotifyGuestHeap(4, addr - sizeof(X_POOL_ALLOC_HEADER), 0, 0)) return;
     REX_KERNEL_MEMORY()->SystemHeapFree(addr - sizeof(X_POOL_ALLOC_HEADER));
   }
 }

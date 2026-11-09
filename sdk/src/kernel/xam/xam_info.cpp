@@ -32,6 +32,10 @@
 
 REXCVAR_DECLARE(uint32_t, user_language);  // defined in xam_user.cpp
 
+namespace rex::memory {
+bool NotifyGuestHeap(uint32_t op, uint32_t address, uint32_t size, uint32_t extra) noexcept;  // xmemory.cpp
+}  // namespace rex::memory
+
 namespace rex {
 namespace kernel {
 namespace xam {
@@ -297,11 +301,13 @@ u32 XamAlloc_entry(u32 unk, u32 size, mapped_u32 out_ptr) {
   // it keeps stuff in a separate heap?
   uint32_t ptr = REX_KERNEL_MEMORY()->SystemHeapAlloc(size);
   *out_ptr = ptr;
+  if (ptr) rex::memory::NotifyGuestHeap(3, ptr, size, 0);  // mk9-nx online: app heap_undo
 
   return X_ERROR_SUCCESS;
 }
 
 u32 XamFree_entry(mapped_u32 ptr) {
+  if (rex::memory::NotifyGuestHeap(4, ptr.guest_address(), 0, 0)) return X_ERROR_SUCCESS;  // held (app: heap_undo)
   REX_KERNEL_MEMORY()->SystemHeapFree(ptr.guest_address());
 
   return X_ERROR_SUCCESS;

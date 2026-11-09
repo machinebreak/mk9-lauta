@@ -121,6 +121,7 @@ set(MK9_SOURCES
     src/online/loading.cpp
     src/online/guest_memory.cpp
     src/online/snapshot.cpp
+    src/online/heap_undo.cpp
     src/online/quiesce.cpp
     src/online/sound_memory.cpp
     src/online/write_trace.cpp

@@ -1441,6 +1441,25 @@ std::atomic<uint64_t> g_heap_mutations{0};
 
 uint64_t HeapMutations() noexcept { return g_heap_mutations.load(std::memory_order_acquire); }
 
+// mk9-nx online (2026-11-10): the title's own allocations and frees through the kernel's and XAM's exports
+// (MmAllocatePhysicalMemoryEx / MmFreePhysicalMemory, XamAlloc / XamFree, ExAllocatePool* / ExFreePool,
+// NtAllocateVirtualMemory / NtFreeVirtualMemory), told to an observer (app/src/online/heap_undo.cpp: a rollback
+// undoes the allocations of the frames it runs again and holds their frees until no rollback can reach them). A free
+// the observer takes (returns true) is not done here. Ops: 1 physical alloc (address, size), 2 physical free (address),
+// 3 system alloc (region, size), 4 system free (region), 5 virtual alloc (address, size, allocation type), 6 virtual
+// free (address, size, free type).
+using GuestHeapObserver = bool (*)(uint32_t op, uint32_t address, uint32_t size, uint32_t extra);
+namespace {
+std::atomic<GuestHeapObserver> g_guest_heap_observer{nullptr};
+}  // namespace
+void SetGuestHeapObserver(GuestHeapObserver observer) noexcept {
+  g_guest_heap_observer.store(observer, std::memory_order_release);
+}
+bool NotifyGuestHeap(uint32_t op, uint32_t address, uint32_t size, uint32_t extra) noexcept {
+  const GuestHeapObserver observer = g_guest_heap_observer.load(std::memory_order_acquire);
+  return observer ? observer(op, address, size, extra) : false;
+}
+
 bool BaseHeap::Alloc(uint32_t size, uint32_t alignment, uint32_t allocation_type, uint32_t protect,
                      bool top_down, uint32_t* out_address) {
   g_heap_mutations.fetch_add(1, std::memory_order_acq_rel);
