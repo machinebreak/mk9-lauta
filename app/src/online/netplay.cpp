@@ -118,6 +118,9 @@ REXCVAR_DEFINE_BOOL(mk9_net_rollback, true, "MK9 Online", "Fights with rollback 
 REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, 1, "MK9 Online",
                      "Input delay in frames in a fight with rollback (0 = none; the host's is used by both)");
 REXCVAR_DEFINE_INT32(mk9_net_timeout_s, 20, "MK9 Online", "Seconds without the peer before the session ends");
+REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
+                    "A session's start skips the boot's logo movies (WB, NetherRealm: 16 s): the host's pad taps START "
+                    "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
 REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, true, "MK9 Online",
@@ -891,6 +894,12 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     Pad& mine = g.local[size_t(target)];
     mine = ReadLocalPad();
     mine.busy = SampleBusy(base);
+    // the boot's logo movies, skipped: the host taps START (X_INPUT_GAMEPAD's 0x0010, the buttons' low byte) every 10
+    // frames while one plays in the session's first 25 s; the tap is an input, seen by both machines at the same frame
+    static const bool skip_logos = REXCVAR_GET(mk9_net_skip_logos);
+    if (skip_logos && g.host && g.epoch == 0 && target < 1500 && (mine.busy & kBusyMovie) && target % 10 == 0) {
+      mine.bytes[1] |= 0x10;
+    }
     mine.ready = g.ready_seen;
     mine.sound = sound_sync::Announcement();
     g.ready_seen = 0;

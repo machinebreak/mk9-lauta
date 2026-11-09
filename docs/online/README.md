@@ -129,6 +129,29 @@ Latencia medida por el propio renderer: mando -> pantalla ~24 ms. Tirones: algun
 en el primer uso de pipelines nuevos. Dos shaders que faltaban quedaron en `out\pc\shader_capture` y el próximo
 build los suma solo.
 
+### PCs con menos núcleos (2026-11-09)
+
+Con el proceso limitado a pocos núcleos (`run_game.ps1 -Affinity`, `pair_test.ps1 -HostAffinity/-GuestAffinity`; el
+reloj sigue siendo el del 8600G):
+
+| Núcleos | Prueba | Resultado |
+|---|---|---|
+| 2 núcleos / 4 hilos (`0F`) | pelea contra la CPU | 60.0 fps, el cuadro más largo 17,6 ms; hilo del juego 2,4 ms por cuadro (lo más 4,2) |
+| 1 núcleo / 2 hilos (`03`) | pelea contra la CPU | 60.0 fps; hilo del juego 2,6 ms, hilo de render 1,5 ms, GPU 2,1 ms (720p) |
+| 2 núcleos / 4 hilos cada uno | online con rollback, 80 ms + jitter | 60.0 fps los dos; 176 rollbacks (hasta 4 cuadros), guardar un cuadro 1,7 ms, restaurar 1 ms, el cuadro más largo 18,7 ms |
+
+El trabajo por cuadro es chico (código de la 360 corriendo nativo): lo que más pesa en una PC lenta es el reloj de la
+CPU con rollbacks hondos (cada cuadro re-simulado cuesta ~2,5 ms acá) y la placa de video (F2 > Calidad "Baja").
+
+### Modos probados (2026-11-09, en español)
+
+Historia (la cinemática de apertura, videos por FFmpeg), Entrenamiento (Tutorial, Práctica), la selección con los 4
+personajes de la Komplete (Skarlet, Kenshi, Rain, Freddy Krueger, en la fila extendida de abajo), Torre de los Retos
+(el primer reto), la Kripta (menú EXTRAS, carga, entrada, bienvenida), Torneo (Ladder), Versus online. La Kripta va a
+30 fps: es el ritmo que el juego pide ahí (el hilo del juego usa ~10 ms y el ritmo espera a 33), no falta de PC.
+Los pipelines nuevos aparecen con lo que no se vio antes (la Kripta construyó 82, la Torre 32, la Historia 23, una
+pelea ya vista 1): `pipeline_list.bin` los anota y los construye por adelantado en el próximo arranque.
+
 ## Estado
 
 | Fase | Estado |

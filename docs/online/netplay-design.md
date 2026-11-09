@@ -254,6 +254,14 @@ de cero en el siguiente; `queued.cpp`, `SkipHiddenDraw`). El contador `[fps]` se
 ocultos y cuenta los mostrados tarde: con 40 ms de lag + jitter y 25-64 cuadros re-simulados cada 5 s, 60.0 fps
 mostrados, el más largo 17-20 ms, 0-1 por encima de 20 ms.
 
+### Una sesión larga (2026-11-09)
+
+21,5 minutos seguidos (81.839 cuadros) con 60 ms de lag + jitter + 1 % de pérdida: 11 peleas con REMATCH una tras
+otra, sin desync ni cuelgues; 3.441 rollbacks del lado del invitado; la memoria del sonido quieta en 16,4 MB de
+punta a punta. Los cuadros lentos caen en el arranque, en el primer cuadro de cada pelea (~100 ms: la línea de tiempo
+del rollback copia la memoria al empezar, durante la presentación) y en una pelea en un escenario pesado (~430
+dibujos por cuadro), con las dos instancias compartiendo la GPU integrada de esta PC: medirlo con dos PCs.
+
 ### Red mala, idiomas distintos (2026-11-08)
 
 - **80 ms + jitter + 3 % de pérdida** (`mk9_net_lag_ms=40`, `jitter 15`, `loss 3`; ida y vuelta medida ~116 ms):
@@ -277,6 +285,14 @@ Baja tras tres chequeos seguidos (6 s): la entrada de ese cuadro ya estaba hecha
 cuadros la alcancen. Las entradas de cada lado siguen siendo una por cuadro, así que los delays no necesitan ser
 iguales en los dos lados ni hace falta acordarlos; la época de la próxima pelea vuelve al delay del rollback. En el
 menú, 4-5 cuadros con 116 ms no se notan; 38 fps sí.
+
+### Sin los logos del arranque (2026-11-09)
+
+Cada sesión vuelve a abrir el juego, y los dos jugadores esperaban los logos de WB y NetherRealm (16 s; el título
+llegaba a los ~27 s). Los logos se saltean con un botón, así que en una sesión el pad del host toca START cada 10
+cuadros mientras pasa una película en sus primeros 25 s (`mk9_net_skip_logos`): el toque es una entrada como las
+demás y las dos máquinas lo ven en el mismo cuadro. Cada logo dura ~23 cuadros y el título llega a los ~14 s, igual
+en las dos. Las pruebas (`pair_test.ps1`) los dejan (sus guiones cuentan con ellos) salvo con `-SkipLogos`.
 
 ### Los avisos de los sonidos, al mismo cuadro en las dos (`sound_sync.h`, 2026-11-08)
 

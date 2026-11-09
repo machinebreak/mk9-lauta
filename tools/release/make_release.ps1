@@ -71,7 +71,8 @@ INSTALACIÓN
 Requisitos: Windows 10 u 11 de 64 bits, una placa de video con DirectX 12 o Vulkan (casi todas desde 2013) y un
 procesador de 4 núcleos. Para PCs con poca placa de video: F2 > Gráficos > Calidad "Baja".
 
-Si algo falla, la carpeta logs tiene lo que pasó: mandá el último archivo mk9_*.log.
+Si algo falla, la carpeta logs tiene lo que pasó: mandá el último archivo mk9_*.log (y, si el juego se cerró de
+golpe, el crash_*.dmp de la misma hora).
 
 
 "@

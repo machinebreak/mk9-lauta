@@ -7,6 +7,10 @@
 #       [-Snapshots "60,90"] [-Hash] [-HashFrom 1] [-Checks] [-SyncRanges "83380000-834D0000"]
 #       [-Room CODE -Lobby ws://127.0.0.1:8791/lobby?game=mk9pc] [-Extra "--name=value ..."] [-Profiles inst]
 #       [-HostExtra "--name=value ..."] [-GuestExtra "--name=value ..."] [-HostAffinity 0x0F] [-GuestAffinity 0xF0]
+#       [-SkipLogos]
+#
+# The test scripts are timed with the boot's logo movies playing, so the sessions here keep them
+# (mk9_net_skip_logos=false); -SkipLogos skips them as the game's sessions do.
 #
 # -Room: the two meet in that lobby room and play over the path ICE finds (ice_link.h) instead of local UDP; the lobby
 # is a local one by default (ps2-web-recomp's scripts/lobby_server.py 8791 --host 127.0.0.1).
@@ -30,6 +34,7 @@ param(
     [string]$GuestExtra = '',
     [string]$HostAffinity = '',
     [string]$GuestAffinity = '',
+    [switch]$SkipLogos,
     [string]$Room = '',
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$Profiles = 'inst',
@@ -46,7 +51,8 @@ Remove-Item (Join-Path $dir 'logs\pair_*.log') -ErrorAction SilentlyContinue
 
 function Args-For([string]$role) {
     $a = @('--audio_mute=true', '--window_start_minimized=true', '--sa2_renderer=renut', "--renut_gpu_backend=$Backend",
-           "--log_file=logs/pair_$role.log", "--user_data_root=$root\out\$($Profiles)_$role", "--mk9_net_delay=$Delay")
+           "--log_file=logs/pair_$role.log", "--user_data_root=$root\out\$($Profiles)_$role", "--mk9_net_delay=$Delay",
+           "--mk9_net_skip_logos=$(if ($SkipLogos) { 'true' } else { 'false' })")
     if ($Room) {
         $name = if ($role -eq 'host') { 'Prueba1' } else { 'Prueba2' }
         $a += "--mk9_net_room=$Room", "--mk9_net_role=$role", "--mk9_lobby_url=$Lobby", "--mk9_online_name=$name"
