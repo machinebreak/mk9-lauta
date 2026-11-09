@@ -2,6 +2,10 @@
  * @file    gpu/render/textures.cpp
  */
 #include "renut_engine/gpu/render/textures.h"
+
+#if defined(_WIN32)
+#include <excpt.h>
+#endif
 #include "mk9_button_icons.h"  // mk9-nx: the Switch button icons (app/src)
 
 #include <algorithm>
@@ -1070,10 +1074,30 @@ void NoteTextureUnlocked(u32 resource_va) {
   g_unlocked.push_back(resource_va);
 }
 
+#if defined(_WIN32)
+// mk9-nx (2026-11-09): a level whose guest memory is gone by the flush (guest_memory.h): false, the level left zeroed.
+bool ReadLevelGuarded(const PendingFill &f) {
+  __try {
+    ReadLevel(f.info, f.fetch, f.src, f.blocks_w, f.blocks_h, f.depth, f.dst, f.row_pitch, f.slice_pitch);
+  } __except (GetExceptionCode() == 0xC0000005ul ? 1 : 0) {
+    return false;
+  }
+  return true;
+}
+#endif
+
 void FlushTextureFillsLocked() {
+  QuietGuestFaultScope quiet;
   for (const PendingFill &f : g_pending_fills) {
+#if defined(_WIN32)
+    if (!ReadLevelGuarded(f)) {
+      std::memset(f.dst, 0, size_t(f.slice_pitch) * f.depth);
+      NoteGoneGuestRead("a texture", f.src.base, f.row_pitch * f.blocks_h, 0);
+    }
+#else
     ReadLevel(f.info, f.fetch, f.src, f.blocks_w, f.blocks_h, f.depth, f.dst, f.row_pitch,
               f.slice_pitch);
+#endif
   }
   g_pending_fills.clear();
 }

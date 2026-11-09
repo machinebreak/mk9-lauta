@@ -9,7 +9,27 @@
 #include <rex/system/kernel_state.h>
 #include <rex/types.h>
 
+// mk9-nx (2026-11-09): the SDK's fault handler leaves an access violation inside a marked read to the reader
+// (sdk/src/system/xmemory.cpp): not logged, not the guest's crash.
+namespace rex::memory {
+void BeginQuietGuestFaults() noexcept;
+void EndQuietGuestFaults() noexcept;
+}  // namespace rex::memory
+
 namespace renut::gpu {
+
+// mk9-nx (2026-11-09): the renderer reads guest memory well after the game named it (vertex, index and texture data,
+// on the render thread), and a draw can name memory the game no longer has: a stale buffer header pointing where
+// nothing is mapped closed the game in online tests. Such reads run marked (this scope) and under SEH (Windows: the
+// ...Guarded helpers of draw.cpp and textures.cpp); one that faults gives zeros (or skips the draw) and is logged by
+// NoteGoneGuestRead (draw.cpp).
+struct QuietGuestFaultScope {
+  QuietGuestFaultScope() { rex::memory::BeginQuietGuestFaults(); }
+  ~QuietGuestFaultScope() { rex::memory::EndQuietGuestFaults(); }
+  QuietGuestFaultScope(const QuietGuestFaultScope &) = delete;
+  QuietGuestFaultScope &operator=(const QuietGuestFaultScope &) = delete;
+};
+void NoteGoneGuestRead(const char *what, const void *guest, u32 bytes, uint64_t shader_hash);
 
 namespace detail {
 // banjo-nx (2026-10-19, render-thread proposal 11): the guest memory bases, read once (they never change after

@@ -124,9 +124,58 @@ REXCVAR_DEFINE_BOOL(sa2_renut_lean_diagnostics, true, "SA2/Renderer",
 
 REXCVAR_DECLARE(bool, sa2_renut_neon_compare);  // sa2-nx (2026-10-20): backend/queued.cpp
 
+#if defined(_WIN32)
+#include <excpt.h>
+#endif
+
 namespace renut::gpu {
 
 ChainHint g_chain_hint;  // sa2-nx (2026-10-20): draw.h
+
+// mk9-nx (2026-11-09): guest memory read long after the draw named it (guest_memory.h, QuietGuestFaultScope).
+void NoteGoneGuestRead(const char *what, const void *guest, u32 bytes, uint64_t shader_hash) {
+  static std::atomic<uint32_t> seen{0};
+  const uint32_t n = seen.fetch_add(1, std::memory_order_relaxed);
+  if (n < 10 || (n & 1023) == 0)
+    RGPU_WARN("[draw] {} read from guest memory that is not there (guest {:08X}, {} bytes, shader {:016X}): left out "
+              "({} so far)",
+              what, uint32_t(reinterpret_cast<uintptr_t>(guest) - reinterpret_cast<uintptr_t>(detail::GuestVirtualBase())),
+              bytes, shader_hash, n + 1);
+}
+
+namespace {
+// Plain functions around the reads (no objects to unwind), false when the read faulted.
+#if defined(_WIN32)
+constexpr unsigned long kAccessViolation = 0xC0000005ul;
+bool ConvertVerticesGuarded(const HostVertexStream &stream, const u8 *guest, u32 stride, u32 count, u32 endian,
+                            u8 *host) {
+  __try {
+    ConvertVertices(stream, guest, stride, count, endian, host);
+  } __except (GetExceptionCode() == kAccessViolation ? 1 : 0) {
+    return false;
+  }
+  return true;
+}
+bool CopyGuarded(u8 *dst, const u8 *src, u32 size) {
+  __try {
+    std::memcpy(dst, src, size);
+  } __except (GetExceptionCode() == kAccessViolation ? 1 : 0) {
+    return false;
+  }
+  return true;
+}
+#else
+bool ConvertVerticesGuarded(const HostVertexStream &stream, const u8 *guest, u32 stride, u32 count, u32 endian,
+                            u8 *host) {
+  ConvertVertices(stream, guest, stride, count, endian, host);
+  return true;
+}
+bool CopyGuarded(u8 *dst, const u8 *src, u32 size) {
+  std::memcpy(dst, src, size);
+  return true;
+}
+#endif
+} // namespace
 
 namespace {
 
@@ -2098,21 +2147,48 @@ struct Geometry {
 
 REXCVAR_DECLARE(bool, mk9_diag_bad_vertices);  // mk9-nx: defined with DiagCheckPositions below
 
-// Reads 'count' guest indices into g_indices.
-bool ReadIndices(const u8 *src, u32 count, bool is32, u32 endian) {
-  if (!src || count > kMaxDrawIndices)
-    return false;
-  g_indices.resize(count);
+void ReadIndicesInto(const u8 *src, u32 count, bool is32, u32 endian, u32 *out) {
   if (is32) {
-    SwapEndian(endian, src, g_indices.data(), size_t(count) * 4);
+    SwapEndian(endian, src, out, size_t(count) * 4);
   } else {
     const bool swap = endian == 1 || endian == 2;
     for (u32 i = 0; i < count; ++i) {
       uint16_t v;
       std::memcpy(&v, src + i * 2, 2);
-      g_indices[i] = swap ? uint16_t((v >> 8) | (v << 8)) : v;
+      out[i] = swap ? uint16_t((v >> 8) | (v << 8)) : v;
     }
   }
+}
+
+#if defined(_WIN32)
+bool ReadIndicesGuarded(const u8 *src, u32 count, bool is32, u32 endian, u32 *out) {
+  __try {
+    ReadIndicesInto(src, count, is32, endian, out);
+  } __except (GetExceptionCode() == kAccessViolation ? 1 : 0) {
+    return false;
+  }
+  return true;
+}
+#endif
+
+// Reads 'count' guest indices into g_indices (false, the draw left out, when they are not there: guest_memory.h).
+bool ReadIndices(const u8 *src, u32 count, bool is32, u32 endian) {
+  if (!src || count > kMaxDrawIndices)
+    return false;
+  g_indices.resize(count);
+#if defined(_WIN32)
+  bool ok;
+  {
+    QuietGuestFaultScope quiet;
+    ok = ReadIndicesGuarded(src, count, is32, endian, g_indices.data());
+  }
+  if (!ok) {
+    NoteGoneGuestRead("an index buffer", src, count * (is32 ? 4 : 2), 0);
+    return false;
+  }
+#else
+  ReadIndicesInto(src, count, is32, endian, g_indices.data());
+#endif
   return true;
 }
 
@@ -4088,74 +4164,24 @@ void FinishRecordingLocked(VideoState &) {
 
 } // namespace detail
 
-// mk9-nx (2026-11-09): the fills read guest memory long after the draw call, and a draw can name memory the game no
-// longer has (a vertex buffer whose header points into the low heap where nothing is mapped: a 21-minute online test
-// closed the game that way in a fight's intro). Such a read is taken here (Windows): the draw gets zeroed vertices for
-// that frame and the game goes on. The SDK's fault handler leaves a marked read to its __except (xmemory.cpp).
-#if defined(_WIN32)
-} // namespace renut::gpu
-#include <excpt.h>
-namespace rex::memory {
-void BeginQuietGuestFaults() noexcept;
-void EndQuietGuestFaults() noexcept;
-}  // namespace rex::memory
-namespace renut::gpu {
-namespace {
-bool ConvertVerticesGuarded(const HostVertexStream &stream, const u8 *guest, u32 stride, u32 count, u32 endian,
-                            u8 *host) {
-  bool ok = true;
-  __try {
-    ConvertVertices(stream, guest, stride, count, endian, host);
-  } __except (GetExceptionCode() == 0xC0000005u /* EXCEPTION_ACCESS_VIOLATION */ ? 1 : 0) {
-    ok = false;
-  }
-  return ok;
-}
-bool CopyGuarded(u8 *dst, const u8 *src, u32 size) {
-  bool ok = true;
-  __try {
-    std::memcpy(dst, src, size);
-  } __except (GetExceptionCode() == 0xC0000005u ? 1 : 0) {
-    ok = false;
-  }
-  return ok;
-}
-} // namespace
-#endif
-
-void NoteGoneGuestRead(const char *what, const void *guest, u32 bytes, uint64_t vs_hash) {
-  static std::atomic<uint32_t> seen{0};
-  const uint32_t n = seen.fetch_add(1, std::memory_order_relaxed);
-  if (n < 10 || (n & 1023) == 0)
-    RGPU_WARN("[draw] a {} read guest memory that is not there (guest {:08X}, {} bytes, vs {:016X}): zeroed ({} so far)",
-              what, uint32_t(reinterpret_cast<uintptr_t>(guest) - reinterpret_cast<uintptr_t>(detail::GuestVirtualBase())),
-              bytes, vs_hash, n + 1);
-}
-
 void FlushVertexFillsLocked() {
   ++g_flush_serial;
   static const bool diag = REXCVAR_GET(mk9_diag_bad_vertices);
   if (diag)
     DiagRecheckPositions();  // banjo-nx: banjo_renut_exact_streams' intervals
   banjo::renut_gpu::CountKick();
-#if defined(_WIN32)
-  rex::memory::BeginQuietGuestFaults();
-#endif
+  QuietGuestFaultScope quiet;
   // tests only: MK9_TEST_GONE_READ=1 points one fill in 60 flushes at the low heap's top, where nothing is mapped
   static const bool test_gone = std::getenv("MK9_TEST_GONE_READ") != nullptr;
   static uint64_t test_flushes = 0;
   if (test_gone && !g_stream_fills.empty() && ++test_flushes % 60 == 0)
     g_stream_fills.front().guest = detail::GuestVirtualBase() + 0x3FC30780u;
   for (const PendingStreamFill &f : g_stream_fills) {
-#if defined(_WIN32)
     if (!ConvertVerticesGuarded(f.stream, f.guest, f.stride, f.count, f.endian, f.host)) {
       std::memset(f.host, 0, size_t(f.count) * f.stream.host_stride);
-      NoteGoneGuestRead("vertex stream", f.guest, f.count * f.stride, f.vs_hash);
+      NoteGoneGuestRead("a vertex stream", f.guest, f.count * f.stride, f.vs_hash);
       continue;
     }
-#else
-    ConvertVertices(f.stream, f.guest, f.stride, f.count, f.endian, f.host);
-#endif
     static const bool diag = REXCVAR_GET(mk9_diag_bad_vertices);
     if (diag)
       DiagCheckPositions(f.stream, f.host, f.count, f.vs_hash, f.ps_hash, f.primitive, f.guest, "stream", f.stride);
@@ -4165,18 +4191,11 @@ void FlushVertexFillsLocked() {
   g_stream_fills.clear();
   ++g_queued_generation;  // banjo-nx (2026-10-19): the table emptied
   for (const PendingCopy &c : g_copy_fills) {
-#if defined(_WIN32)
     if (!CopyGuarded(c.dst, c.src, c.size)) {
       std::memset(c.dst, 0, c.size);
-      NoteGoneGuestRead("fetch copy", c.src, c.size, 0);
+      NoteGoneGuestRead("a fetch copy", c.src, c.size, 0);
     }
-#else
-    std::memcpy(c.dst, c.src, c.size);
-#endif
   }
-#if defined(_WIN32)
-  rex::memory::EndQuietGuestFaults();
-#endif
   g_copy_fills.clear();
   ++g_fetch_copy_generation;
 }
