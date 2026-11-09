@@ -84,6 +84,8 @@ set(MK9_SOURCES
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
     src/mk9_localization.cpp
+    # The first start's installer: the player's .iso or folder of the game, checked and extracted (mk9_installer.h).
+    src/mk9_installer.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.
@@ -168,7 +170,7 @@ if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
-    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32)
+    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32 bcrypt comctl32 ole32)
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
 endif()

@@ -22,6 +22,7 @@
 #include "mk9_script_input.h"
 #include "mk9_controls.h"
 #include "mk9_localization.h"
+#include "mk9_installer.h"
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
@@ -81,8 +82,24 @@ class Mk9App : public rex::ReXApp {
   // Without --game_data_root, use a game_root/ folder next to the executable, and on a PC build tree the
   // repository's assets/game_root. The disc names the executable Default.xex. An explicit path always wins.
   void OnConfigurePaths(rex::PathConfig& paths) override {
+#if defined(_WIN32)
+    // mk9-lauta (2026-11-09): the folder the installer kept in mk9.toml (read here: the SDK loads mk9.toml later)
+    if (paths.game_data_root.empty()) {
+      paths.game_data_root = mk9::installer::ConfiguredRoot(paths.config_path);
+    }
+#endif
     if (!paths.game_data_root.empty()) {
+#if defined(_WIN32)
+      // mk9-lauta (2026-11-09): a configured folder that no longer holds the game: the installer again
+      std::error_code missing;
+      if (std::filesystem::is_regular_file(paths.game_data_root / "default.xex", missing) ||
+          std::filesystem::is_regular_file(paths.game_data_root / "Default.xex", missing)) {
+        return;
+      }
+      paths.game_data_root.clear();
+#else
       return;
+#endif
     }
     std::error_code ec;
     const auto folder = rex::filesystem::GetExecutableFolder();
@@ -106,12 +123,13 @@ class Mk9App : public rex::ReXApp {
       }
     }
 #if defined(_WIN32)
-    // mk9-nx online (2026-11-08): no game files found: say where they go, in the players' language.
-    rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error,
-                              "No se encontraron los archivos del juego.\n\nPoné la carpeta game_root de tu copia del "
-                              "juego (Xbox 360, Komplete Edition: default.xex y las carpetas Asset, Localization, "
-                              "Movies y las demás) al lado de mk9.exe.");
-    std::_Exit(1);
+    // mk9-lauta (2026-11-09): no game files found: the first start's installer asks for the player's copy (an .iso
+    // or a folder, mk9_installer.h); closed without one, the game ends
+    const std::filesystem::path chosen = mk9::installer::Run(folder);
+    if (chosen.empty()) {
+      std::_Exit(0);
+    }
+    paths.game_data_root = chosen;
 #endif
   }
 

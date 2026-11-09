@@ -13,7 +13,7 @@
 #                                                       be deployed so): no installer needed
 #   LEEME.txt, AVISO.txt, licencias\                    the guide (docs\online\guia-jugadores.md), the notice, every
 #                                                       licence of the code in the executable
-#   game_root\COPIAR_ACA.txt                            where the game files go
+#   (no game_root: the first start's installer makes it from the player's .iso, mk9_installer.h)
 # Nothing is published or uploaded: the folder (and the zip with -Zip) stays on this PC.
 param(
     [string]$Out = 'out\release\mk9pc',
@@ -39,7 +39,7 @@ if (Test-Path $dst) {
     Remove-Links $dst
     Remove-Item -Recurse -Force $dst
 }
-New-Item -ItemType Directory -Force $dst, (Join-Path $dst 'licencias'), (Join-Path $dst 'game_root') | Out-Null
+New-Item -ItemType Directory -Force $dst, (Join-Path $dst 'licencias') | Out-Null
 
 # --- the build ---
 foreach ($f in 'mk9.exe', 'rexruntimerd.dll', 'rexgpu-xenosrd.dll', 'gamecontrollerdb.txt') {
@@ -73,17 +73,19 @@ $install = @"
 INSTALACIÓN
 ===========
 
-1. Descomprimí esta carpeta donde quieras (no adentro de "Archivos de programa").
-2. Copiá la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition: default.xex y las carpetas Asset,
-   Localization, Movies y las demás) adentro de la carpeta game_root de acá, reemplazando el archivo COPIAR_ACA.txt.
-3. Abrí mk9.exe. La primera vez tarda un poco más: prepara los gráficos de tu placa de video.
+1. Descomprimí esta carpeta donde quieras, en un disco con ~8 GB libres (no adentro de "Archivos de programa").
+2. Abrí mk9.exe. La primera vez se abre el instalador: elegí la imagen .iso de tu copia de Mortal Kombat Komplete
+   Edition de Xbox 360 (la versión europea: En, Fr, De, Es, It, Pt), o la carpeta donde ya la tenés extraída (la que
+   tiene default.xex). Se revisa que sea la versión correcta y, desde la ISO, se copian los ~7 GB que usa el juego a
+   la carpeta game_root. Una sola vez: después el juego arranca directo.
    - Si Windows muestra "Windows protegió tu PC" (el programa no tiene firma digital): "Más información" y
      "Ejecutar de todas formas".
    - La primera vez que entrás al online, Windows pregunta si dejás que el juego use la red: tocá "Permitir"
      (marcá redes privadas y públicas). Sin eso no se puede conectar con el rival.
+3. La primera vez tarda un poco más en arrancar: prepara los gráficos de tu placa de video.
 
-Requisitos: Windows 10 u 11 de 64 bits, una placa de video con DirectX 12 o Vulkan (casi todas desde 2013) y un
-procesador de 4 núcleos. Para PCs con poca placa de video: F2 > Gráficos > Calidad "Baja".
+Requisitos: Windows 10 u 11 de 64 bits, una placa de video con DirectX 12 o Vulkan (casi todas desde 2013) y 4 GB de
+RAM o más. Para PCs con poca placa de video: F2 > Gráficos > Calidad "Baja".
 
 Si algo falla, la carpeta logs tiene lo que pasó: mandá el último archivo mk9_*.log (y, si el juego se cerró de
 golpe, el crash_*.dmp de la misma hora).
@@ -106,9 +108,7 @@ bibliotecas de terceros, bajo las suyas (carpeta licencias).
 "@
 [IO.File]::WriteAllText((Join-Path $dst 'AVISO.txt'), $notice.Replace("`r`n", "`n").Replace("`n", "`r`n"),
     [Text.UTF8Encoding]::new($true))
-[IO.File]::WriteAllText((Join-Path $dst 'game_root\COPIAR_ACA.txt'),
-    "Copiá acá los archivos de tu copia del juego (default.xex y las carpetas Asset, Localization, Movies...).`r`n",
-    [Text.UTF8Encoding]::new($true))
+
 
 # --- licences: this project's, the SDK's, every third-party component's, the controller database's, Visual C++'s ---
 $lic = Join-Path $dst 'licencias'
