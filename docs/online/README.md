@@ -143,6 +143,14 @@ reloj sigue siendo el del 8600G):
 El trabajo por cuadro es chico (código de la 360 corriendo nativo): lo que más pesa en una PC lenta es el reloj de la
 CPU con rollbacks hondos (cada cuadro re-simulado cuesta ~2,5 ms acá) y la placa de video (F2 > Calidad "Baja").
 
+### Los textos de la versión de PC (2026-11-09)
+
+La opción "Xbox LIVE" del menú principal dice **ONLINE (F1)** y su mensaje ("tu perfil no tiene permisos para Xbox
+LIVE") explica que el online se abre con F1, en los seis idiomas (`mk9_localization.h`, `mk9_pc_texts`). Al arrancar,
+los `Coalesced.*` del jugador se reescriben con esos textos en `cache\localization` y esa carpeta se monta sobre
+`Localization`: el sistema de archivos del SDK ahora toma el montaje más específico
+(`virtual_file_system.cpp`). No se reparten archivos del juego.
+
 ### Modos probados (2026-11-09, en español)
 
 Historia (la cinemática de apertura, videos por FFmpeg), Entrenamiento (Tutorial, Práctica), la selección con los 4

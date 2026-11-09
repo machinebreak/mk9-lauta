@@ -2,7 +2,8 @@
 
 ## Antes de empezar
 
-- **F1** abre y cierra las pantallas online. **F2** abre las opciones.
+- **F1** abre y cierra las pantallas online. **F2** abre las opciones. En el menú principal del juego, la opción
+  **ONLINE (F1)** te lo recuerda.
 - La primera vez, la ventana online se abre sola y te pide un **nombre de usuario** (de 2 a 20 letras). Es el que ven
   los demás en las salas y en el chat. Se puede cambiar cuando quieras con "Cambiar".
 

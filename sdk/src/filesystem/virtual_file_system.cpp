@@ -117,10 +117,16 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
     normalized_path = resolved_path;
   }
 
-  // Find the device.
-  auto it = std::find_if(devices_.cbegin(), devices_.cend(), [&](const auto& d) {
-    return rex::string::utf8_starts_with_case(normalized_path, d->mount_path());
-  });
+  // Find the device: the most specific mount that holds the path. mk9-nx online (2026-11-09): a folder mounted over
+  // part of another device's tree (the game's localization, rewritten, over the game's own folder) wins there; with
+  // one device holding the path, as before.
+  auto it = devices_.cend();
+  for (auto d = devices_.cbegin(); d != devices_.cend(); ++d) {
+    if (rex::string::utf8_starts_with_case(normalized_path, (*d)->mount_path()) &&
+        (it == devices_.cend() || (*d)->mount_path().size() > (*it)->mount_path().size())) {
+      it = d;
+    }
+  }
   if (it == devices_.cend()) {
     REXFS_WARN("VFS: '{}' -> [no device]", path);
     // Supress logging the error for ShaderDumpxe:\CompareBackEnds as this is

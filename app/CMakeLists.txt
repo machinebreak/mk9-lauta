@@ -82,6 +82,8 @@ set(MK9_SOURCES
     # player, the pads), the screen and the language, the online fights' input delay.
     src/options_ui.cpp
     src/mk9_controls.cpp
+    # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
+    src/mk9_localization.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.

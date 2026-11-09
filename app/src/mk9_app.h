@@ -21,6 +21,7 @@
 #include "sa2_capture.h"
 #include "mk9_script_input.h"
 #include "mk9_controls.h"
+#include "mk9_localization.h"
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
@@ -207,6 +208,8 @@ class Mk9App : public rex::ReXApp {
     if (!runtime() || !runtime()->memory()) {
       return;
     }
+    // mk9-nx online (2026-11-09): the Xbox LIVE entry's texts point to this version's online, F1 (mk9_localization.h)
+    mk9::localization::Install(runtime()->file_system(), game_data_root());
     const char* path = std::getenv("MK9_DUMP_IMAGE");
     if (!path) {
       return;
