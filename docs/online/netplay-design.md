@@ -399,3 +399,16 @@ experimental).
    La misma sesión de 21 minutos repetida con esto: 11 peleas con rollback (hasta 2220 rollbacks por lado), 77.134
    cuadros comparados entre las grabaciones de los dos, ningún hash distinto, ningún cierre y ninguna lectura
    salteada.
+5. **El desync raro de los menús, atrapado con las grabaciones** (`hunt.ps1 -Runs 8 -Dir out\pc_test`: 7 corridas
+   juntas hasta la pelea, la 7.ª separada). Las entradas de las dos máquinas fueron iguales cuadro por cuadro
+   (`session_report.py`): no es el netcode. Los hashes se separan en el cuadro 4222 de la época 0 (lockstep), donde un
+   modo arranca un cuadro aparte (4224 y 4223). El primer rastro está antes, en el cuadro 3917: el script del invitado
+   llama a la nativa `8246e498` un cuadro antes que el del host, con todas las nativas anteriores de ese cuadro iguales
+   en las dos (comparadas descontando el corrimiento de 0x60000 entre los heaps de las dos). A los 3784, la nativa
+   `8246f108` (`sub_82386860`: busca un objeto por nombre en la lista de `0x833CF39C`) devolvió en las dos objetos a
+   0x190 de distancia, no al corrimiento del heap: el primer sospechoso. Esa corrida tuvo muchas esperas del lockstep
+   (el juego a ~30 fps con la PC cargada), así que los botones del guion cayeron en otras pantallas y el camino fue
+   otro: los modos arrancaron en 2350/3944/4224 y no en ~3090/~3880 con la pelea a ~4380 como en las otras siete
+   (el menú de 1 jugador, no el Versus). Queda por ver qué espera de ese camino termina con el reloj de cada máquina;
+   los registros están en `out/f3/desync_menu_20261109` (las dos grabaciones, los logs y las nativas, sorteos y
+   chequeos de los cuadros 3700-4430).
