@@ -1,0 +1,39 @@
+# optimised codegen: written by tools/codegen.sh --flavor optimised from perf_overrides.toml.
+# Code generation options for speed: the "optimised codegen" flavour (tools/codegen.sh --flavor optimised copies this
+# file to codegen_flavor.toml, which usf4_manifest.toml includes; --flavor classic writes an empty one). Root keys: they
+# must stay outside any table. Build-time, so they come as an A/B NRO pair.
+#
+# From sa2-nx's perf_overrides.toml (masseffect-nx measured), stage A: the options that need no per-function audit.
+# They only change how the C++ is written, so the compiler can keep guest state in host registers and drop dead stores;
+# the guest-visible result is the same:
+#   - cr0-cr7, ctr, xer and the lwarx reservation as C++ locals;
+#   - skip_msr: no mfmsr/mtmsrd fences, ctx.msr stores or global lock around the guest's interrupt-off sequences.
+#     USF4 0.5.5 console profile: the main thread waited on that one process-wide recursive mutex in the XDK's
+#     interlocked list pops (sub_82966BA8: mfmsr; mtmsrd r13; lwarx; stwcx.; mtmsrd) against the job workers and the
+#     audio thread; a stwcx. is already a compare-and-swap. On the Xbox 360 an interrupt-off section only keeps the
+#     same core from being interrupted; other cores run on.
+#   - dform_disp_split: D-form loads/stores as base + zext(reg) + disp (differs only when reg + disp crosses 2^32, a
+#     guest fault either way);
+#   - fctiwz_inline: fctiwz as fcvtzs + NaN select;
+#   - fp_moves_modeless: scalar float moves switch no host flush mode (sa2-nx's generator option).
+# Post-codegen steps (tools/post_codegen.py): guest loads/stores without volatile (tools/pch_no_volatile.py, +15-20 %
+# fps in masseffect-nx) with a compiler barrier at every loop header (tools/loop_barriers.py, REQUIRED: GCC otherwise
+# turns guest polling loops into infinite loops) and direct calls to unhooked functions (tools/direct_calls.py: the
+# weak sub_X aliases cannot be inlined).
+# Stage B (2026-10-25): non_volatile_as_local + elide_lr_stores (r14-r31, f14-f31, v14-v31/v64-v127 as C++ locals, no
+# __savegprlr/__restgprlr calls, no ctx.lr store before each call). tools/read_before_write.py --noreturn=82FE1020
+# (longjmp) on the stage A code: no non-volatile register read before written; only cr reads in setjmp (sub_82FE1340)
+# and sub_82BDCC70, which cr_as_local already ships. Native ctx.lr users: mk9_movie.cpp saves/restores it (harmless),
+# the console profiler's caller lines (now older return addresses). setjmp/longjmp: library error paths only
+# (0x82C3xxxx, 0x8319xxxx-0x832Axxxx); after a longjmp the setjmp caller's locals keep their latest values, so the
+# runtime logs every guest longjmp (pch template). Still not: non_argument_as_local (tools/non_argument_audit.py).
+cr_as_local = true
+ctr_as_local = true
+xer_as_local = true
+reserved_as_local = true
+skip_msr = true
+dform_disp_split = true
+fctiwz_inline = true
+fp_moves_modeless = true
+non_volatile_as_local = true
+elide_lr_stores = true
