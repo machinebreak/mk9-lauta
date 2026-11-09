@@ -31,7 +31,8 @@ En la pestaña **Chat global** se habla con todos los que están en línea.
 - Los menús son los del juego: cualquiera de los dos puede elegir VERSUS, ONE VS ONE o TWO VS TWO. El otro se suma con
   START en la pantalla de 2 jugadores, y cada uno elige su luchador.
 - Arriba a la derecha ves contra quién jugás y el ping ("vs Rival - 45 ms").
-- Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar.
+- Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los menús y la
+  intro de cada pelea van sincronizados con un retraso según el ping, así no se traban.
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
 
@@ -88,7 +89,9 @@ al volver a abrir el juego.
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K).
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
-- **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala.
+- **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala. Con ping
+  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, hasta 4) para que los personajes
+  no "salten" cuando llegan los botones del otro.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 
 ## Actualizaciones

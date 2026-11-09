@@ -58,14 +58,17 @@ game's files from it, and they stay on your computer.
   one. When both players press **Estoy listo** (ready), the game starts again already connected. The game's own
   menus are shared: either player chooses VERSUS (ONE VS ONE or TWO VS TWO), the other joins with START, and each
   picks a fighter. Fights run with rollback: your own moves come out at once (with one frame of input delay unless
-  the host chooses 0 or 2) and the game corrects itself when the other player's buttons arrive. Menus and loads run
+  the host chooses 0 or 2, raised by itself with a long ping so rollbacks stay about five frames deep) and the game
+  corrects itself when the other player's buttons arrive. Menus and loads run
   in lockstep, with their delay set from the ping. There is no pause in an online fight. The opponent's name and
   ping show at the top right; when the match ends, the loser chooses REMATCH, another fighter or the menu.
 
 Online play is new. It has been tested with two games on one PC over emulated networks and through the real
-lobby: X-Ray-heavy fights with 3 % packet loss and heavy jitter, and a 21-minute session of 11 fights with ~90 ms
-of ping and 0.5 % loss, where the two games stayed the same from the first frame to the last (77,000 frames
-compared). It has not been played between two machines
+lobby: X-Ray-heavy fights with 3 % packet loss and heavy jitter, and 21-minute sessions of 11 fights with ~90 ms
+and with ~200 ms of ping (jitter, 1 % loss), where the two games stayed the same from the first frame to the last
+(75,000-77,000 frames compared). The 0.1.0 testers' logs (Argentina-Venezuela, 140-220 ms, partly over the TURN
+relay) showed sessions frozen at their start, slow menus, slow fight intros, crashes and desyncs in fights: all
+traced and fixed in 0.2.0 (docs/online/netplay-design.md). It has not been played between two machines
 over the internet yet. Both players need the same release. Each online session saves both players' inputs in
 `logs/session_*.mk9net` (the newest ten): if two games ever part, the two players' files say where
 (`tools/online/session_report.py`). [docs/online/netplay-design.md](docs/online/netplay-design.md) is the working
