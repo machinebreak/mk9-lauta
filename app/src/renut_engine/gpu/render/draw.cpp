@@ -2177,6 +2177,14 @@ bool ReadIndices(const u8 *src, u32 count, bool is32, u32 endian) {
     return false;
   g_indices.resize(count);
 #if defined(_WIN32)
+  // tests only: MK9_TEST_GONE_READ=2 points one index read in 3000 at the low heap's top, where nothing is mapped
+  static const bool test_gone = [] {
+    const char *v = std::getenv("MK9_TEST_GONE_READ");
+    return v && v[0] == '2';
+  }();
+  static uint64_t test_reads = 0;
+  if (test_gone && ++test_reads % 3000 == 0)
+    src = detail::GuestVirtualBase() + 0x3FC30780u;
   bool ok;
   {
     QuietGuestFaultScope quiet;
@@ -4172,7 +4180,10 @@ void FlushVertexFillsLocked() {
   banjo::renut_gpu::CountKick();
   QuietGuestFaultScope quiet;
   // tests only: MK9_TEST_GONE_READ=1 points one fill in 60 flushes at the low heap's top, where nothing is mapped
-  static const bool test_gone = std::getenv("MK9_TEST_GONE_READ") != nullptr;
+  static const bool test_gone = [] {
+    const char *v = std::getenv("MK9_TEST_GONE_READ");
+    return v && v[0] == '1';
+  }();
   static uint64_t test_flushes = 0;
   if (test_gone && !g_stream_fills.empty() && ++test_flushes % 60 == 0)
     g_stream_fills.front().guest = detail::GuestVirtualBase() + 0x3FC30780u;
