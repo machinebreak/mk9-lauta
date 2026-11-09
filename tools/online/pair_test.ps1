@@ -6,7 +6,7 @@
 #   powershell -File tools\online\pair_test.ps1 [-Seconds 110] [-HostScript file] [-GuestScript file] [-Delay 2]
 #       [-Snapshots "60,90"] [-Hash] [-HashFrom 1] [-Checks] [-SyncRanges "83380000-834D0000"]
 #       [-Room CODE -Lobby ws://127.0.0.1:8791/lobby?game=mk9pc] [-Extra "--name=value ..."] [-Profiles inst]
-#       [-HostExtra "--name=value ..."] [-GuestExtra "--name=value ..."]
+#       [-HostExtra "--name=value ..."] [-GuestExtra "--name=value ..."] [-HostAffinity 0x0F] [-GuestAffinity 0xF0]
 #
 # -Room: the two meet in that lobby room and play over the path ICE finds (ice_link.h) instead of local UDP; the lobby
 # is a local one by default (ps2-web-recomp's scripts/lobby_server.py 8791 --host 127.0.0.1).
@@ -28,6 +28,8 @@ param(
     [string]$Extra = '',
     [string]$HostExtra = '',
     [string]$GuestExtra = '',
+    [string]$HostAffinity = '',
+    [string]$GuestAffinity = '',
     [string]$Room = '',
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$Profiles = 'inst',
@@ -80,8 +82,10 @@ function Args-For([string]$role) {
 
 $started = Get-Date
 $h = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -WindowStyle Minimized -ArgumentList (Args-For 'host')
+if ($HostAffinity) { $h.ProcessorAffinity = [IntPtr][Convert]::ToInt64($HostAffinity, 16) }
 Start-Sleep -Milliseconds 300
 $g = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -WindowStyle Minimized -ArgumentList (Args-For 'guest')
+if ($GuestAffinity) { $g.ProcessorAffinity = [IntPtr][Convert]::ToInt64($GuestAffinity, 16) }
 $h.WaitForExit($Seconds * 1000) | Out-Null
 foreach ($p in @($h, $g)) { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
 foreach ($p in @($h, $g)) { $p.WaitForExit(20000) | Out-Null }

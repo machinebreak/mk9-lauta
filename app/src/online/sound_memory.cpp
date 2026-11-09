@@ -339,7 +339,7 @@ MK9_GAME_CALLBACK(sub_82602CA8)
 MK9_GAME_CALLBACK(sub_82602D00)
 MK9_GAME_CALLBACK(sub_82602D88)
 MK9_GAME_CALLBACK(sub_82602E00)
-MK9_GAME_CALLBACK(sub_82603360)
+// (and the events' callback, sub_82603360, with the same guard in sound_sync.cpp: it waits there in lockstep)
 #undef MK9_GAME_CALLBACK
 
 // FMOD::Thread's loop (its mixer, stream, file, non-blocking and geometry threads): they run on through a rollback

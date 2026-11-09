@@ -254,12 +254,51 @@ de cero en el siguiente; `queued.cpp`, `SkipHiddenDraw`). El contador `[fps]` se
 ocultos y cuenta los mostrados tarde: con 40 ms de lag + jitter y 25-64 cuadros re-simulados cada 5 s, 60.0 fps
 mostrados, el más largo 17-20 ms, 0-1 por encima de 20 ms.
 
+### Red mala, idiomas distintos (2026-11-08)
+
+- **80 ms + jitter + 3 % de pérdida** (`mk9_net_lag_ms=40`, `jitter 15`, `loss 3`; ida y vuelta medida ~116 ms):
+  tres peleas seguidas (la primera, REMATCH, otro luchador) sin desync; del lado del invitado 194, 382 y 430 rollbacks,
+  el más profundo de 5 cuadros; las peleas a 60.0 fps. Los menús de después de cada pelea (lockstep con el delay del
+  rollback, 1 cuadro) iban a **38 fps**: cada cuadro esperaba la entrada del otro (ver "El delay del lockstep").
+- **Un jugador en español y el otro en inglés** (`user_language` 5 y 1; textos, arte y paquetes distintos): tres
+  peleas con rollback sin desync (los registros de chequeos difieren sólo por los cuadros que el rollback repite, con
+  los mismos valores). El idioma es de cada uno.
+
+### El delay del lockstep sigue al ping (2026-11-08)
+
+En un tramo en lockstep cada cuadro espera la entrada de ese cuadro del otro, que salió `delay` cuadros antes: los
+delays de los dos lados tienen que cubrir la ida y vuelta, o cada cuadro espera (con 116 ms y delay 1, 38 fps). Cada 2 s,
+y apenas termina el modo de una pelea, cada lado sube su propio delay a lo que pide la ida y vuelta
+(`LockstepDelayFor`: (ida y vuelta + 25 ms) / 2 cuadros, entre el `mk9_net_delay` del host y 12). La ida y vuelta que
+cuenta es el piso de los últimos 8 pings (uno cada 0,5 s): el otro contesta el ping en el borde de su cuadro, y uno
+contestado después de una carga mide la carga, no la red (al arrancar, la media daba 193 ms con una red de 50-90).
+Sube enseguida: los cuadros del medio repiten su última entrada (pad y "ocupado"; sin "listo" ni anuncio de sonido).
+Baja tras tres chequeos seguidos (6 s): la entrada de ese cuadro ya estaba hecha y el lado no hace otra hasta que los
+cuadros la alcancen. Las entradas de cada lado siguen siendo una por cuadro, así que los delays no necesitan ser
+iguales en los dos lados ni hace falta acordarlos; la época de la próxima pelea vuelve al delay del rollback. En el
+menú, 4-5 cuadros con 116 ms no se notan; 38 fps sí.
+
+### Los avisos de los sonidos, al mismo cuadro en las dos (`sound_sync.h`, 2026-11-08)
+
+FMOD llama al aviso de eventos del juego (`sub_82603360`) cuando un evento llega a un punto de sincronía (tipo 0: la
+fuente recibe `+268 |= 0x40000000`) o termina (3 robado, 4 terminado: `+88 |= 0x10000000`, `+256 = -1`), desde sus
+propios hilos y con el reloj de su mezclador: en cada máquina cuando le toca. En lockstep ahora esos avisos esperan:
+cada máquina anuncia los suyos con sus entradas (4 bytes más por cuadro, uno a la vez y en ronda hasta que se
+entrega; versión 7 del protocolo) y el aviso llega al juego en el borde del cuadro en que las entradas de las dos lo
+anunciaron, el mismo en las dos porque las dos deciden con las mismas dos tiras de entradas. Las fuentes se numeran
+cuando el juego le pasa su evento a FMOD en el hilo del juego (la cuenta es la misma en las dos); el final de una es un
+aviso y sus puntos de sincronía los siguientes. En la pelea con rollback pasan como vienen (lo que esperaba se entrega
+al empezarla). Probado: en los menús hasta la pelea, 16 fuentes y 13 avisos, entregados juntos en las dos.
+
+**No era la causa de la desincronización rara de los menús**: con `mk9_sound_sync=false` y los avisos del invitado
+90 cuadros tarde (`mk9_test_sound_late=90`), los menús llegan igual a la pelea sin diferencias. Igual queda puesto:
+cierra una fuente real de diferencias (lo que el juego haga con esas marcas en otros menús o modos).
+
 Falta (F5):
-- una desincronización en los menús (época 0, lockstep) apareció **una vez** en ~15 sesiones de prueba (cuadro 3727,
-  ~62 s: la confirmación de la selección y la pantalla VS); la sesión la detecta y termina con aviso. Sospecha: algo
-  de esa pantalla espera al sonido (la voz del anunciador o de la intro, streams de FMOD que terminan con el reloj de
-  cada máquina) y avanza en cuadros distintos; el arreglo sería otro consenso como el de las películas (Busy/Ready).
-  Si vuelve: `pair_test.ps1 -Checks` y comparar `host_checks.txt`/`guest_checks.txt` y los sorteos
-  (`rand_report.py --other`) en el cuadro del aviso;
+- la desincronización de los menús (época 0, lockstep) apareció **una vez** en ~15 sesiones de prueba (cuadro 3727,
+  ~62 s: la confirmación de la selección y la pantalla VS); la sesión la detecta y termina con aviso. No son los
+  avisos de sonido (arriba). Para cazarla: `tools/online/hunt.ps1 -Runs 10 -Extra "--mk9_net_lag_ms=25
+  --mk9_net_jitter_ms=20"` repite la sesión hasta que algo se separe y guarda los registros de esa corrida (chequeos,
+  sorteos, nativas de los cuadros 3700-4430);
 - copiar páginas en paralelo (el `keeping a frame` de ~1.4 ms);
-- pruebas largas con lag, jitter y pérdida; afinar la sincronía de tiempo y el delay.
+- una sesión de más de 15 minutos seguidos; dos PCs reales.

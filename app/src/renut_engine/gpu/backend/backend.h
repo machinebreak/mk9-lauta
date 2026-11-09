@@ -29,6 +29,8 @@ inline Backend ActiveBackend() {
   return b ? static_cast<Backend>(b - 1) : detail::LatchBackend();
 }
 inline bool IsVulkan() { return ActiveBackend() == Backend::Vulkan; }
+// mk9-nx (2026-11-08): Direct3D 12 did not start (an old GPU or driver): Vulkan from here on, before the device.
+void FallBackToVulkan();
 // banjo-nx: the deko3d back end.
 inline bool IsDeko3D() { return ActiveBackend() == Backend::Deko3D; }
 // banjo-nx: Vulkan's way of binding (dynamic constant buffer sets, push constants, buffer device addresses,

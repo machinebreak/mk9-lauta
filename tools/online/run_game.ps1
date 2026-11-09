@@ -4,12 +4,15 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\online\run_game.ps1 [-Renderer renut|native|xenos]
 #       [-Backend vulkan|d3d12] [-Resolution 720p] [-Seconds 60] [-Script "20 START;26 A"] [-ScriptFile path]
 #       [-Snapshots "10,20,30"] [-GameArgs "pchr1=scorpion"] [-Visible] [-Sound] [-Set "name=value;name=value"]
+#       [-Affinity 0x0F]
 #
 # -Renderer  renut  = Renut's Direct3D-level renderer (sa2_renderer = renut), on -Backend (renut_gpu_backend)
 #            native = the PM4-ring native renderer (sa2_renderer_native; needs sa2_shaders.mesp next to the exe)
 #            xenos  = ReXGlue's emulated Xenos GPU (slow; the reference image)
 # -GameArgs  appended to the game's own command line (the SDK's cl cvar: "default.xex" <cl>), e.g. pchr1=/bgnd=
 # -Set       any other cvars as REX_<NAME> environment variables
+# -Affinity  the logical processors the game may use (a mask: 0x0F = the first four, two cores with SMT): a PC with
+#            fewer cores
 # Test runs are muted and minimized unless -Sound / -Visible. The game is stopped after -Seconds.
 param(
     [ValidateSet('renut', 'native', 'xenos')][string]$Renderer = 'renut',
@@ -24,7 +27,8 @@ param(
     [switch]$Visible,
     [switch]$Sound,
     [int]$Tail = 30,
-    [string]$Exe = 'out\pc\mk9.exe'
+    [string]$Exe = 'out\pc\mk9.exe',
+    [string]$Affinity = ''
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $exePath = (Resolve-Path (Join-Path $root $Exe)).Path
@@ -63,6 +67,7 @@ if ($Snapshots) { Remove-Item (Join-Path $dir 'captures\*.ppm'), (Join-Path $dir
 $started = Get-Date
 $style = if ($Visible) { 'Normal' } else { 'Minimized' }
 $p = Start-Process -FilePath $exePath -WorkingDirectory $dir -PassThru -WindowStyle $style
+if ($Affinity) { $p.ProcessorAffinity = [IntPtr][Convert]::ToInt64($Affinity, 16) }
 $p.WaitForExit($Seconds * 1000) | Out-Null
 if ($p.HasExited) {
     '{0} exited after {1:n1} s with code 0x{2:X8}' -f (Split-Path $exePath -Leaf), ((Get-Date) - $started).TotalSeconds, $p.ExitCode

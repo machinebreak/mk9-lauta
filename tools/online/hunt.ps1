@@ -4,13 +4,14 @@
 # and out\pc\logs\fail_pair_<role>.log, to compare (tools\online\rand_report.py, the natives of the window).
 #
 #   powershell -File tools\online\hunt.ps1 [-Runs 6] [-Seconds 112] [-HostScript out\f3\host_fight.txt]
-#       [-GuestScript out\f3\guest_fight.txt] [-NativeFrames "3700-4430"]
+#       [-GuestScript out\f3\guest_fight.txt] [-NativeFrames "3700-4430"] [-Extra "--mk9_net_lag_ms=30 ..."]
 param(
     [int]$Runs = 6,
     [int]$Seconds = 112,
     [string]$HostScript = 'out\f3\host_fight.txt',
     [string]$GuestScript = 'out\f3\guest_fight.txt',
-    [string]$NativeFrames = '3700-4430'
+    [string]$NativeFrames = '3700-4430',
+    [string]$Extra = ''
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $f3 = Join-Path $root 'out\f3'
@@ -29,7 +30,7 @@ function Mode-Starts([string]$path) {
 
 for ($i = 1; $i -le $Runs; $i++) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'pair_test.ps1') -HostScript $HostScript `
-        -GuestScript $GuestScript -Seconds $Seconds -Checks -Extra "--mk9_native_log_frames=$NativeFrames" | Out-Null
+        -GuestScript $GuestScript -Seconds $Seconds -Checks -Extra "--mk9_native_log_frames=$NativeFrames $Extra".Trim() | Out-Null
     $hb = First-Match (Join-Path $logs 'pair_host.log') "barrier 'fight start' at frame (\d+)"
     $gb = First-Match (Join-Path $logs 'pair_guest.log') "barrier 'fight start' at frame (\d+)"
     $hm = Mode-Starts (Join-Path $f3 'host_checks.txt')

@@ -36,6 +36,7 @@
 #include "renut_engine/gpu/backend/video_internal.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 #include "renut_engine/gpu/banjo_renut_record.h"  // banjo-nx (package 28b): banjo_renut_record_worker
+#include <rex/system.h>
 #include <rex/frame_latency.h>  // banjo-nx (2026-10-20): the latency probe's "input -> GPU done"
 #include <rex/cvar.h>  // sa2-nx (2026-10-20): sa2_renut_double_buffer
 #if defined(PLUME_DEKO3D)
@@ -896,13 +897,33 @@ bool Video::CreateHostDevice() {
 
   banjo::renut_gpu::BeforeDeviceCreated();  // banjo-nx: plume's pipeline cache and barriers (banjo_renut_tuning.h)
   s.render_interface = CreateRenderInterface();
-  if (!s.render_interface) {
-    RGPU_ERROR("{} render interface creation failed", BackendName(ActiveBackend()));
-    return false;
+  if (s.render_interface)
+    s.device = s.render_interface->createDevice();
+#if defined(_WIN32)
+  // mk9-nx (2026-11-08): no Direct3D 12 on this GPU or driver: Vulkan instead (renut_gpu_backend stays as it is)
+  if (!s.device && !IsVulkan()) {
+    RGPU_WARN("D3D12 {}: trying Vulkan", s.render_interface ? "device creation failed" : "is not available");
+    s.device.reset();
+    s.render_interface.reset();
+    FallBackToVulkan();
+    s.render_interface = CreateRenderInterface();
+    if (s.render_interface)
+      s.device = s.render_interface->createDevice();
   }
-  s.device = s.render_interface->createDevice();
-  if (!s.device) {
-    RGPU_ERROR("{} device creation failed", BackendName(ActiveBackend()));
+#endif
+  if (!s.render_interface || !s.device) {
+    RGPU_ERROR("{} {} creation failed", BackendName(ActiveBackend()),
+               s.render_interface ? "device" : "render interface");
+#if defined(_WIN32)
+    // mk9-nx (2026-11-08): neither works: say so in the players' language instead of a black window
+    rex::ShowSimpleMessageBox(
+        rex::SimpleMessageBoxType::Error,
+        "Tu placa de video no pudo arrancar el juego: hace falta una compatible con DirectX 12 o Vulkan (casi todas "
+        "desde 2013: NVIDIA GeForce GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, Intel HD Graphics 500 o más "
+        "nueva).\n\nSi la tuya lo es, actualizá su driver desde la página de NVIDIA, AMD o Intel y volvé a abrir el "
+        "juego.");
+    std::_Exit(1);
+#endif
     return false;
   }
   banjo::renut_gpu::OnDeviceCreated(s.device.get());

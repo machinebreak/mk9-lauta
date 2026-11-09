@@ -29,6 +29,17 @@
 // frame; a readiness poll during frame s answers ready only if both machines' ready flags that left with frame s's
 // inputs say so.
 //
+// The sounds' callbacks (a sync point, an end: FMOD's, on each machine's own clock) reach the game in lockstep only
+// once both machines' inputs have announced them, at the same frame on both (sound_sync.h).
+//
+// The lockstep delay follows the round trip: in a lockstep stretch the frame waits for the peer's input of that frame,
+// which left the peer delay frames before, so the two delays have to cover the round trip or every frame waits (the
+// menus after a fight at 38 fps with 116 ms and delay 1). Every 2 s, and when a fight's mode ends, each side sets its
+// own delay to what the round trip needs (LockstepDelayFor, from the floor of the last pings: a pong answered after a
+// long frame says nothing of the network): up at once, the frames in between getting its last input again; down after
+// three checks in a row, its next inputs waiting until the frames catch up. Each side's inputs stay one per frame, so
+// the delays need not be the same on both.
+//
 // Rollback (an epoch started by a fight's barrier): the simulation's memory is kept frame by frame (snapshot.h,
 // Timeline) and a frame no longer waits for the peer: without its input, it runs on a prediction (the peer's last
 // input). When the input arrives and differs, the next frame boundary rolls the memory back to that frame's start and
@@ -47,8 +58,9 @@
 // Packets (little-endian): u16 'M9', u8 version, u8 type, then
 //   HELLO    u8 player, u8 delay, u32 build, u32 seed (the host's: the generators start from it, seed.h),
 //            u8 rollback (the host's mk9_net_rollback), u8 rollback delay
-//   INPUT    u32 epoch, u32 ack (the peer's last frame received in order, +1), u32 first, u8 count, count x 14 bytes
-//            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags), u32 hash frame (~0: none),
+//   INPUT    u32 epoch, u32 ack (the peer's last frame received in order, +1), u32 first, u8 count, count x 18 bytes
+//            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags, then u32 a sound callback's
+//            announcement, sound_sync.h), u32 hash frame (~0: none),
 //            u64 hash (of that final frame), u32 the sender's live frame (time sync)
 //   BARRIER  u32 epoch (the one starting there), u32 the sender's last frame of the epoch before
 //   PING / PONG  u64 microseconds (the sender's clock, echoed)
@@ -59,6 +71,7 @@
 #include "online/netplay.h"
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -85,6 +98,7 @@
 #include "online/seed.h"
 #include "online/sound_memory.h"
 #include "online/sound_replay.h"
+#include "online/sound_sync.h"
 #include "online/snapshot.h"
 #include "online/transport.h"
 #include "profiler/sa2_cpu_profile_pc.h"
@@ -116,7 +130,7 @@ namespace mk9::netplay {
 namespace {
 
 constexpr uint16_t kMagic = 0x394D;  // "M9"
-constexpr uint8_t kVersion = 6;
+constexpr uint8_t kVersion = 7;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -135,9 +149,10 @@ struct Pad {
   uint8_t bytes[12] = {};  // X_INPUT_GAMEPAD as the guest stores it (big-endian)
   uint8_t busy = 0;        // BusyFlag bits of the machine when it was read
   uint8_t ready = 0;       // ReadyFlag bits: the polls that said ready in the frame before
+  uint32_t sound = 0;      // a sound callback this machine got (sound_sync.h Announcement; 0: none)
   bool operator==(const Pad& o) const { return std::memcmp(bytes, o.bytes, 12) == 0; }
 };
-constexpr int kPadBytes = 14;
+constexpr int kPadBytes = 18;
 
 struct Session {
   bool configured = false, failed = false, started = false, ended = false;
@@ -146,7 +161,10 @@ struct Session {
   int player = 0;  // 0 = player 1 (the host), 1 = player 2
   int lockstep_delay = 2, rollback_delay = 1;
   bool rollback_wanted = true;
-  int delay = 2;                     // this epoch's
+  int delay = 2;                     // this epoch's (a lockstep stretch raises it with the round trip)
+  int64_t delay_check_at = 0;        // the lockstep frame that looks at the round trip next
+  int lower_votes = 0;               // checks in a row that found the delay longer than needed
+  int64_t local_made_upto = -1;      // the newest frame with a local input
   std::unique_ptr<net::Transport> link;
   uint16_t local_port = 0;
   bool heard_peer = false, peer_hello = false;
@@ -197,6 +215,8 @@ struct Session {
   // statistics
   uint64_t last_heard_us = 0, last_sent_us = 0, last_ping_us = 0, log_at_us = 0;
   double rtt_ms = 0, wait_ms_window = 0, wait_ms_max = 0;
+  double rtt_samples[8] = {};        // the last pongs' round trips (their floor sets the lockstep delay)
+  int rtt_count = 0;
   uint64_t frames_window = 0, stalls_window = 0, sent = 0, received = 0;
   uint64_t rollbacks = 0, resimulated = 0, max_depth = 0, predicted = 0, mispredicted = 0, syncs_slept = 0;
   uint64_t confirms = 0, confirms_doomed = 0;  // ConfirmFrame: actions a rollback cannot undo, and those left to a rerun
@@ -371,7 +391,7 @@ void SendHello() {
 }
 
 void SendInputs() {
-  const int64_t newest = (g.rollback ? g.latest : g.frame) + g.delay;
+  const int64_t newest = g.rollback ? g.latest + g.delay : g.local_made_upto;
   int64_t first = std::max<int64_t>(g.peer_acked + 1, 0);
   first = std::max<int64_t>(first, newest - kMaxPerPacket + 1);
   auto p = Header(kInput);
@@ -384,6 +404,7 @@ void SendInputs() {
     p.insert(p.end(), g.local[size_t(f)].bytes, g.local[size_t(f)].bytes + 12);
     p.push_back(g.local[size_t(f)].busy);
     p.push_back(g.local[size_t(f)].ready);
+    Put32(p, g.local[size_t(f)].sound);
   }
   // the newest final frame's sync hash
   const int64_t final_frame = std::min(FinalUpto(), g.frame - 1);
@@ -448,6 +469,7 @@ void Receive() {
         std::memcpy(pad.bytes, p + 9 + i * kPadBytes, 12);
         pad.busy = p[9 + i * kPadBytes + 12];
         pad.ready = p[9 + i * kPadBytes + 13];
+        pad.sound = Get32(p + 9 + i * kPadBytes + 14);
         g.have_remote[size_t(f)] = 1;
         // a frame that ran on a prediction this input contradicts: the rollback goes back to it
         if (g.rollback && f < g.frame && !(g.used[1 - g.player][size_t(f)] == pad)) {
@@ -480,6 +502,7 @@ void Receive() {
     } else if (type == kPong && left >= 8) {
       const double rtt = (NowUs() - Get64(p)) / 1000.0;
       g.rtt_ms = g.rtt_ms == 0 ? rtt : g.rtt_ms * 0.8 + rtt * 0.2;
+      g.rtt_samples[g.rtt_count++ % 8] = rtt;
     } else if (type == kBye) {
       // its game found the two out of sync, or its player left
       const bool desync = left >= 1 && p[0] == uint8_t(EndReason::kDesync);
@@ -731,6 +754,9 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.mode_change_at = -1;
   g.advantage = 0;
   g.delay = rollback ? g.rollback_delay : g.lockstep_delay;
+  g.delay_check_at = 120;
+  g.lower_votes = 0;
+  g.local_made_upto = g.delay - 1;  // the epoch's first delay frames: neutral on both sides
   Ensure(g.delay + 1);
   g.last_heard_us = NowUs();
 }
@@ -797,6 +823,11 @@ void LogStats() {
       rb += fmt::format("; {} action(s) a rollback cannot undo, {} left to a corrected run", g.confirms,
                         g.confirms_doomed);
     }
+    const sound_sync::Stats callbacks = sound_sync::GetStats();
+    rb += fmt::format("; sound callbacks: {} sources numbered, {} kept for both, {} given, {} dropped, {} waiting, "
+                      "{} through at once, {} given at a fight's start",
+                      callbacks.numbered, callbacks.deferred, callbacks.delivered, callbacks.dropped,
+                      callbacks.waiting, callbacks.passed, callbacks.flushed);
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
                 "longest {:.1f} ms), peer inputs to {}; sent {}, received {}{}{}",
                 g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
@@ -809,15 +840,62 @@ void LogStats() {
   g.log_at_us = now + 10'000'000;
 }
 
+// The round trip's floor: the lowest of the last pongs (one answered after a long frame of the peer's, a load, says
+// nothing of the network). 0 until one came.
+double RoundTripFloor() {
+  const int n = std::min(g.rtt_count, 8);
+  if (n == 0) return 0;
+  return *std::min_element(g.rtt_samples, g.rtt_samples + n);
+}
+
+// The lockstep delay a round trip needs: the two sides' delays cover it and ~25 ms of jitter, from the host's
+// mk9_net_delay up to 12 frames.
+int LockstepDelayFor(double rtt_ms) {
+  const int needed = int(std::ceil((rtt_ms + 25.0) / (2.0 * 1000.0 / 60.0)));
+  return std::clamp(needed, g.lockstep_delay, 12);
+}
+
+// Every 2 s of lockstep: this side's delay for the round trip, up at once, down after three checks in a row.
+void AdjustDelayForRoundTrip() {
+  const double floor_ms = RoundTripFloor();
+  if (g.frame < g.delay_check_at || floor_ms <= 0) return;
+  g.delay_check_at = g.frame + 120;
+  const int wanted = LockstepDelayFor(floor_ms);
+  if (wanted < g.delay && ++g.lower_votes < 3) return;
+  if (wanted >= g.delay) g.lower_votes = 0;
+  if (wanted == g.delay) return;
+  REXLOG_INFO("[net] lockstep delay {} -> {} frames at frame {} (round trip {:.0f} ms at least, {:.0f} on average)",
+              g.delay, wanted, g.frame, floor_ms, g.rtt_ms);
+  g.delay = wanted;
+  g.lower_votes = 0;
+}
+
 // One frame of a lockstep epoch (the menus, the loads, a fight without rollback).
-void LockstepFrame(uint8_t* base) {
-  // this frame's local input goes in at frame + delay; the first delay frames are neutral on both sides
-  Ensure(g.frame + g.delay + 1);
-  Pad& mine = g.local[size_t(g.frame + g.delay)];
-  mine = ReadLocalPad();
-  mine.busy = SampleBusy(base);
-  mine.ready = g.ready_seen;
-  g.ready_seen = 0;
+void LockstepFrame(PPCContext& ctx, uint8_t* base) {
+  AdjustDelayForRoundTrip();
+  // this frame's local input goes in at frame + delay; the first delay frames are neutral on both sides. A raised
+  // delay: the frames in between get the last input again (pad and busy flags; not ready, no sound announcement). A
+  // lowered one: that frame has its input already, and this side makes none until the frames catch up. Either way
+  // this side's inputs stay one a frame.
+  const int64_t target = g.frame + g.delay;
+  Ensure(target + 1);
+  if (target > g.local_made_upto) {
+    const Pad last = g.local_made_upto >= 0 ? g.local[size_t(g.local_made_upto)] : Pad{};
+    for (int64_t f = g.local_made_upto + 1; f < target; ++f) {
+      Pad& fill = g.local[size_t(f)];
+      std::memcpy(fill.bytes, last.bytes, 12);
+      fill.busy = last.busy;
+      fill.ready = 0;
+      fill.sound = 0;
+    }
+    Pad& mine = g.local[size_t(target)];
+    mine = ReadLocalPad();
+    mine.busy = SampleBusy(base);
+    mine.ready = g.ready_seen;
+    mine.sound = sound_sync::Announcement();
+    g.ready_seen = 0;
+    g.local_made_upto = target;
+  }
   FinishFrameHash();
   SendInputs();
   Ping();
@@ -836,6 +914,8 @@ void LockstepFrame(uint8_t* base) {
     SetFramePads(g.local[size_t(g.frame)], g.remote[size_t(g.frame)]);
     g.frame_busy = g.local[size_t(g.frame)].busy | g.remote[size_t(g.frame)].busy;
     g.frame_ready = g.local[size_t(g.frame)].ready & g.remote[size_t(g.frame)].ready;
+    // the sounds' callbacks both machines' inputs have announced, before the frame (the same frame on both)
+    sound_sync::Deliver(ctx, base, g.local[size_t(g.frame)].sound, g.remote[size_t(g.frame)].sound);
   }
   ++g.frames_window;
   LogStats();
@@ -854,6 +934,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
     if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
     g.local[size_t(g.latest + g.delay)] = pad;
+    g.local_made_upto = std::max(g.local_made_upto, g.latest + g.delay);
     SendInputs();
     Ping();
   }
@@ -917,6 +998,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
                 g.mode_change_at, g.frame, g.rollbacks, g.resimulated);
     g.rollback = false;
     g.mode_change_at = -1;
+    g.delay_check_at = 0;  // the lockstep after the fight: its delay for the round trip from the next frame
     g.timeline = snapshot::Timeline();
     sound_replay::OnFrame(ctx, base, 0, false);
     sa2::renut::SetFrameHidden(false);
@@ -981,6 +1063,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     if (g.started) {
       sa2::renut::SetFrameHidden(false);  // a session that ended shows every frame again
       sound_replay::OnFrame(ctx, base, 0, false);
+      sound_sync::SetDeferring(ctx, base, false);  // the sounds' callbacks go through again
     }
     return;
   }
@@ -1011,11 +1094,13 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     REXLOG_INFO("[net] epoch {} started at game frame {} ({})", g.epoch, game_frame,
                 g.rollback ? fmt::format("rollback, delay {}", g.delay) : "lockstep");
   }
+  // the sounds' callbacks wait for both machines in lockstep (sound_sync.h)
+  sound_sync::SetDeferring(ctx, base, !g.rollback);
   if (g.rollback) {
     RollbackFrame(ctx, base);
   } else {
     sound_replay::OnFrame(ctx, base, 0, false);
-    LockstepFrame(base);
+    LockstepFrame(ctx, base);
   }
 }
 

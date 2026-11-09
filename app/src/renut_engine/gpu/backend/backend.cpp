@@ -272,6 +272,8 @@ Backend LatchBackend() {
 }
 }  // namespace detail
 
+void FallBackToVulkan() { detail::g_backend_plus1 = uint8_t(uint8_t(Backend::Vulkan) + 1); }
+
 const char *BackendName(Backend backend) {
   return backend == Backend::Vulkan ? "Vulkan" : backend == Backend::Deko3D ? "deko3d" : "D3D12";
 }

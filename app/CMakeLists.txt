@@ -103,6 +103,7 @@ set(MK9_SOURCES
     src/online/session.cpp
     src/online/online_ui.cpp
     src/online/sound_replay.cpp
+    src/online/sound_sync.cpp
     src/online/sound_stream.cpp
     src/online/host_stack.cpp
     src/online/loading.cpp
