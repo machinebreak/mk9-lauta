@@ -25,7 +25,8 @@ game's files from it, and they stay on your computer.
 - A GPU renderer (Renut, from masterspike52's reNut) on Direct3D 12, or on Vulkan (F2 > Pantalla e idioma > API
   gráfica; Vulkan is also tried by itself when Direct3D 12 cannot start). Internal resolution 480p, 720p (the
   console's), 1080p, 1440p or 4K; shadows, ambient occlusion, texture filtering, effect precision and MSAA can each
-  be set.
+  be set. **Resolución dinámica** (dynamic resolution) lowers the internal resolution a step while the PC cannot
+  keep 60 frames a second (an X-Ray, many effects) and raises it again when it can.
 - Low-end PCs: the first start picks a quality preset from the graphics card and the memory (Muy baja, Baja,
   Consola, Alta, Ultra; F2 > Gráficos changes it). **Cuadros dibujados** (drawn frames) keeps the game at 60 frames
   a second and draws one picture in two (half the graphics card's work), always or only while the PC cannot keep
@@ -33,14 +34,23 @@ game's files from it, and they stay on your computer.
   RAM or less. F2 > Pantalla e idioma > Mostrar FPS shows the frame rate.
 - Keyboard and controllers (Xbox, PlayStation and Switch Pro, through SDL), with vibration. The keyboard comes set
   for fighting (WASD or arrows, U I J K, O, L, Ñ, P) and every key can be changed in F2 > Controles; the keyboard
-  can play player 1 or player 2, for a versus with a controller on the same PC.
+  can play player 1 or player 2, for a versus with a controller on the same PC. The game's button prompts follow
+  the first controller connected (PlayStation, Switch or Xbox buttons) or show the keyboard's keys when there is
+  none; F2 > Controles fixes one style.
 - The disc's six languages: English, French, German, Spanish (with the dubbed Story mode), Italian and Portuguese.
 - A first-start installer: choose your disc image (or the folder you extracted it to); it checks that it is the
   right release and copies the ~7 GB the game uses next to the program. At every start the game checks its files
   and names a missing or damaged one.
 - In the game, **F1** opens the online screens and **F2** the settings (Gráficos, Controles, Pantalla e idioma,
-  Online). **F11** or **Alt+Enter** switch between full screen and a window. After a crash, `logs` keeps the log and
-  a `crash_*.dmp` of it.
+  Online, Acerca de). With a controller: **BACK + START** opens the settings and **BACK + Y** the online screens,
+  **LB / RB** change tabs and **B** closes. **F11** or **Alt+Enter** switch between full screen and a window;
+  F2 > Pantalla e idioma also chooses the monitor, the window's size and the size of the F1/F2 menus, which fit
+  small screens such as 1366x768. Closing the window asks first. After a crash, `logs` keeps the log and a
+  `crash_*.dmp` of it.
+- **Updates inside the game:** at start the game asks GitHub whether there is a newer release. If there is, a
+  notice offers to download it; the download is checked against the project's signature and installed when the
+  game restarts, keeping your saves, settings and game files. F2 > Acerca de checks by hand or turns it off.
+  (Version 0.1.0 had no updater: from it, download 0.2.0 once by hand.)
 
 - **Online play, experimental:** the main menu's **ONLINE (F1)**. Choose a name, then **Partida rápida** (quick
   match: the room that has waited longest, or a new one of yours), **Crear sala pública**, **Crear sala privada** (a
@@ -52,12 +62,14 @@ game's files from it, and they stay on your computer.
   in lockstep, with their delay set from the ping. There is no pause in an online fight. The opponent's name and
   ping show at the top right; when the match ends, the loser chooses REMATCH, another fighter or the menu.
 
-Online play is new. It has been tested with two games on one PC over emulated networks (with ~90 ms of ping and
-0.5 % packet loss the two games stayed the same) and through the real lobby; it has not been played between two
-machines over the internet yet. With very bad networks (3 % loss and heavy jitter) details such as the stage's
-sounds can drift apart, and in the hardest tests a game has crashed. Both players need the same release.
-[docs/online/netplay-design.md](docs/online/netplay-design.md) is the working log of how it is built and what was
-checked.
+Online play is new. It has been tested with two games on one PC over emulated networks and through the real
+lobby: X-Ray-heavy fights with 3 % packet loss and heavy jitter, and a 21-minute session of 11 fights with ~90 ms
+of ping and 0.5 % loss, where the two games stayed the same from the first frame to the last (77,000 frames
+compared). It has not been played between two machines
+over the internet yet. Both players need the same release. Each online session saves both players' inputs in
+`logs/session_*.mk9net` (the newest ten): if two games ever part, the two players' files say where
+(`tools/online/session_report.py`). [docs/online/netplay-design.md](docs/online/netplay-design.md) is the working
+log of how it is built and what was checked.
 
 Rooms, quick matches and chat go through a lobby server (a WebSocket service). The game sends it the name you
 choose and, in a room, the messages the two games exchange to find each other. The games then send to each other

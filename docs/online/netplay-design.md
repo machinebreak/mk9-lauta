@@ -364,3 +364,38 @@ pelea); con `mk9_input_script_frames` el script de mandos sigue el cuadro de la 
 a correr recibe los mismos botones (un synctest con golpes y X-Rays: 492 rollbacks de 7 cuadros, 3444 comparados, 0
 distintos). `mk9_sound_log=<archivo>` escribe los avisos de sonido (y `<archivo>.frames`, la numeración del modo
 experimental).
+
+### Las entradas que se pisaban, las sesiones grabadas y la memoria que ya no está (2026-11-09)
+
+1. **Dos bugs de entradas, la causa de los desyncs con red mala** (no el sonido ni los sorteos: esas diferencias eran
+   la consecuencia). Encontrados con las grabaciones de abajo, comparando las entradas de las dos máquinas:
+   - en la pelea con rollback, cuando una rollback caía en la misma llamada que había hecho el input del cuadro
+     `latest + delay`, el cuadro en vivo volvía a ese número y el input se leía de nuevo: pisaba al que el otro ya
+     tenía, y cada máquina jugaba ese cuadro con botones distintos (el X-Ray que salía en una sola). Ahora el input
+     de cada cuadro se hace una sola vez (`local_made_upto`), como en lockstep;
+   - `SendInputs` mandaba hasta `latest + delay`, pero ese input se hace recién en el borde siguiente: una espera
+     dentro del cuadro (`ConfirmFrame`: una carga, el cambio de música de un round) reenviaba antes y mandaba un pad
+     vacío, que el otro guardaba como el de ese cuadro. Ahora se manda hasta `local_made_upto` en los dos modos.
+   Con 45 ± 25 ms y 3 % de pérdida, cuatro sesiones de ~4 min con X-Rays seguidos: entradas iguales cuadro por cuadro,
+   ningún hash distinto, ningún cierre (antes, un desync a los 10-40 s y a veces un cierre del renderer, que venía de
+   ahí: dos juegos distintos dibujando lo que el otro ya no tiene).
+2. **Las sesiones grabadas** (`mk9_net_record`, activado): cada sesión escribe sus cuadros finales en
+   `logs/session_<fecha>_p1|p2.mk9net` (las entradas de los dos y el hash de sincronía de cada cuadro; quedan las 10
+   últimas). `tools/online/session_report.py <p1> <p2>` dice si las entradas coinciden y en qué cuadro se separaron
+   los hashes, con los botones de los cuadros de alrededor; con un archivo, sus épocas. Al detectar un desync el log
+   dice dónde está el archivo, para que los jugadores lo manden.
+3. **El sonido de la pelea**: con las entradas arregladas no apareció ningún desync en las pruebas, así que los avisos
+   de FMOD a destiempo no rompen la pelea (el juego no decide nada con ellos en las peleas probadas). El sonido puede
+   empezar un cuadro o dos aparte en las dos máquinas; `mk9_sound_sync_fights` sigue experimental y apagado.
+4. **Un cierre del renderer con red realista** (30 ms por lado, jitter 5, 0,5 %): a los 3 minutos de una sesión larga,
+   en la intro de la segunda pelea, el hilo de render convirtió vértices de `0x3FC30780` (el principio del buffer), en
+   la parte del heap bajo donde no hay nada mapeado: la cabecera del vertex buffer que leyó el render tenía esa
+   dirección (las conversiones se hacen al mandar el anillo, mucho después de la llamada del juego). Los hashes de las
+   dos máquinas fueron iguales toda la sesión: no fue un desync. Las lecturas diferidas del renderer (vértices, copias
+   de fetch, índices, texturas) corren ahora marcadas (`QuietGuestFaultScope`, `guest_memory.h`) y bajo SEH: el
+   manejador de fallos del SDK deja el fallo al lector (`xmemory.cpp`, sin log ni marca de crash), el draw sale con
+   ceros (o se saltea) ese cuadro y queda en el log ("read from guest memory that is not there"). `MK9_TEST_GONE_READ=1`
+   fuerza uno para probarlo. Cómo llega el juego a esa cabecera queda por ver; el log lo va a decir si vuelve.
+   La misma sesión de 21 minutos repetida con esto: 11 peleas con rollback (hasta 2220 rollbacks por lado), 77.134
+   cuadros comparados entre las grabaciones de los dos, ningún hash distinto, ningún cierre y ninguna lectura
+   salteada.
