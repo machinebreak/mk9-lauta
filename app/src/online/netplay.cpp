@@ -141,6 +141,10 @@ REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
                     "A frame a rollback runs again with both players' inputs already known starts without a snapshot or "
                     "a rest (no rollback can come back to it): rollbacks cost about half (tests: false = every frame "
                     "rests)");
+REXCVAR_DEFINE_BOOL(mk9_net_light_live, true, "MK9 Online",
+                    "A live frame of a fight whose rival input has already come (and the frame before it was shown) "
+                    "runs without a snapshot or a rest too: it cannot be predicted wrong (false: every live frame "
+                    "rests, as in 0.2.0)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay follows the round trip all fight long (from the host's "
                     "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
@@ -265,6 +269,8 @@ struct Session {
   bool frames_sound = false;         // this epoch started with rollback: its sounds' callbacks by frame (sound_sync.h)
   bool speculating = false;          // past the learning frames: frames may run on predicted inputs
   uint64_t light_boundaries = 0;     // frames run again that started with no snapshot (mk9_net_light_resim)
+  uint64_t light_live = 0;           // live frames that started with no snapshot (mk9_net_light_live)
+  bool prev_hidden = true;           // the frame that ran last was one run again (not shown)
   uint64_t delay_changes = 0;        // a fight's delay changed for the round trip (AdjustFightDelay)
   snapshot::Timeline timeline;
   int64_t latest = 0;                // the live edge: the newest frame started + 1 (frame < latest while replaying)
@@ -1053,6 +1059,7 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.frames_sound = rollback && REXCVAR_GET(mk9_sound_sync_fights);
   g.speculating = false;
   g.rollback_to = -1;
+  g.prev_hidden = true;
   g.mode_change_at = -1;
   g.advantage = 0;
   // the delay the round trip needs (from the pongs so far): a lockstep epoch starts with it instead of the host's
@@ -1108,7 +1115,7 @@ void LogStats() {
                        "keeping a frame {:.2f} ms, a rollback's restore {:.2f} ms; at rest {:.2f} ms a boundary "
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
                        "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; {} frames "
-                       "run again with no snapshot; the delay changed {} times",
+                       "run again and {} live with no snapshot; the delay changed {} times",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
                        g.rollbacks ? g.ms_restore / double(g.rollbacks) : 0.0,
@@ -1116,7 +1123,8 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries, g.delay_changes);
+                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries, g.light_live,
+                       g.delay_changes);
     }
     const sound::HeapStats sound = sound::Stats();
     const sound_replay::Stats sounds = sound_replay::GetStats();
@@ -1343,8 +1351,14 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   // finds every page) and so needs no rest either. It runs on as a lockstep frame does, UE3's render thread alongside,
   // only its sync hash taken. The boundary before the shown frame (the hidden frames' drawing done first) and one that
   // undoes a prediction rest as before. A rollback whose frames' inputs had arrived costs about half.
-  bool light = REXCVAR_GET(mk9_net_light_resim) && g.speculating && g.frame > 0 && g.frame < g.latest &&
-               g.frame <= g.remote_upto && g.rollback_to < 0 && g.mode_change_at < 0 && !loads;
+  // mk9-lauta (2026-11-10, mk9_net_light_live): a live frame whose rival input has come already cannot be predicted
+  // wrong either, and needs no rest when the frame before it was shown too (after frames run again, the rest lets
+  // their drawing finish hidden first). With an input delay that covers the way between the two (a short round trip),
+  // most live frames: the boundary's 4-13 ms (UE3's render thread finishing its frame first) go.
+  const bool live_light = !g.prev_hidden && REXCVAR_GET(mk9_net_light_live);
+  bool light = REXCVAR_GET(mk9_net_light_resim) && g.speculating && g.frame > 0 &&
+               (g.frame < g.latest || live_light) && g.frame <= g.remote_upto && g.rollback_to < 0 &&
+               g.mode_change_at < 0 && !loads;
   auto rest_and_keep = [&] {
     // the boundary at rest (quiesce.h): the frame that just ran into the timeline with its sync hash, and a wrong
     // prediction undone, with no other thread halfway through anything
@@ -1356,7 +1370,11 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   };
   if (light) {
     FinishFrameHash();
-    ++g.light_boundaries;
+    if (g.frame < g.latest) {
+      ++g.light_boundaries;
+    } else {
+      ++g.light_live;
+    }
   } else if (g.frame == 0) {
     quiesce::Settle(ctx, base);
   } else {
@@ -1466,6 +1484,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   // a frame run again is not shown and not paced, and keeps the sounds its first run started (sound_replay.h)
   sound_replay::OnFrame(ctx, base, uint64_t(g.epoch) << 32 | uint64_t(g.frame + 1), g.frame < g.latest);
   sa2::renut::SetFrameHidden(g.frame < g.latest);
+  g.prev_hidden = g.frame < g.latest;
   heap_undo::SetFrame(g.frame);
   ++g.frame;
   ++g.frames_window;
