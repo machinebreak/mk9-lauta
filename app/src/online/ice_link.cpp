@@ -64,7 +64,12 @@ struct IceLink::Impl {
   uint64_t session = 0;    // the exchange's number (the guest's offer picks it): a stale one is ignored
   std::mutex inbox_mutex;  // the datagrams in
   std::condition_variable readable;
-  std::deque<std::vector<uint8_t>> inbox;
+  struct Datagram {
+    uint64_t arrived_us = 0;  // libjuice's thread took it (LastArrivalUs)
+    std::vector<uint8_t> bytes;
+  };
+  std::deque<Datagram> inbox;
+  uint64_t last_arrival_us = 0;  // of the datagram Receive returned last (the game thread's)
 
   std::atomic<int> state{JUICE_STATE_DISCONNECTED};
   std::atomic<bool> failed{false}, stopping{false};
@@ -130,7 +135,9 @@ struct IceLink::Impl {
       auto* self = static_cast<Impl*>(user);
       {
         std::lock_guard<std::mutex> lock(self->inbox_mutex);
-        if (self->inbox.size() < 4096) self->inbox.emplace_back(data, data + size);
+        if (self->inbox.size() < 4096) {
+          self->inbox.push_back({NowUs(), std::vector<uint8_t>(data, data + size)});
+        }
       }
       self->readable.notify_all();
     };
@@ -343,11 +350,17 @@ bool IceLink::Send(const void* data, size_t size) {
 int IceLink::Receive(void* buffer, size_t capacity) {
   std::lock_guard<std::mutex> lock(impl_->inbox_mutex);
   if (impl_->inbox.empty()) return -1;
-  std::vector<uint8_t> datagram = std::move(impl_->inbox.front());
+  Impl::Datagram datagram = std::move(impl_->inbox.front());
   impl_->inbox.pop_front();
-  const size_t n = std::min(capacity, datagram.size());
-  std::memcpy(buffer, datagram.data(), n);
+  impl_->last_arrival_us = datagram.arrived_us;
+  const size_t n = std::min(capacity, datagram.bytes.size());
+  std::memcpy(buffer, datagram.bytes.data(), n);
   return int(n);
+}
+
+uint64_t IceLink::LastArrivalUs() const {
+  std::lock_guard<std::mutex> lock(impl_->inbox_mutex);
+  return impl_->last_arrival_us;
 }
 
 bool IceLink::WaitReadable(int timeout_ms) {

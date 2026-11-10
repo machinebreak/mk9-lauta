@@ -33,6 +33,10 @@ class Transport {
   // mk9-lauta (2026-11-10): finds the path again from the start (an ICE exchange anew: a path up that carries nothing);
   // false where there is nothing to redo.
   virtual bool Restart() { return false; }
+  // mk9-lauta (2026-11-10): when the datagram the last Receive returned arrived (steady clock, microseconds), or 0 when
+  // this transport cannot tell: the game reads datagrams at its frame boundaries, a long frame (a load, a rollback, a
+  // busy GPU) later, and a round trip measured at the reading had those waits in it.
+  virtual uint64_t LastArrivalUs() const { return 0; }
 };
 
 // Emulated network conditions around another transport: each datagram sent is held for the delay (plus jitter, in
@@ -49,6 +53,7 @@ class LaggedTransport : public Transport {
   int Receive(void* buffer, size_t capacity) override;
   bool WaitReadable(int timeout_ms) override;
   bool Restart() override { return inner_->Restart(); }
+  uint64_t LastArrivalUs() const override { return inner_->LastArrivalUs(); }
 
  private:
   struct Held {

@@ -724,11 +724,21 @@ void Receive() {
                     epoch, g.peer_last_frame, g.frame);
       }
     } else if (type == kPing && left >= 8) {
+      // mk9-lauta (2026-11-10): the pong says how long the ping waited here before this side read it (the transport
+      // knows when it arrived: ICE), and the round trip leaves that out, as it leaves out the pong's own wait on the
+      // other side: the network's round trip, not this frame's length. A 0.2.0 fight on a busy GPU measured 400-500
+      // ms of "round trip" over a 160 ms path, and its delay went up to 7 for half a minute.
       auto r = Header(kPong);
       r.insert(r.end(), p, p + 8);
+      const uint64_t arrived = g.link->LastArrivalUs(), now = NowUs();
+      Put32(r, arrived && now > arrived ? uint32_t(std::min<uint64_t>(now - arrived, 0xFFFFFFFFull)) : 0);
       Send(r);
     } else if (type == kPong && left >= 8) {
-      const double rtt = (NowUs() - Get64(p)) / 1000.0;
+      const uint64_t arrived = g.link->LastArrivalUs(), now = NowUs();
+      const uint64_t at = arrived && arrived <= now ? arrived : now;
+      const uint64_t held_there = left >= 12 ? Get32(p + 8) : 0;
+      const uint64_t sent = Get64(p);
+      const double rtt = std::max(0.1, (double(at > sent ? at - sent : 0) - double(held_there)) / 1000.0);
       g.rtt_ms = g.rtt_ms == 0 ? rtt : g.rtt_ms * 0.8 + rtt * 0.2;
       g.rtt_samples[g.rtt_count++ % 8] = rtt;
     } else if (type == kBye) {
