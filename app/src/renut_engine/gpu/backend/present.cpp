@@ -633,6 +633,16 @@ void Video::PresentOverlayOnly() {
   std::unique_lock lock(s.mutex, std::try_to_lock);
   if (!lock.owns_lock() || !s.host_ready || s.shutting_down.load(std::memory_order_acquire))
     return;
+  // mk9-lauta (2026-11-10): never inside a guest frame. The render thread takes the mutex for each piece of work, so a
+  // stall's present could come between two of a frame's draws (a list open: GPU work recorded since the last
+  // present): it submitted half the frame, moved to the next slot (whose drain let the slot the frame had begun in be
+  // reused while the frame's other half still read its uploads) and showed what the front buffer held then. In online
+  // fights a frame waits for the other player's inputs, and a slow PC's frame takes over 100 ms by itself: frames
+  // with the 3D scene black under the HUD and others with huge magenta and yellow triangles, the "flickering", "green
+  // lights" and "texture bugs" of the 0.2.0 testers (reproduced at ~200 ms with a slow GPU: 31 black frames and 2 of
+  // garbage in 900). Between frames (a stall at a frame's start, a load) it presents as before.
+  if (s.guest_ready && s.list_open)
+    return;
   // banjo-nx (2026-10-19, the colour flash): while the guest stalls (loading) with nothing of the overlay to show,
   // nothing is presented: the display keeps the last frame, as the console's does. The re-present of the last front
   // buffer showed whatever that texture held by then, and the game may free or remake it while it loads: on deko3d a

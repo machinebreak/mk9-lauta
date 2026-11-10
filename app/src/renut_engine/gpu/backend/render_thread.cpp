@@ -144,13 +144,31 @@ bool GateOn() {
   return on;
 }
 // mk9-nx online (2026-11-07): a game thread draining the guest's render thread at a frame's start (the rollback's
-// snapshots, app/src/online/snapshot.cpp) holds the gate open meanwhile: the guest's render thread may block on a GPU
-// fence whose work is behind the gate, and the Swap that would open it is the game thread's, which waits for it. The
-// game thread has finished writing that frame's data by then. Requires g_mutex.
-bool g_gate_held_open = false;
+// snapshots, app/src/online/snapshot.cpp): the guest's render thread may block on a GPU fence whose work is behind the
+// gate, and the Swap that would open it is the one it has not reached yet (3 s hangs, until the watchdog). Held open
+// for the whole drain, the gate let the render thread take that frame's draws as they came, before MK9 had written
+// their particles' vertices (after the draw calls, until the Swap: mk9_record_after_swap), at every boundary of an
+// online fight: frames with the 3D scene black under the HUD and huge triangles of garbage colours, the 0.2.0 testers'
+// flickering and "green lights" (mk9-lauta, 2026-11-10; reproduced, 31 such frames in 900 at ~200 ms). Now the drain
+// only watches (mk9_drain_gate): when the guest's render thread has queued nothing for a while (kDrainStall) with work
+// behind the gate, it is blocked on that work, and the gate opens. Requires g_mutex.
+REXCVAR_DEFINE_STRING(mk9_drain_gate, "watch", "MK9/Renderer",
+                      "A frame's start that drains the guest's render thread (online fights): watch = the gate opens "
+                      "only if that thread stalls behind it; open = held open for the whole drain (0.2.0: the draws "
+                      "read particles the game had not written yet)")
+    .allowed({"watch", "open"})
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+bool g_gate_held_open = false;  // a drain is on (HoldGateOpen)
+bool DrainOpensGate() {
+  static const bool open = REXCVAR_GET(mk9_drain_gate) == "open";
+  return open;
+}
+constexpr auto kDrainStall = std::chrono::milliseconds(25);
+Clock::time_point g_last_push{};  // when the last item was queued
+uint64_t g_gate_drain_opens = 0;
 // Requires g_mutex.
 size_t RunnableLocked() {
-  if (!GateOn() || g_stopping || g_gate_held_open)
+  if (!GateOn() || g_stopping || (g_gate_held_open && DrainOpensGate()))
     return g_queue.size();
   return size_t(std::min<uint64_t>(g_queue.size(), g_gate > g_items_taken ? g_gate - g_items_taken : 0));
 }
@@ -273,6 +291,16 @@ void Run() {
         const Clock::time_point since = Clock::now();
         while (RunnableLocked() == 0 && !g_stopping) {
           g_work_cv.wait_for(lock, std::chrono::milliseconds(2));
+          // mk9-lauta (2026-11-10): a drain whose guest render thread stopped queueing work: it waits on work behind
+          // the gate (mk9_drain_gate watch)
+          if (g_gate_held_open && RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - g_last_push > kDrainStall) {
+            if (g_gate_drain_opens++ < 16)
+              RGPU_WARN("[mk9] gate: a frame start's drain waits on work behind the gate ({} items, {} ms without "
+                        "new ones): opened",
+                        g_queue.size(), std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - g_last_push)
+                                            .count());
+            g_gate = g_items_queued;
+          }
           if (RunnableLocked() == 0 && !g_queue.empty() && Clock::now() - since > GateWatchdog()) {
             // mk9-nx (2026-10-24): each opening logged (rare: 1-3 a run) to see whether the remaining triangle
             // flashes follow them: the render thread then records draws whose data the game may still be writing.
@@ -377,6 +405,7 @@ void Push(std::function<void()> work, bool locked, const void *prefetch0 = nullp
     if (g_running && !g_stopping) {
       g_queue.push_back({std::move(work), locked, {prefetch0, prefetch1}});
       ++g_items_queued;
+      g_last_push = Clock::now();  // mk9-lauta: the drain's watch (mk9_drain_gate)
       if (fence && GateOn())
         g_queued_fences.push_back({*fence, g_items_queued});  // mk9-nx (mk9_gate_fence_exact)
       // sa2-nx (sa2_renut_wake_batch): a draw wakes a sleeping render thread once enough are queued.
@@ -583,9 +612,10 @@ uint64_t QueueFrame(std::function<void()> work) {
   g_swap_wait_us += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waited).count());
   if (done % 600 == 1) {
     RGPU_INFO("[mk9] mk9_record_after_swap {}: gate opened {} times by a waiter or a Swap, {} to a polled or waited "
-              "fence ({} already run: nothing to release), {} by the watchdog ({} frames); game threads waited {:.2f} "
-              "ms a frame at the Swap, {:.2f} ms in {} fence waits",
-              GateOn(), wait_opens, fence_opens, fence_misses, watchdog_opens, done, double(g_swap_wait_us) / 600000.0,
+              "fence ({} already run: nothing to release), {} by the watchdog, {} for a frame start's drain ({} "
+              "frames); game threads waited {:.2f} ms a frame at the Swap, {:.2f} ms in {} fence waits",
+              GateOn(), wait_opens, fence_opens, fence_misses, watchdog_opens, g_gate_drain_opens, done,
+              double(g_swap_wait_us) / 600000.0,
               double(g_fence_wait_us) / 600000.0, g_fence_waits);
     g_swap_wait_us = g_fence_wait_us = g_fence_waits = 0;
   }
@@ -615,7 +645,7 @@ uint64_t QueueFrame(std::function<void()> work) {
 void HoldGateOpen(bool open) {
   std::lock_guard lock(g_mutex);
   g_gate_held_open = open;
-  if (open)
+  if (open && DrainOpensGate())
     OpenGateLocked();
 }
 
