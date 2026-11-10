@@ -27,10 +27,14 @@ enum ReadyFlag : uint8_t {
   kReadyScene = 1 << 0,      // the scripts' last wait before a fight starts (native 824a5268, sub_82A30588)
   kReadyStreaming = 1 << 1,  // the engine's streaming done, waited on just before (native 8247bf38, sub_82A2EAB8)
   kReadyModeGate = 1 << 2,   // the Versus selection's gate to the fight mode (native 824a56d0, sub_82A311D8)
+  kReadyTask = 1 << 3,       // mk9-lauta (2026-11-10): the engine's task at 0x8341EF1C done (native 8247b658)
 };
 
 // A session is configured (mk9_net_host / mk9_net_join).
 bool Active();
+// mk9-lauta (2026-11-10): this game is a session's (a player's or a spectator's), from its first frame to its last,
+// whether the session has started, runs or ended.
+bool SessionGame();
 // Test logs: the epoch and the epoch's frame running, and whether it runs again (a rollback's hidden frames); -1 when no
 // session runs.
 int64_t FrameRunning(uint32_t* epoch = nullptr, bool* again = nullptr);

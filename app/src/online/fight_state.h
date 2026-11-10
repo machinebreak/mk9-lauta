@@ -16,7 +16,7 @@ std::string DisplayName(const std::string& game_name);
 float Health(uint8_t* base, int player);
 
 // The game's state (its GS_ names: sub_829B01D8), -1 when there is no game object yet. Game thread.
-enum GameState : int { kStateMainMenu = 3, kStateSelect = 7, kStatePlay = 8 };
+enum GameState : int { kStateLoadingFight = 1, kStateMainMenu = 3, kStateSelect = 7, kStatePlay = 8 };
 int State(uint8_t* base);
 
 // A match decided (the fight's mode over: netplay.cpp), as both games see it.

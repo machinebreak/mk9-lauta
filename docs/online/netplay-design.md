@@ -579,3 +579,59 @@ jugadores acordaron, una vez que su FMOD también los tiene.
 GS_INIT 0, GS_LOADING_FIGHT 1, GS_ATTRACT 2, GS_MAINMENU 3, GS_ONLINE 4, GS_KOTH 5, GS_PROFILES 6, GS_PSELECT 7 (la
 selección de personajes), GS_PLAY 8, GS_GAME_OVER 9, GS_MOVIE 10, GS_FATALITY 11, GS_LADDER 12. Con él se dibujan los
 nombres en la selección; el log de la sesión dice cada cambio.
+
+### El sonido de la pelea, igual en las dos, y el desync raro de los menús (2026-11-10)
+
+**El sonido de la pelea por números de cuadro, ahora por defecto** (`mk9_sound_sync_fights`, `sound_sync.h` kFrames).
+El modo existía apagado porque no alcanzaba: las dos máquinas no entregaban los mismos sonidos en los mismos cuadros, y
+duplicaba los rollbacks. Medido con dos peleas con golpes reales y 40 ± 10 ms (`mk9_sound_log` con la pila de cada
+entrega):
+
+1. **Las instancias de FMOD se piden en modo bloqueante en una sesión** (`mk9_sound_blocking`, el hook de
+   `sub_825CA9B8`). En modo no bloqueante FMOD devolvía la instancia mientras sus datos todavía cargaban y el juego la
+   entregaba en el cuadro en que terminaba la carga, en cada máquina con su disco: 1139 de 2322 cuadros con entregas
+   distintas. Bloqueante: 0 en la primera pelea, 2 en la segunda. Los cuadros de la pelea siguen a 60 (el peor, 21 ms);
+   las esperas largas son de las cargas de los menús, como antes.
+2. **Un aviso va al juego 8 cuadros después de la segunda palabra** (`kSlack`): la palabra de la otra máquina llega
+   con una entrada hecha antes de su cuadro, así que casi siempre antes de ese cuadro. Antes iba en `max(L, R)` y la
+   palabra tardía obligaba a volver atrás: ~360 rollbacks más por pelea (el doble). Ahora 0 por sonido.
+3. **Un aviso que dijo una sola máquina va igual**, 45 cuadros después de su palabra (`kAlone`), decidido igual en las
+   dos con las entradas del otro hasta ahí (`Decide`): la máquina cuyo FMOD no lo dio corta ese sonido y le da el aviso
+   al juego ella misma, desde la entrega (`g_by_number`); el aviso propio que llegue después se descarta. Antes esos
+   avisos (~4 %) no llegaban nunca a ninguna de las dos: un sonido que el juego no veía terminar.
+4. Probado: peleas enteras con 40 ± 10 ms y 60 ± 40 ms, ningún cuadro con chequeos distintos.
+
+**Un espectador** entrega los avisos de la pelea según las palabras grabadas de los dos jugadores (el bit 1 del byte de
+rollback del registro 'E' dice que la época iba por cuadros), y los que su FMOD no dio los da desde la fuente; en los
+menús igual (`WatchDeliver`; antes esperaba hasta 4 s a su propio FMOD, y con un sonido largo se pasaba).
+
+**El desync raro de los menús: dos esperas con el reloj de cada máquina.** Se encontraron haciendo que un espectador
+adelante los menús (sus cuadros rápidos agrandan cualquier dependencia del reloj; un espectador que entraba tarde
+llegaba al menú principal 209 cuadros después que los jugadores) y comparando sus nativas con las del host:
+
+1. **La nativa `824b75f8` es `appSeconds()`**: el reloj de la PC (`sub_82366BF8` por `GSecondsPerCycle`), que los
+   scripts de los menús usan para sus tiempos. En un juego de sesión ahora contesta el contador de cuadros del juego /
+   60 (`[0x833848D4]+108`, el tag 9 de los chequeos: igual en las dos máquinas y en un espectador, y vuelve atrás con un
+   rollback; `mk9_script_clock`), desde el primer cuadro del juego y no desde que la sesión empieza: con el reloj de
+   la PC hasta ahí, un tiempo que un script guardó antes quedaba mezclado con el de los cuadros y la espera de la
+   pantalla VS terminaba un cuadro aparte en las dos máquinas (3 de 7 cacerías con red mala; con el reloj desde el
+   primer cuadro, 0 de 7).
+2. **La nativa `8247b658`** pregunta si terminó la tarea del motor en `0x8341EF1C` (creada por `FEngineLoop::PreInit`,
+   vtable `0x82001E58`; al tocar START en el título: el perfil leído del almacenamiento) y, si terminó, la cierra (+20).
+   Ahora la pregunta va sin cerrarla (+16), las dos máquinas se ponen de acuerdo (`kReadyTask`, `netplay.h` Ready) y la
+   nativa (que la cierra) corre en ese cuadro en las dos; un espectador cuya tarea no terminó la espera ahí.
+
+Con las dos, un espectador que entra 95 s tarde adelanta los menús y llega al menú principal y a la selección en los
+mismos cuadros que los jugadores, y sigue la sesión entera (tres peleas) llegando a cada barrera junto a ellos.
+Las dos dependían del reloj también entre jugadores: con la PC cargada (las esperas del lockstep) los tiempos de los
+scripts caían en cuadros distintos; es lo que separó la corrida de `out/f3/desync_menu_20261109`.
+
+**Lo que falta**: adelantar las peleas para un espectador. Con los avisos por cuadro su sonido ya no depende del reloj,
+pero a los ~550 cuadros de la pelea adelantada los luchadores quedan en otro lugar que el de los jugadores (dos
+espectadores del mismo partido, uno en vivo y otro adelantando, difieren desde el cuadro ~518; `mk9_watch_catch_up_fights`
+lo prueba). Mientras tanto las peleas, y la carga que las precede (GS_LOADING_FIGHT: lo que el motor carga toma el
+tiempo real de los cuadros de los jugadores), se miran a velocidad normal; los menús y lo que sigue a cada pelea, rápido.
+
+Herramientas: `mk9_net_input_replay=<grabación>` (los botones de un jugador desde su `session_*.mk9net`, cuadro por
+cuadro: una sesión otra vez por el mismo camino; con `mk9_seed` igual al de la grabación), el log de cada cambio del
+estado del juego (`GS_`), y los cuadros que un espectador comparó y difirieron ("N of M frames so far").

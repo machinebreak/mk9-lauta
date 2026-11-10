@@ -82,6 +82,7 @@
 #include <cmath>
 #include <atomic>
 #include <chrono>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -152,12 +153,15 @@ REXCVAR_DEFINE_BOOL(mk9_net_light_live, true, "MK9 Online",
                     "runs without a snapshot or a rest too: it cannot be predicted wrong (false: every live frame "
                     "rests, as in 0.2.0)");
 REXCVAR_DEFINE_BOOL(mk9_net_log_ready, false, "MK9 Online", "Tests: log the readiness polls answered ready");
+REXCVAR_DEFINE_STRING(mk9_net_input_replay, "", "MK9 Online",
+                      "Tests: this player's buttons come from a session recording of this player's (logs/session_*_p1 "
+                      "or _p2.mk9net: its own pad of each frame), by epoch and frame, instead of the devices: a session "
+                      "that parted run again on the same path");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up, true, "MK9 Online",
                     "A spectator far behind the match catches up in the menus (frames hidden, fast and muted)");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up_fights, false, "MK9 Online",
-                    "Tests: a spectator far behind the match catches up in the fights too (2026-11-10: the playback "
-                    "parted from the match within the fight's intro: its scripts ran others, the sounds' callbacks "
-                    "coming on FMOD's own clock)");
+                    "Tests: a spectator far behind the match catches up in the fights too (2026-11-10: even with the "
+                    "sounds' callbacks by frame numbers the playback parted from the match ~550 frames into the fight)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay follows the round trip all fight long (from the host's "
                     "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
@@ -171,7 +175,7 @@ REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, false, "MK9 Online",
                     "Off since the hashes are compared all along (2026-11-09): what they catch most is the game's random "
                     "draws in another order when a script waits on a sound, whose end comes on each machine's own "
                     "mixer (sound_sync.h), not always a fight that goes another way");
-REXCVAR_DEFINE_BOOL(mk9_sound_sync_fights, false, "MK9 Online",
+REXCVAR_DEFINE_BOOL(mk9_sound_sync_fights, true, "MK9 Online",
                     "Experimental: a fight's sounds' callbacks at the same frame on both machines by frame numbers "
                     "(sound_sync.h, Mode::kFrames); off: as they come, as before. Not enough yet: FMOD starts some "
                     "sounds a frame or two apart on the two machines (its instances and loads on its own clock)");
@@ -294,6 +298,7 @@ struct Session {
     uint64_t start = 0;  // its frame 0's game frame there
     bool rollback = false;
     int64_t mode_end = -1;  // the fight's mode ended at this frame (from then on as lockstep)
+    bool frames_sound = false;  // its sounds' callbacks by frame numbers: the players' words in the recording
     std::vector<WatchedFrame> frames;
   };
   std::vector<WatchedEpoch> watched;  // by epoch
@@ -305,7 +310,9 @@ struct Session {
   std::atomic<bool> watch_fight{false};  // the fight it plays back is past its intro (for Info)
   std::atomic<int> game_state{-1};       // fight_state::State at the last frame (for Info)
   uint64_t watch_diffs = 0;
+  uint64_t watch_compared = 0;        // frames whose sync hash was compared with the players'
   uint8_t watch_ready_before = 0;     // the last frame's recorded ready bits (a rise waits for this machine's loads)
+  int64_t watch_words_upto = -1;      // a fight's frames whose players' sound words went to sound_sync
   bool prev_hidden = true;           // the frame that ran last was one run again (not shown)
   uint64_t delay_changes = 0;        // a fight's delay changed for the round trip (AdjustFightDelay)
   snapshot::Timeline timeline;
@@ -421,7 +428,8 @@ void RecordEpoch() {
   RecordValue<uint8_t>('E');
   RecordValue<uint32_t>(g.epoch);
   RecordValue<uint64_t>(g.start_game_frame);
-  RecordValue<uint8_t>(g.rollback ? 1 : 0);
+  // bit 0 rollback; bit 1 (mk9-lauta, 2026-11-10): its sounds' callbacks by frame numbers (sound_sync.h kFrames)
+  RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0)));
   g_rec.upto = -1;
 }
 
@@ -616,6 +624,9 @@ void EndSession(EndReason why, bool goodbye) {
   g_end_reason.store(uint8_t(why), std::memory_order_release);
   g_frame_started_us = 0;  // frames go on without the session: no hang to watch for
   REXLOG_INFO("[net] session ended: {}", ReasonText(why));
+  if (g.watching) {
+    REXLOG_INFO("[watch] {} of {} frames compared differed from the match", g.watch_diffs, g.watch_compared);
+  }
   RecordClose();
   heap_undo::End();
 }
@@ -890,6 +901,59 @@ uint8_t SampleBusy(const uint8_t* base) {
     busy |= kBusyMovie;
   }
   return busy;
+}
+
+// mk9_net_input_replay: the recording's own pads (the first of each 'F' record), by epoch and frame.
+std::vector<std::vector<std::array<uint8_t, 12>>> g_replay_pads;
+
+void LoadReplayPads() {
+  static bool loaded = false;
+  if (loaded) return;
+  loaded = true;
+  const std::string path = REXCVAR_GET(mk9_net_input_replay);
+  if (path.empty()) return;
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) {
+    REXLOG_ERROR("[net] mk9_net_input_replay: cannot read {}", path);
+    return;
+  }
+  std::vector<uint8_t> data;
+  uint8_t chunk[65536];
+  for (size_t n; (n = std::fread(chunk, 1, sizeof(chunk), f)) > 0;) data.insert(data.end(), chunk, chunk + n);
+  std::fclose(f);
+  size_t at = 20;  // the header
+  uint64_t frames = 0;
+  while (at < data.size()) {
+    const uint8_t tag = data[at];
+    if (tag == 'E' && at + 14 <= data.size()) {
+      g_replay_pads.emplace_back();
+      at += 14;
+    } else if (tag == 'F' && at + 1 + 4 + 2 * kPadBytes + 8 <= data.size() && !g_replay_pads.empty()) {
+      uint32_t frame;
+      std::memcpy(&frame, &data[at + 1], 4);
+      auto& pads = g_replay_pads.back();
+      if (pads.size() <= frame) pads.resize(size_t(frame) + 1);
+      std::memcpy(pads[frame].data(), &data[at + 5], 12);
+      ++frames;
+      at += 1 + 4 + 2 * kPadBytes + 8;
+    } else if (tag == 'M' && at + 5 <= data.size()) {
+      at += 5;
+    } else {
+      break;
+    }
+  }
+  REXLOG_INFO("[net] mk9_net_input_replay: {} epoch(s), {} frames of this player's buttons from {}",
+              g_replay_pads.size(), frames, path);
+}
+
+// The recording's buttons of this frame, over the devices' (none past the recording's end).
+void ReplayPad(uint32_t epoch, int64_t frame, Pad* pad) {
+  LoadReplayPads();
+  if (g_replay_pads.empty()) return;
+  std::memset(pad->bytes, 0, 12);
+  if (epoch < g_replay_pads.size() && frame >= 0 && size_t(frame) < g_replay_pads[epoch].size()) {
+    std::memcpy(pad->bytes, g_replay_pads[epoch][size_t(frame)].data(), 12);
+  }
 }
 
 // This player's pad: every device of this PC together (the four players' seats merged), so the keyboard and any pad
@@ -1219,10 +1283,10 @@ void LogStats() {
     const sound_sync::Stats callbacks = sound_sync::GetStats();
     rb += fmt::format("; sound callbacks: {} sources numbered, {} kept for both, {} given, {} dropped, {} waiting, "
                       "{} through at once ({} given again in frames run again), {} given at an epoch's change, {} said "
-                      "in a fight, {} rollbacks for them",
+                      "in a fight ({} by one machine only, {} of them given here by itself), {} rollbacks for them",
                       callbacks.numbered, callbacks.deferred, callbacks.delivered, callbacks.dropped,
                       callbacks.waiting, callbacks.passed, callbacks.regiven, callbacks.flushed, callbacks.announced,
-                      callbacks.rollbacks);
+                      callbacks.alone, callbacks.made, callbacks.rollbacks);
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
                 "longest {:.1f} ms), peer inputs to {}; sent {}, received {}; {} frames' sync checked{}{}",
                 g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
@@ -1335,6 +1399,7 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     }
     Pad& mine = g.local[size_t(target)];
     mine = ReadLocalPad();
+    ReplayPad(g.epoch, target, &mine);  // mk9_net_input_replay (tests)
     mine.busy = SampleBusy(base);
     // the boot's logo movies, skipped: the host taps START (X_INPUT_GAMEPAD's 0x0010, the buttons' low byte) every 10
     // frames while one plays in the session's first 25 s; the tap is an input, seen by both machines at the same frame
@@ -1358,6 +1423,8 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
   if (g.ended) return;
   CompareFinalHashes();
   RecordFinal();
+  // the sounds' callbacks only one machine has said (sound_sync.h Decide: their frame is still ahead in lockstep)
+  if (g.frames_sound) sound_sync::Decide(g.local_made_upto, g.remote_upto);
   if (gap()) {
     SetFramePads(Pad{}, Pad{});
     g.frame_busy = g.local[size_t(g.frame)].busy;
@@ -1401,6 +1468,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
         fill.sound = sound_sync::AnnounceFor(f);
       }
       Pad pad = ReadLocalPad();
+      ReplayPad(g.epoch, g.latest + g.delay, &pad);  // mk9_net_input_replay (tests)
       // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
       // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
       if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
@@ -1421,6 +1489,15 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     return g.frame - g.remote_upto <= kMaxPrediction;
   });
   if (g.ended) return;
+  // the sounds' callbacks only one machine has said: given at a frame both decide alike (sound_sync.h Decide); one
+  // that frame already ran goes back to it
+  if (g.frames_sound) {
+    const int64_t due = sound_sync::Decide(g.local_made_upto, g.remote_upto);
+    if (due >= 0 && due < g.frame) {
+      g.rollback_to = g.rollback_to < 0 ? due : std::min(g.rollback_to, due);
+      sound_sync::NoteRollback();
+    }
+  }
   // mk9-lauta (2026-11-10): a frame a rollback runs again with both players' inputs already known cannot be predicted
   // wrong, so no rollback will ever come back to its start: its boundary takes no snapshot (the next snapshot's undo
   // record covers the frames in between, tagged with the last frame kept: a rollback to that one or earlier still
@@ -1619,7 +1696,8 @@ void WatchParse() {
       if (epoch != g.watched.size()) return broken("epoch", epoch);
       g.watched.emplace_back();
       std::memcpy(&g.watched[epoch].start, r + 5, 8);
-      g.watched[epoch].rollback = r[13] != 0;
+      g.watched[epoch].rollback = (r[13] & 1) != 0;
+      g.watched[epoch].frames_sound = (r[13] & 2) != 0;
       g.watch_read += sizeof(r);
     } else if (tag == 'F') {
       uint8_t r[1 + 4 + 2 * kPadBytes + 8];
@@ -1699,9 +1777,16 @@ void WatchCompareLast() {
   const auto& frames = g.watched[g.epoch].frames;
   if (size_t(g.frame - 1) >= frames.size()) return;
   const uint64_t mine = g.local_hash[size_t(g.frame - 1)], theirs = frames[size_t(g.frame - 1)].hash;
-  if (mine && theirs && mine != theirs && ++g.watch_diffs <= 10) {
-    REXLOG_WARN("[watch] frame {} of epoch {} differs from the match (sync hash {:016x}, there {:016x})", g.frame - 1,
-                g.epoch, mine, theirs);
+  if (mine && theirs) {
+    ++g.watch_compared;
+    if (mine != theirs) {
+      ++g.watch_diffs;
+      if (g.watch_diffs <= 10 || g.watch_diffs % 100 == 0) {
+        REXLOG_WARN("[watch] frame {} of epoch {} differs from the match (sync hash {:016x}, there {:016x}; {} of {} "
+                    "frames so far)",
+                    g.frame - 1, g.epoch, mine, theirs, g.watch_diffs, g.watch_compared);
+      }
+    }
   }
 }
 
@@ -1754,14 +1839,26 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   g.watch_in_fight.store(fight, std::memory_order_relaxed);
   g.watch_fight.store(fight && g.frame >= kLearnFrames, std::memory_order_relaxed);
   // the sounds' callbacks as the players had them: in lockstep at the frames their announcements agreed on (with this
-  // machine's own FMOD's callbacks, waited for), in a fight as they come
-  sound_sync::SetMode(ctx, base, fight ? sound_sync::Mode::kOff : sound_sync::Mode::kLockstep, g.epoch);
-  // catching up (in the menus only: a fight's sounds, on FMOD's own clock, would come many frames late): hidden (no
-  // drawing, no pacing) and muted; the switch with UE3's render thread drained first
+  // machine's own FMOD's callbacks, waited for); in a fight's epoch whose callbacks went by frame numbers, at the
+  // frames the players' recorded words decide (sound_sync.h kFrames: one this machine's FMOD has not given is given
+  // from its sound's hand-off), its whole length as the players had it; in an older fight, as they come
+  const bool frames_sound = epoch.rollback && epoch.frames_sound;
+  sound_sync::SetMode(ctx, base,
+                      frames_sound ? sound_sync::Mode::kFrames
+                      : fight      ? sound_sync::Mode::kOff
+                                   : sound_sync::Mode::kLockstep,
+                      g.epoch);
+  // catching up, in the menus: hidden (no drawing, no pacing) and muted; the switch with UE3's render thread drained
+  // first. Not while a fight loads (GS_LOADING_FIGHT): what the engine streams in (textures, sounds) takes the
+  // players' frames of wall-clock time, and fast frames reached the fight's start later than the players' (a missed
+  // barrier). Not in a fight (mk9_watch_catch_up_fights, tests): with its sounds' callbacks by frame numbers it went
+  // on to ~550 frames, its fighters then elsewhere than the players' (2026-11-10: a long run of frames not drawn; the
+  // cause is not found yet)
   const int64_t behind = WatchBehind();
   g.watch_behind.store(behind, std::memory_order_relaxed);
-  const bool hide = (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && REXCVAR_GET(mk9_watch_catch_up) &&
-                    (g.watch_hidden ? behind > 90 : behind > 300);
+  const bool loading = g.game_state.load(std::memory_order_relaxed) == fight_state::kStateLoadingFight;
+  const bool hide = (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && !loading &&
+                    REXCVAR_GET(mk9_watch_catch_up) && (g.watch_hidden ? behind > 90 : behind > 300);
   if (hide != g.watch_hidden) {
     snapshot::FlushRendering(ctx, base);
     sa2::renut::SetFrameHidden(hide);
@@ -1785,20 +1882,28 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   }
   g.watch_ready_before = fight ? 0 : ready;
   SetFramePads(f.p1, f.p2);
+  if (frames_sound) {
+    // the players' words up to this frame (a callback's frame is never earlier than its later word's: the recording
+    // up to here decides every one due here)
+    if (g.frame == 0) g.watch_words_upto = -1;
+    for (; g.watch_words_upto < g.frame; ++g.watch_words_upto) {
+      const auto& w = epoch.frames[size_t(g.watch_words_upto + 1)];
+      sound_sync::WatchWords(g.watch_words_upto + 1, w.p1.sound, w.p2.sound);
+    }
+    sound_sync::Decide(g.watch_words_upto, g.watch_words_upto);
+    sound_sync::FrameStart(ctx, base, g.frame, g.frame - 1);
+  }
   if (fight) {
     g.frame_busy = 0;
     g.frame_ready = 0xFF;
+  } else if (frames_sound) {
+    g.frame_busy = f.p1.busy | f.p2.busy;
+    g.frame_ready = ready;
   } else {
     g.frame_busy = f.p1.busy | f.p2.busy;
     g.frame_ready = ready;
-    // the callbacks the two announced by this frame, once this machine's FMOD has them too (4 s at most)
-    const uint64_t start = NowUs();
-    while (!sound_sync::AgreedReady(f.p1.sound, f.p2.sound) && NowUs() - start < 4000000) {
-      g_frame_started_us = 0;
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-    g_frame_started_us = NowUs();
-    sound_sync::Deliver(ctx, base, f.p1.sound, f.p2.sound);
+    // the callbacks the two announced by this frame (one this machine's FMOD has not given goes from its source)
+    sound_sync::WatchDeliver(ctx, base, f.p1.sound, f.p2.sound);
   }
   ++g.frames_window;
   ++g.frame;
@@ -1806,6 +1911,11 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
 }
 
 }  // namespace
+
+bool SessionGame() {
+  if (!g.configured) Configure();
+  return g.watching || g.link != nullptr;
+}
 
 bool Active() {
   if (!g.configured) Configure();

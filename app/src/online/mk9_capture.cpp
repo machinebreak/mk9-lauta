@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -77,6 +78,9 @@ REXCVAR_DEFINE_STRING(mk9_input_replay, "", "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_check_log, "", "MK9 Online",
                       "Write the game's own per-frame sync checks (sub_82A1C5C0: tag and value) to this file, one line "
                       "per frame");
+REXCVAR_DEFINE_BOOL(mk9_script_clock, true, "MK9 Online",
+                    "In a session the scripts' clock (native 824b75f8, the engine's appSeconds) is the game's frame "
+                    "count over 60: the same on both machines (false: each machine's own clock)");
 REXCVAR_DEFINE_STRING(mk9_rand_log, "", "MK9 Online",
                       "Write every draw of the game's random number generator to this file (frame, thread, the source "
                       "line the game passes, the result and the host call stack)");
@@ -633,8 +637,75 @@ void AgreeOnNativeResult(uint8_t* base, netplay::ReadyFlag flag, bool busy_style
   result[3] = uint8_t(agreed);
 }
 
+// mk9-lauta (2026-11-10): the scripts' clock. Native 824b75f8 answers appSeconds() (the clock, sub_82366BF8, times
+// GSecondsPerCycle at 0x833DD0A0), each machine's own wall clock: a menu's script timer (the title's, the main menu's)
+// then ran out at different frames on the two machines whenever their frames' wall-clock times differed (lockstep's
+// waits, a PC under load), and a spectator catching up (its frames fast, hidden) reached the main menu 209 frames
+// after the players. In a session's game it answers the game's frame count over 60 (GuardedMain's counter at
+// [0x833848D4]+108, the sync checks' tag 9): the same on both machines and a spectator, and gone back with a
+// rollback's memory. From the game's first frame, not the session's: a time a script kept from before the session
+// started (each machine's own clock then) made the VS screen's wait end a frame apart on the two machines.
+void ScriptClock(uint8_t* base) {
+  static const bool on = REXCVAR_GET(mk9_script_clock);
+  if (!on || !netplay::SessionGame()) return;
+  const uint32_t vm = Load32(base, kScriptVm), game = Load32(base, 0x833848D4);
+  if (!GuestPointer(vm) || !GuestPointer(game)) return;
+  const float seconds = float(double(Load32(base, game + 108)) / 60.0);
+  uint32_t bits;
+  std::memcpy(&bits, &seconds, 4);
+  uint8_t* result = base + vm + 28;
+  result[0] = uint8_t(bits >> 24);
+  result[1] = uint8_t(bits >> 16);
+  result[2] = uint8_t(bits >> 8);
+  result[3] = uint8_t(bits);
+}
+
 }  // namespace
 }  // namespace mk9::online
+
+// mk9-lauta (2026-11-10): native 8247b658 asks the engine's task holder at 0x8341EF1C (made by FEngineLoop::PreInit,
+// vtable 0x82001E58) whether its task is done (+16, sub_826B26E8: no task, or the task's own answer) and, once it is,
+// finishes it (+20, sub_826BF3B8: the task's result kept, the task deleted, what waited on it run). The task ends on
+// each machine's own clock (the title's START: the profile and its settings read from storage): the scripts went on a
+// frame apart on the two machines, and a spectator catching up went on hundreds of frames after the players. In a
+// session the task is asked without being finished, the two machines agree (netplay.h, Ready), and the native runs
+// (finishing it) at that frame on both; a spectator whose own task is not done by then waits for it (20 s at most).
+extern "C" REX_FUNC(__imp__sub_8247B658);
+extern "C" REX_FUNC(__imp__sub_826B26E8);
+REX_HOOK_RAW(sub_8247B658) {
+  constexpr uint32_t kTaskHolder = 0x8341EF1C, kHolderVtable = 0x82001E58;
+  const uint32_t holder = mk9::online::Load32(base, kTaskHolder);
+  if (mk9::netplay::FrameRunning(nullptr, nullptr) < 0 || !mk9::online::GuestPointer(holder) ||
+      mk9::online::Load32(base, holder) != kHolderVtable) {
+    __imp__sub_8247B658(ctx, base);
+    return;
+  }
+  auto done = [&] {
+    rex::CallFrame ask(ctx);
+    ask.ctx.r3.u64 = holder;
+    __imp__sub_826B26E8(ask, base);
+    return ask.ctx.r3.u32 != 0;
+  };
+  bool local = done();
+  const bool agreed = mk9::netplay::Ready(mk9::netplay::kReadyTask, local ? 1u : 0u) != 0;
+  if (agreed) {
+    const auto start = std::chrono::steady_clock::now();
+    while (!local && std::chrono::steady_clock::now() - start < std::chrono::seconds(20)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      local = done();
+    }
+    __imp__sub_8247B658(ctx, base);  // finishes it, and answers 1
+    return;
+  }
+  const uint32_t vm = mk9::online::Load32(base, mk9::online::kScriptVm);
+  if (mk9::online::GuestPointer(vm)) std::memset(base + vm + 28, 0, 4);  // not yet, on both
+}
+
+extern "C" REX_FUNC(__imp__sub_824B75F8);
+REX_HOOK_RAW(sub_824B75F8) {
+  __imp__sub_824B75F8(ctx, base);
+  mk9::online::ScriptClock(base);
+}
 
 // The scripts' waits that end on each machine's own clock (in a session the game sees them end once they have on both
 // machines): native 824a56d0, sub_82A311D8 on a thing found by name, the gate from the Versus selection to the fight

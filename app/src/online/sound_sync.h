@@ -17,9 +17,14 @@
 // A fight's epoch (Mode::kFrames: its rollback, and the lockstep after the fight until the next barrier) does the same
 // by frame numbers, which a frame run again keeps (the sounds handed to FMOD before it go through as they come: the two
 // machines need not have run the same frames before a barrier): each callback is announced once, with the input of
-// frame L(k) on this machine and R(k) on the other, and goes to the game at the start of frame max(L, R) on both
-// machines, in every run of that frame (FrameStart). A frame run on a prediction does not know R yet: when the peer's input says it and
-// that frame has run, the rollback goes back to it (RemoteAnnounced). A sound is numbered once the frame that handed it
+// frame L(k) on this machine and R(k) on the other, and goes to the game at the start of frame max(L, R) + kSlack on
+// both machines, in every run of that frame (FrameStart): the slack lets the later word come before that frame runs
+// (else the rollback goes back to it: RemoteAnnounced). mk9-lauta (2026-11-10): a callback one machine said and the
+// other did not by kAlone frames after it (its sound ended there and not on the other's mixer, or a sync point only
+// one reached) goes anyway, at min(L, R) + kAlone + kSlack on both, decided once the other's inputs up to
+// min(L, R) + kAlone are known (Decide): the machine whose FMOD had not given it stops that sound then and gives the
+// game the callback itself, from the hand-off its number names. A callback that comes after its key was decided is
+// not said again. A sound is numbered once the frame that handed it
 // to FMOD is final (both players' real inputs: no rollback runs it again), by that frame and its place among the
 // frame's hand-offs, and its callbacks are announced from then on. (A sound one machine's FMOD could not start, its
 // event's instances busy on that mixer's clock, is not started there: its number is that machine's alone, and nothing
@@ -50,16 +55,24 @@ uint32_t Announcement();
 // both machines' inputs have announced go to the game.
 void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote);
 
-// mk9-lauta (2026-11-10), a spectator (feed.h): whether every callback the two players' recorded announcements agree
-// on, with this frame's, has come from this machine's own FMOD already (its game then gets them at the same frame as
-// theirs did; else the frame waits for them).
-bool AgreedReady(uint32_t local, uint32_t remote);
+// mk9-lauta (2026-11-10), a spectator (feed.h): Deliver with the two players' recorded announcements (player 1's as
+// this machine's); a callback both said that this machine's FMOD has not given (it plays behind, or fast while
+// catching up) goes from the sound's source anyway, an end after stopping the sound: what the game gets does not wait
+// on this machine's mixer.
+void WatchDeliver(PPCContext& ctx, uint8_t* base, uint32_t p1, uint32_t p2);
 
 // kFrames: this machine's announcement for its input of frame input_frame (0: none): each callback once.
 uint32_t AnnounceFor(int64_t input_frame);
 // kFrames: the peer's real input of frame `frame` announces `key`: the frame the callback goes to the game at, once
 // both machines' inputs have said it (-1: not yet, or said before). A frame that already ran without it must run again.
 int64_t RemoteAnnounced(uint32_t key, int64_t frame);
+// mk9-lauta (2026-11-10), a spectator (feed.h): frame `frame` of the recording, the two players' words (player 1's as
+// this machine's, player 2's as the peer's), fed in order; Decide then with the frames fed so far on both sides.
+void WatchWords(int64_t frame, uint32_t p1, uint32_t p2);
+// kFrames: with this machine's inputs made up to local_made_upto and the peer's known up to remote_upto, the callbacks
+// one of the two said and the other did not by kAlone frames after: the earliest frame decided now (-1: none). A
+// frame that already ran without it must run again.
+int64_t Decide(int64_t local_made_upto, int64_t remote_upto);
 // kFrames: before frame `frame` runs (its first run or one a rollback makes; game thread), with the frames up to
 // final_upto final: the sounds those frames handed to FMOD are numbered, and the callbacks due at this frame go to the
 // game.
@@ -87,6 +100,8 @@ struct Stats {
   uint64_t announced = 0;   // fight epochs: callbacks this machine's inputs said
   uint64_t rollbacks = 0;   // fight epochs: the peer's word on frames that had run (RemoteAnnounced)
   uint64_t regiven = 0;     // fights with rollback: callbacks given again in frames run again (PassedFrameStart)
+  uint64_t alone = 0;       // fight epochs: callbacks only one machine said (given anyway on both)
+  uint64_t made = 0;        // ... of them, the ones this machine gave itself (its FMOD had not)
 };
 Stats GetStats();
 
