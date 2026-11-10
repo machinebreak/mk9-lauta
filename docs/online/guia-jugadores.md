@@ -90,8 +90,8 @@ al volver a abrir el juego.
   F2** (Automático los agranda en pantallas 1440p o 4K).
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
 - **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala. Con ping
-  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, hasta 4) para que los personajes
-  no "salten" cuando llegan los botones del otro.
+  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, hasta 6 con más de 300 ms) para
+  que los personajes no "salten" cuando llegan los botones del otro.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 
 ## Actualizaciones

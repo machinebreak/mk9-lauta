@@ -140,7 +140,7 @@ REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
                     "rests)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay grows with a long round trip (from the host's mk9_net_rollback_delay up to "
-                    "4 frames) so rollbacks stay about 5 frames deep: steadier characters with 150-300 ms of ping");
+                    "6 frames) so rollbacks stay about 5 frames deep: steadier characters with 150-350 ms of ping");
 REXCVAR_DEFINE_BOOL(mk9_net_record, true, "MK9 Online",
                     "Each session's final frames (both players' inputs and the sync hash) go to "
                     "logs/session_<date>_<player>.mk9net: the two players' files say where the games parted "
@@ -1088,12 +1088,13 @@ void AdjustDelayForRoundTrip() {
 
 // The input delay of a fight with rollback, once its intro is over: the host's (mk9_net_rollback_delay, 0-2), raised
 // with a long round trip (mk9_net_auto_delay) so a wrong prediction goes back about kTargetRollbackDepth frames:
-// 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 4 at most. Each side picks its own (its inputs carry their frames).
+// 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 260 ms -> 4, 6 at most (300 ms and more: 340 ms with 4 went back 9-10 frames,
+// frames of 50-120 ms). Each side picks its own (its inputs carry their frames).
 int FightDelay() {
   const double rtt = RoundTripTypical();
   if (!REXCVAR_GET(mk9_net_auto_delay) || rtt <= 0) return g.rollback_delay;
   const int one_way = int(std::ceil(rtt / 2.0 / (1000.0 / 60.0)));
-  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 4);
+  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 6);
 }
 
 // One frame of a lockstep epoch (the menus, the loads, a fight without rollback).

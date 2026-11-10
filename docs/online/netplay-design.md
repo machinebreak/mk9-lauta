@@ -465,6 +465,14 @@ TURN de Cloudflare). Lo que había y lo que se hizo:
     comparaciones y copias de páginas entre hasta 3 hilos más (`PageWorkers`): guardar un cuadro 2,29 -> 1,30 ms,
     restaurar 1,49 -> 0,94 ms. Lo que más pesa en un cuadro que se vuelve a correr sigue siendo el hilo de render de
     UE3 (~3 ms): saltearlo no es seguro (UE3 marca ahí qué se dibujó, y el juego lo usa: animaciones, hitboxes).
+12. **Rollbacks sin tirones** (`mk9_net_light_resim`): un cuadro que un rollback vuelve a correr con las entradas de
+    los dos ya conocidas no puede salir mal predicho, así que ningún rollback va a volver a su comienzo: su borde no
+    saca foto (el registro de la foto siguiente cubre los cuadros del medio con la marca del último guardado) ni
+    reposa: corre como uno de lockstep, con el hilo de render de UE3 en paralelo. Reposan el borde anterior al cuadro
+    que se muestra y el que deshace una predicción. Y el retraso automático sube hasta 6 con más de 300 ms. Con ~200 ms:
+    299-301 cuadros mostrados cada 5 s (antes 283-291), el más largo 20-31 ms (antes 38-60); 3 % de pérdida y mucho
+    jitter: 300 cuadros cada 5 s, el más largo 17-25 ms; ~350 ms: retraso 6, rollbacks de hasta 6, 297-300 cuadros
+    cada 5 s, el más largo 24-35 ms (antes 50-124). Las grabaciones de los dos, iguales en todas.
 11. **Probado también**: relojes de audio distintos (el invitado con `audio_sdl_pump`: 14.586 cuadros iguales), ~340
     ms con 2 % de pérdida (13.562 iguales, retraso 4, rollbacks hasta 10), el flujo entero por sala con lobby local e
     ICE con 70 ± 15 ms (sala pública, partida rápida, los dos listos, la pelea en el mismo cuadro).
@@ -475,6 +483,6 @@ hacían los clears y los resolves: un render target recién creado tiene conteni
 en AMD) y el resolve lo copiaba a texturas que el cuadro dibujado siguiente usaba: el mismo arreglo del punto 6 lo
 cubre (sin clears ni resolves en un cuadro que no se dibuja), offline también.
 
-Pendiente: el costo del borde en los cuadros que se vuelven a
+Pendiente (menor): el costo del borde en los cuadros que se vuelven a
 correr (~3 ms del hilo de render de UE3 + 2,3 ms de la línea de tiempo cada uno: un rollback de 5 cuadros es un
 cuadro de 40-70 ms).
