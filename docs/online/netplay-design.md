@@ -455,6 +455,20 @@ TURN de Cloudflare). Lo que había y lo que se hizo:
    los dos desyncs de menú de sus logs se corrigieron solos en la barrera de la pelea (los dos llegaron al mismo
    cuadro), como el que atrapó `hunt.ps1`.
 
+8. **Un DESYNC falso con ping muy alto** (~340 ms: un cuadro suelto en cada lado, las grabaciones iguales): tras un
+   rollback, el hash del cuadro recién vuelto a correr seguía siendo el de su corrida anterior hasta el borde
+   siguiente, y `SendInputs` lo mandaba como el del cuadro final más nuevo. Ahora un rollback borra los hashes de los
+   cuadros que se vuelven a correr. Con ~340 ms: ~6000 cuadros comparados en vivo por lado, ninguno distinto.
+9. **El cartel de la sesión**: en la pelea dice el retraso ("vs Rival - 180 ms - retraso 2") y, si las dos partidas
+   difieren en 20 cuadros o más de la época, lo avisa y pide los `session_*.mk9net`.
+10. **Rollbacks más baratos**: en el borde los hilos del juego están estacionados; la línea de tiempo reparte las
+    comparaciones y copias de páginas entre hasta 3 hilos más (`PageWorkers`): guardar un cuadro 2,29 -> 1,30 ms,
+    restaurar 1,49 -> 0,94 ms. Lo que más pesa en un cuadro que se vuelve a correr sigue siendo el hilo de render de
+    UE3 (~3 ms): saltearlo no es seguro (UE3 marca ahí qué se dibujó, y el juego lo usa: animaciones, hitboxes).
+11. **Probado también**: relojes de audio distintos (el invitado con `audio_sdl_pump`: 14.586 cuadros iguales), ~340
+    ms con 2 % de pérdida (13.562 iguales, retraso 4, rollbacks hasta 10), el flujo entero por sala con lobby local e
+    ICE con 70 ± 15 ms (sala pública, partida rápida, los dos listos, la pelea en el mismo cuadro).
+
 Pendiente: los personajes con "pixelado azul, verde, rojo" con un traje elegido (un solo tester; no se reprodujo:
 las peleas con trajes alternativos de la Escalera se ven bien); el costo del borde en los cuadros que se vuelven a
 correr (~3 ms del hilo de render de UE3 + 2,3 ms de la línea de tiempo cada uno: un rollback de 5 cuadros es un
