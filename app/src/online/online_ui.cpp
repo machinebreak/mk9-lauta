@@ -412,8 +412,18 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##session_badge", nullptr, flags)) {
       if (info.active) {
-        ImGui::Text("vs %s - %.0f ms", Other(room).c_str(), info.rtt_ms);
+        if (info.rollback && info.speculating) {
+          ImGui::Text("vs %s - %.0f ms - retraso %d", Other(room).c_str(), info.rtt_ms, info.delay);
+        } else {
+          ImGui::Text("vs %s - %.0f ms", Other(room).c_str(), info.rtt_ms);
+        }
         if (info.waiting) ImGui::TextColored(kGold, "Esperando a %s... %.0f s", Other(room).c_str(), info.waiting_s);
+        // mk9-lauta (2026-11-10): the two games apart (the session goes on): each player sees a different fight, so
+        // they know it and can send their logs (logs/session_*.mk9net)
+        if (info.desynced) {
+          ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1),
+                             "Las dos partidas dejaron de coincidir: mandá logs\\session_*.mk9net");
+        }
       } else {
         ImGui::TextColored(kGold, "Conectando con %s...", Other(room).c_str());
       }

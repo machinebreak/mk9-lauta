@@ -1498,7 +1498,8 @@ SessionInfo Info() {
   info.speculating = g.speculating;
   info.rollbacks = g.rollbacks;
   info.resimulated = g.resimulated;
-  info.desynced = g.desync_at >= 0;
+  // two games apart for good: a lone frame that differed (and matched again) says nothing to the players
+  info.desynced = g.desync_at >= 0 && g.desync_frames >= 20;
   return info;
 }
 
