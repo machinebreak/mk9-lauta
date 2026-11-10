@@ -5,6 +5,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <vector>
+#include <mutex>
+#include <functional>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -12,6 +16,7 @@
 #include <unordered_map>
 
 #include <rex/cvar.h>
+#include <fmt/format.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
@@ -48,6 +53,9 @@ REXCVAR_DEFINE_STRING(mk9_synctest, "", "MK9 Online",
                       "frame and every P frames roll it back K frames; the frames that run again must give the game's "
                       "same checks (rollback's test). A package load (the fight decided) ends it. With "
                       "mk9_input_script_frames a frame run again gets its first run's scripted input");
+REXCVAR_DEFINE_INT32(mk9_timeline_dirty_report, 0, "MK9 Online",
+                     "Diagnostic: every this many frames, log where the pages the timeline keeps each frame are (by MB "
+                     "of the guest's memory, pages a frame); 0 = off");
 REXCVAR_DEFINE_BOOL(mk9_synctest_hidden, true, "MK9 Online",
                     "mk9_synctest: the frames run again are not shown and not paced, as in a session's rollback");
 
@@ -98,6 +106,85 @@ std::vector<std::pair<uint32_t, uint32_t>> KernelObjectHoles() {
 
 std::vector<std::pair<uint32_t, uint32_t>> g_holes;
 uint64_t g_holes_at = ~0ull;  // the object table's mutation count g_holes are current for
+
+// mk9-lauta (2026-11-10): a frame's page work split over a few host threads. At a boundary the game's threads are
+// parked and their cores idle, and the timeline's compares and copies (~1500 pages a frame of a fight, ~2.3 ms on one
+// thread; a rollback's restore ~1.5 ms) are independent page by page. The caller takes part; with few pages, or no
+// spare cores, it does them alone.
+class PageWorkers {
+ public:
+  static PageWorkers& Get() {
+    static PageWorkers workers;
+    return workers;
+  }
+
+  // Runs work(i) for i in [0, n), split among the workers and the caller; returns when every one is done.
+  template <typename Work>
+  void Run(size_t n, Work&& work) {
+    if (n < kMinParallel || threads_.empty()) {
+      for (size_t i = 0; i < n; ++i) work(i);
+      return;
+    }
+    auto runner = [&work](size_t i) { work(i); };
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      job_ = runner;
+      count_ = n;
+      next_.store(0, std::memory_order_relaxed);
+      pending_ = threads_.size();
+      ++generation_;
+    }
+    wake_.notify_all();
+    Drain();
+    std::unique_lock<std::mutex> lock(mutex_);
+    done_.wait(lock, [this] { return pending_ == 0; });
+    job_ = nullptr;
+  }
+
+ private:
+  static constexpr size_t kMinParallel = 96;
+  static constexpr size_t kChunk = 16;
+
+  PageWorkers() {
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned extra = hw >= 6 ? std::min(3u, hw / 2 - 1) : 0u;
+    for (unsigned i = 0; i < extra; ++i) threads_.emplace_back([this] { Loop(); });
+  }
+
+  void Drain() {
+    for (;;) {
+      const size_t from = next_.fetch_add(kChunk, std::memory_order_relaxed);
+      if (from >= count_) return;
+      const size_t to = std::min(count_, from + kChunk);
+      for (size_t i = from; i < to; ++i) job_(i);
+    }
+  }
+
+  void Loop() {
+    uint64_t seen = 0;
+    for (;;) {
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        wake_.wait(lock, [&] { return generation_ != seen; });
+        seen = generation_;
+      }
+      Drain();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        --pending_;
+      }
+      done_.notify_one();
+    }
+  }
+
+  std::vector<std::thread> threads_;
+  std::mutex mutex_;
+  std::condition_variable wake_, done_;
+  std::function<void(size_t)> job_;
+  size_t count_ = 0, pending_ = 0;
+  uint64_t generation_ = 0;
+  std::atomic<size_t> next_{0};
+};
 
 double MsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -345,13 +432,26 @@ void Timeline::Advance(uint8_t* base, uint64_t frame) {
   }
   Undo u;
   u.frame = frame_;
-  for (uint32_t page : candidates) {
-    marked_[page] = 0;
-    uint8_t* shadow = shadow_[page];
+  // the compares and copies, page by page on the workers (PageWorkers); then the records, in order
+  std::vector<uint8_t*> fresh(candidates.size());
+  for (uint8_t*& f : fresh) f = Take();
+  std::vector<uint8_t> changed(candidates.size(), 0);
+  PageWorkers::Get().Run(candidates.size(), [&](size_t i) {
+    const uint32_t page = candidates[i];
+    const uint8_t* shadow = shadow_[page];
     const uint8_t* now = base + (uint64_t(page) << 12);
-    if (shadow && std::memcmp(shadow, now, kPage) == 0) continue;  // written with the same bytes
-    uint8_t* fresh = Take();
-    std::memcpy(fresh, now, kPage);
+    if (shadow && std::memcmp(shadow, now, kPage) == 0) return;  // written with the same bytes
+    std::memcpy(fresh[i], now, kPage);
+    changed[i] = 1;
+  });
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    const uint32_t page = candidates[i];
+    marked_[page] = 0;
+    if (!changed[i]) {
+      Give(fresh[i]);
+      continue;
+    }
+    uint8_t* shadow = shadow_[page];
     if (!shadow) {  // a page committed since: its content before is zeros
       shadow = Take();
       std::memset(shadow, 0, kPage);
@@ -359,9 +459,28 @@ void Timeline::Advance(uint8_t* base, uint64_t frame) {
     }
     u.pages.push_back(page);
     u.bufs.push_back(shadow);  // the shadow's bytes (the page at the frame's start) become the undo record's
-    shadow_[page] = fresh;
+    shadow_[page] = fresh[i];
   }
   last_dirty_ = u.pages.size();
+  // diagnostic (mk9_timeline_dirty_report): where the pages each frame changes are, by MB, over that many frames
+  if (static const int every = REXCVAR_GET(mk9_timeline_dirty_report); every > 0) {
+    static std::unordered_map<uint32_t, uint64_t> by_mb;
+    static uint64_t frames = 0, pages = 0, compared = 0;
+    for (uint32_t page : u.pages) ++by_mb[page >> 8];
+    pages += u.pages.size();
+    compared += candidates.size();
+    if (++frames == uint64_t(every)) {
+      std::vector<std::pair<uint32_t, uint64_t>> top(by_mb.begin(), by_mb.end());
+      std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+      std::string line;
+      for (size_t i = 0; i < top.size() && i < 16; ++i)
+        line += fmt::format(" {:08X}:{:.0f}", top[i].first << 20, double(top[i].second) / double(frames));
+      REXLOG_INFO("[timeline] {} frames: {:.0f} pages changed and {:.0f} compared a frame; by MB (pages a frame):{}",
+                  frames, double(pages) / double(frames), double(compared) / double(frames), line);
+      by_mb.clear();
+      frames = pages = compared = 0;
+    }
+  }
   recent_ = carded;
   undo_.push_back(std::move(u));
   while (int(undo_.size()) > keep_) {
@@ -393,6 +512,7 @@ bool Timeline::RollBack(uint8_t* base, uint64_t frame) {
   size_t first = undo_.size();
   while (first > 0 && undo_[first - 1].frame >= frame) --first;
   std::vector<uint32_t> restored;
+  std::vector<const uint8_t*> sources;
   for (size_t r = first; r < undo_.size(); ++r) {
     Undo& u = undo_[r];
     for (size_t i = 0; i < u.pages.size(); ++i) {
@@ -404,12 +524,16 @@ bool Timeline::RollBack(uint8_t* base, uint64_t frame) {
       }
       marked_[page] = 1;
       restored.push_back(page);
-      std::memcpy(base + (uint64_t(page) << 12), old, kPage);
+      sources.push_back(old);
       Give(shadow_[page]);
       shadow_[page] = old;
     }
     u.bufs.clear();
   }
+  // the bytes back, page by page on the workers (the buffers stay as the shadow: nothing else writes them now)
+  PageWorkers::Get().Run(restored.size(), [&](size_t i) {
+    std::memcpy(base + (uint64_t(restored[i]) << 12), sources[i], kPage);
+  });
   for (uint32_t page : restored) marked_[page] = 0;
   undo_.erase(undo_.begin() + std::ptrdiff_t(first), undo_.end());
   for (size_t i = 0; i < holes.size(); ++i) {
