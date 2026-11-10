@@ -90,8 +90,11 @@ struct IceLink::Impl {
     return session;
   }
 
-  // A new agent for this exchange (the mutex held).
-  bool NewAgent() {
+  // A new agent for this exchange (the mutex held). remote: the offer it answers (the host's side), set before the
+  // local description is made: libjuice makes an agent whose own description comes first the controlling one, so a
+  // host that made its answer first was controlling too ("ICE role conflict (both controlling)" in every session that
+  // froze at its start, 2026-11-10); answering after the offer, it is the controlled one, as ICE wants.
+  bool NewAgent(const std::string* remote = nullptr) {
     if (agent) juice_destroy(agent);
     agent = nullptr;
     remote_set = false;
@@ -134,6 +137,7 @@ struct IceLink::Impl {
     config.user_ptr = this;
     agent = juice_create(&config);
     if (!agent) return false;
+    if (remote) SetRemote(*remote);
     char sdp[JUICE_MAX_SDP_STRING_LEN];
     if (juice_get_local_description(agent, sdp, sizeof(sdp)) != JUICE_ERR_SUCCESS) return false;
     local_sdp = sdp;
@@ -172,11 +176,11 @@ struct IceLink::Impl {
         id = from;
         session = s;
       }
-      if (!NewAgent()) {
+      const std::string offer = m.value("sdp", "");
+      if (!NewAgent(&offer)) {
         failed = true;
         return;
       }
-      SetRemote(m.value("sdp", ""));
       SendSig({{"ice", "answer"}, {"sdp", local_sdp}});
       juice_gather_candidates(agent);
       REXLOG_INFO("[ice] room {}: the guest {} offered; answered", room, from);
@@ -298,6 +302,25 @@ bool IceLink::HasPeer() const {
 }
 
 bool IceLink::Failed() const { return impl_->failed.load(); }
+
+bool IceLink::Restart() {
+  if (impl_->host) return false;  // the host follows the guest's new offer
+  {
+    std::lock_guard<std::mutex> sig(impl_->sig_mutex);
+    std::random_device rd;
+    impl_->session = (uint64_t(rd()) << 32 | rd()) & 0x1FFFFFFFFFFFFFull;  // JSON-safe
+  }
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->answered = false;
+  impl_->offered_at = 0;  // the pump offers at once
+  impl_->failed = false;
+  if (!impl_->NewAgent()) {
+    impl_->failed = true;
+    return false;
+  }
+  REXLOG_INFO("[ice] room {}: a new exchange (the path was up but carried nothing)", impl_->room);
+  return true;
+}
 
 std::string IceLink::PeerText() const {
   std::lock_guard<std::mutex> lock(impl_->mutex);

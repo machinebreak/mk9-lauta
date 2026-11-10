@@ -848,14 +848,36 @@ bool Configure() {
 }
 
 // Blocks until both sides have heard each other; the guest takes the host's delays, rollback choice and seed.
+// mk9-lauta (2026-11-10): 30 s at most (it was 2 minutes of a frozen logo); every 5 s the log says what it waits for;
+// and a guest whose path has been up 6 s without a word from the host starts the ICE exchange over (up to 3 times):
+// the 0.2.0 sessions that froze had ICE "completed" on the guest's side and never a datagram from the host.
 bool Handshake() {
-  const uint64_t timeout = TimeoutUs() * 6;
+  const uint64_t timeout = std::max<uint64_t>(30000000, TimeoutUs() + 10000000);
   const uint64_t start = NowUs();
-  uint64_t hello_at = 0;
+  uint64_t hello_at = 0, said_at = start, path_since = 0;
+  int restarts = 0, hellos_sent = 0;
   while (NowUs() - start < timeout) {
-    if (g.link->HasPeer() && NowUs() - hello_at > 100000) {
-      SendHello();
+    const bool path = g.link->HasPeer();
+    if (path && NowUs() - hello_at > 100000) {
+      if (SendHello()) ++hellos_sent;
       hello_at = NowUs();
+    }
+    if (!path) {
+      path_since = 0;
+    } else if (!path_since) {
+      path_since = NowUs();
+    }
+    if (!g.host && !g.heard_peer && path_since && NowUs() - path_since > 6000000 && restarts < 3) {
+      REXLOG_WARN("[net] the path to the host has been up {} s with nothing from it: the ICE exchange again ({} of 3)",
+                  (NowUs() - path_since) / 1000000, restarts + 1);
+      if (g.link->Restart()) ++restarts;
+      path_since = 0;
+    }
+    if (NowUs() - said_at > 5000000) {
+      said_at = NowUs();
+      REXLOG_INFO("[net] waiting for the other player ({} s): path {}, heard {}, its HELLO {}, {} HELLOs sent{}",
+                  (NowUs() - start) / 1000000, path ? "up" : "not yet", g.heard_peer ? "yes" : "no",
+                  g.peer_hello ? "yes" : "no", hellos_sent, restarts ? fmt::format(", {} new exchange(s)", restarts) : "");
     }
     g.link->WaitReadable(10);
     Receive();

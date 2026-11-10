@@ -29,13 +29,17 @@ class Transport {
   virtual int Receive(void* buffer, size_t capacity) = 0;
   // Waits up to timeout_ms for a datagram (or for anything the transport must do, as a delayed send).
   virtual bool WaitReadable(int timeout_ms) = 0;
+  // mk9-lauta (2026-11-10): finds the path again from the start (an ICE exchange anew: a path up that carries nothing);
+  // false where there is nothing to redo.
+  virtual bool Restart() { return false; }
 };
 
 // Emulated network conditions around another transport: each datagram sent is held for the delay (plus jitter, in
 // order) and some are dropped. Created by WithTestConditions when the cvars ask for it.
 class LaggedTransport : public Transport {
  public:
-  LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct, int late_path_ms = 0);
+  LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct, int late_path_ms = 0,
+                  int mute_ms = 0);
   // late_path_ms (tests): for that long no path to send on (HasPeer false, sends dropped) while datagrams still come
   // in, as an ICE link before its pair is chosen
   bool HasPeer() const override;
@@ -43,6 +47,7 @@ class LaggedTransport : public Transport {
   bool Send(const void* data, size_t size) override;
   int Receive(void* buffer, size_t capacity) override;
   bool WaitReadable(int timeout_ms) override;
+  bool Restart() override { return inner_->Restart(); }
 
  private:
   struct Held {
@@ -53,6 +58,7 @@ class LaggedTransport : public Transport {
   std::unique_ptr<Transport> inner_;
   int lag_ms_, jitter_ms_, loss_pct_;
   uint64_t path_from_us_ = 0;
+  uint64_t mute_until_us_ = 0;  // tests: sends dropped (the path still up) until then
   std::deque<Held> held_;
   uint64_t last_due_us_ = 0;
   std::mt19937 rng_{12345};
