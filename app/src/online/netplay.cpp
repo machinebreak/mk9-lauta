@@ -100,6 +100,7 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
+#include "online/fight_state.h"
 #include "online/heap_undo.h"
 #include "online/ice_link.h"
 #include "online/lobby.h"
@@ -1443,6 +1444,8 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   if (g.mode_change_at >= 0 && g.mode_change_at < g.frame && FinalUpto() >= g.mode_change_at) {
     REXLOG_INFO("[net] the fight's mode ended at frame {}: lockstep from frame {} ({} rollbacks, {} frames run again)",
                 g.mode_change_at, g.frame, g.rollbacks, g.resimulated);
+    // mk9-lauta (2026-11-10): the match is decided, the same on both machines: its result for the players' records
+    fight_state::Report(base, g.player);
     g.rollback = false;
     g.mode_change_at = -1;
     g.delay_check_at = 0;  // the lockstep after the fight: its delay for the round trip from the next frame
@@ -1483,6 +1486,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   }
   // a frame run again is not shown and not paced, and keeps the sounds its first run started (sound_replay.h)
   sound_replay::OnFrame(ctx, base, uint64_t(g.epoch) << 32 | uint64_t(g.frame + 1), g.frame < g.latest);
+  if (g.frame == g.latest && g.frame % 600 == 0) fight_state::Diagnose(base);  // mk9_diag_fighters
   sa2::renut::SetFrameHidden(g.frame < g.latest);
   g.prev_hidden = g.frame < g.latest;
   heap_undo::SetFrame(g.frame);

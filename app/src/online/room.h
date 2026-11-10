@@ -38,6 +38,7 @@ struct State {
   bool in_session = false;    // this game is the room's session already
   std::string me, other;      // the names
   std::string other_country;  // the other player's (two letters; "" not said): mk9-lauta, flags.h
+  int other_won = -1, other_lost = -1;  // the other player's online record (stats.h; -1: not said)
   bool my_ready = false, other_ready = false;
   std::vector<Line> chat;
   std::string status;         // a line for the screen

@@ -20,16 +20,20 @@
 #include <rex/cvar.h>
 
 #include "online/discord.h"
+#include "online/fight_state.h"
 #include "online/flags.h"
 #include "online/i18n.h"
 #include "online/lobby.h"
 #include "online/netplay.h"
 #include "online/room.h"
 #include "online/session.h"
+#include "online/stats.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
 REXCVAR_DEFINE_BOOL(mk9_online_show, false, "MK9 Online",
                     "The online screens open at start (the game started again back from a room's session)");
+REXCVAR_DEFINE_STRING(mk9_online_test_tab, "", "MK9 Online",
+                      "Tests: the online window opens on this tab (Sala, Salas, Chat global, Perfil)");
 REXCVAR_DEFINE_INT32(mk9_online_test_leave_s, 0, "MK9 Online",
                      "Tests: in a room's session, this player leaves this many seconds after the game's first frame "
                      "(0 = never)");
@@ -169,6 +173,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     DrawSessionBadge(room);
     DrawNamePlates(room);
     UpdatePresence(room);
+    TakeResults(room);
     overlay_input::SetOpen(overlay_input::kOnline, visible_);
     if (!visible_) {
       DrawToast(room);
@@ -213,7 +218,14 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (in_room) tabs.push_back("Sala");
       if (!room.in_session) tabs.push_back("Salas");
       tabs.push_back("Chat global");
+      tabs.push_back("Perfil");
       const char* wanted = nullptr;
+      if (static bool once = false; !once && !REXCVAR_GET(mk9_online_test_tab).empty()) {
+        once = true;
+        for (const char* t : tabs) {
+          if (REXCVAR_GET(mk9_online_test_tab) == t) wanted = t;
+        }
+      }
       if (tab_step_) {
         int current = 0;
         for (int i = 0; i < int(tabs.size()); ++i) {
@@ -242,6 +254,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem(Label("Chat global").c_str(), nullptr, tab_flags("Chat global", 0))) {
         tab_ = "Chat global";
         DrawGlobalChat(lobby);
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem(Label("Perfil").c_str(), nullptr, tab_flags("Perfil", 0))) {
+        tab_ = "Perfil";
+        DrawProfile(lobby);
         ImGui::EndTabItem();
       }
       ImGui::EndTabBar();
@@ -390,11 +407,13 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::SameLine();
       if (!room.other.empty()) FlagInline(room.other_country);
       ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
+      RecordInline(room);
     } else {
       ImGui::Text("Host:");
       ImGui::SameLine();
       if (!room.other.empty()) FlagInline(room.other_country);
       ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
+      RecordInline(room);
       ImGui::Text("%s", T("Vos:"));
       ImGui::SameLine();
       FlagInline(flags::Mine());
@@ -668,6 +687,89 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       details = T("En el lobby online");
     }
     discord::SetPresence(details, state, since);
+  }
+
+  // mk9-lauta (2026-11-10): the other player's online record, after its name.
+  static void RecordInline(const room::State& room) {
+    if (room.other.empty() || room.other_won < 0) return;
+    ImGui::SameLine();
+    ImGui::TextColored(kGrey, T("(%d V - %d D)"), room.other_won, room.other_lost);
+  }
+
+  // The session's matches as they are decided (fight_state.h) into the player's record, with the rival's name and
+  // country.
+  void TakeResults(const room::State& room) {
+    fight_state::Result r;
+    while (fight_state::Take(&r)) {
+      if (!room.in_session) continue;
+      const int me = r.me, them = 1 - r.me;
+      stats::Match m;
+      m.at = int64_t(std::time(nullptr));
+      m.rival = Other(room);
+      m.rival_country = room.other_country;
+      m.mine = r.characters[me];
+      m.theirs = r.characters[them];
+      if (!r.tag && r.health[me] >= 0 && r.health[them] >= 0 && r.health[me] != r.health[them]) {
+        m.result = r.health[me] > r.health[them] ? 1 : -1;
+      }
+      stats::Add(m);
+    }
+  }
+
+  // The player's online record: matches, wins and losses, characters, the latest matches.
+  void DrawProfile(const lobby::State& lobby) {
+    const stats::Summary s = stats::Totals();
+    FlagInline(flags::Mine());
+    ImGui::Text("%s", lobby.name.empty() ? name_.c_str() : lobby.name.c_str());
+    if (s.played == 0) {
+      ImGui::TextColored(kGrey, "%s", T("Todavía no jugaste partidas online."));
+      return;
+    }
+    const int decided = s.won + s.lost;
+    ImGui::Text(T("Partidas: %d - Ganadas: %d - Perdidas: %d"), s.played, s.won, s.lost);
+    if (decided > 0) {
+      ImGui::SameLine();
+      ImGui::TextColored(kGold, T("(%.0f%% ganadas)"), 100.0 * s.won / decided);
+    }
+    if (!s.characters.empty()) {
+      std::string list;
+      for (size_t i = 0; i < s.characters.size() && i < 4; ++i) {
+        list += fmt::format("{}{} ({})", i ? ", " : "", s.characters[i].first, s.characters[i].second);
+      }
+      ImGui::TextWrapped("%s %s", T("Tus personajes:"), list.c_str());
+    }
+    ImGui::Spacing();
+    ImGui::Text("%s", T("Últimas partidas"));
+    if (ImGui::BeginTable("history", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
+                          ImVec2(0, 0))) {
+      ImGui::TableSetupColumn(T("Fecha"), ImGuiTableColumnFlags_WidthFixed, 110);
+      ImGui::TableSetupColumn(T("Resultado"), ImGuiTableColumnFlags_WidthFixed, 90);
+      ImGui::TableSetupColumn(T("Rival"), ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn(T("Personajes"), ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableHeadersRow();
+      for (const stats::Match& m : stats::Recent(30)) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        std::tm local{};
+        const std::time_t t = std::time_t(m.at);
+        localtime_s(&local, &t);
+        ImGui::TextColored(kGrey, "%02d/%02d %02d:%02d", local.tm_mday, local.tm_mon + 1, local.tm_hour, local.tm_min);
+        ImGui::TableNextColumn();
+        if (m.result > 0) {
+          ImGui::TextColored(kGreen, "%s", T("Ganaste"));
+        } else if (m.result < 0) {
+          ImGui::TextColored(kRed, "%s", T("Perdiste"));
+        } else {
+          ImGui::TextColored(kGrey, "-");
+        }
+        ImGui::TableNextColumn();
+        FlagInline(m.rival_country);
+        ImGui::Text("%s", m.rival.c_str());
+        ImGui::TableNextColumn();
+        ImGui::Text("%s vs %s", m.mine.c_str(), m.theirs.c_str());
+      }
+      ImGui::EndTable();
+    }
   }
 
   // The session is over: why, and back to the lobby (by itself after a few seconds).

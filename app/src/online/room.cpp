@@ -17,6 +17,7 @@
 #include "online/netplay.h"
 #include "online/notify.h"
 #include "online/session.h"
+#include "online/stats.h"
 
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
                       "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in");
@@ -71,6 +72,15 @@ std::string Normalize(const std::string& code) {
     if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) out += c;
   }
   return out.substr(0, 8);
+}
+
+// This player's country and record, for the other player (with the hello, the welcome and the keepalives).
+json AboutMe(json message) {
+  const stats::Summary s = stats::Totals();
+  message["cc"] = flags::Mine();
+  message["won"] = s.won;
+  message["lost"] = s.lost;
+  return message;
 }
 
 std::string MyName() {
@@ -168,12 +178,16 @@ void OnMessageLocked(const json& d) {
   const std::string kind = d.value("room", "");
   if (kind.empty()) return;
   g.heard = Clock::now();
-  // the other player's country, with its hello and its keepalives (it may have found it after the hello)
+  // the other player's country and record, with its hello and its keepalives (it may have found it after the hello)
   if (const std::string cc = d.value("cc", ""); cc.size() == 2 && g.s.phase == Phase::kTogether) {
     if (g.s.other_country != cc) {
       g.s.other_country = cc;
       Touch();
     }
+  }
+  if (d.contains("won") && g.s.phase == Phase::kTogether) {
+    g.s.other_won = d.value("won", -1);
+    g.s.other_lost = d.value("lost", -1);
   }
   if (g.s.host) {
     if (kind == "hi") {
@@ -189,8 +203,10 @@ void OnMessageLocked(const json& d) {
         g.guest_id = id;
         g.s.other = name;
         g.s.other_country = d.value("cc", "");
+        g.s.other_won = d.value("won", -1);
+        g.s.other_lost = d.value("lost", -1);
         g.s.phase = Phase::kTogether;
-        lobby::SigToGuest(g.s.code, id, {{"room", "welcome"}, {"name", g.s.me}, {"cc", flags::Mine()}});
+        lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}}));
         if (fresh) {
           g.s.my_ready = g.s.other_ready = false;
           g.s.status = T("Rival en la sala");
@@ -207,6 +223,8 @@ void OnMessageLocked(const json& d) {
     if (kind == "welcome" && g.s.phase == Phase::kJoining) {
       g.s.other = d.value("name", "");
       g.s.other_country = d.value("cc", "");
+      g.s.other_won = d.value("won", -1);
+      g.s.other_lost = d.value("lost", -1);
       g.s.phase = Phase::kTogether;
       g.s.status = Tf("En la sala de {}", g.s.other);
       AddLine("", Tf("Entraste a la sala de {}", g.s.other), true);
@@ -363,7 +381,7 @@ void Pump() {
     if (g.s.phase == Phase::kJoining) {
       if (now - g.hi_at > kHiEvery) {
         g.hi_at = now;
-        lobby::SigToHost(g.s.code, {{"room", "hi"}, {"name", g.s.me}, {"id", g.guest_id}, {"cc", flags::Mine()}});
+        lobby::SigToHost(g.s.code, AboutMe({{"room", "hi"}, {"name", g.s.me}, {"id", g.guest_id}}));
       }
       if (!g.s.in_session && now - g.joined_at > kJoinFor) {
         const std::string code_was = g.s.code;
@@ -374,7 +392,7 @@ void Pump() {
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {
         g.said = now;
-        SendOther({{"room", "ping"}, {"cc", flags::Mine()}});
+        SendOther(AboutMe({{"room", "ping"}}));
       }
       // in a session the fight's own path says whether the other player is there (the lobby may be what is down)
       if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("{} se desconectó");
