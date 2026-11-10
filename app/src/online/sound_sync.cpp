@@ -495,6 +495,19 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote) {
   }
 }
 
+bool AgreedReady(uint32_t local, uint32_t remote) {
+  std::lock_guard lock(g_mutex);
+  auto agreed = [&](uint32_t key) {
+    const bool said_l = key == local || g_local_said.count(key), said_r = key == remote || g_remote_said.count(key);
+    return said_l && said_r && !g_delivered.count(key);
+  };
+  for (uint32_t key : g_local_said) {
+    if (agreed(key) && !g_waiting.count(key)) return false;
+  }
+  if (local && agreed(local) && !g_waiting.count(local)) return false;
+  return true;
+}
+
 uint32_t AnnounceFor(int64_t input_frame) {
   std::lock_guard lock(g_mutex);
   if (g_mode != Mode::kFrames) return 0;

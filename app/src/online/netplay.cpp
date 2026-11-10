@@ -100,6 +100,7 @@
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
+#include "online/feed.h"
 #include "online/fight_state.h"
 #include "online/heap_undo.h"
 #include "online/ice_link.h"
@@ -123,6 +124,10 @@
 REXCVAR_DEFINE_STRING(mk9_net_room, "", "MK9 Online", "The lobby room whose session this is (empty: none)");
 REXCVAR_DEFINE_STRING(mk9_net_role, "", "MK9 Online", "mk9_net_room: this side is its host or its guest");
 REXCVAR_DEFINE_STRING(mk9_online_name, "", "MK9 Online", "The player's name in the lobby");
+REXCVAR_DEFINE_BOOL(mk9_net_room_listed, false, "MK9 Online",
+                    "mk9_net_room's host: the room stays in the lobby's list while it plays (it was a public one), for "
+                    "spectators");
+REXCVAR_DEFINE_STRING(mk9_net_room_title, "", "MK9 Online", "mk9_net_room_listed: the room's title in the list");
 REXCVAR_DEFINE_INT32(mk9_net_host, 0, "MK9 Online", "Host a two-player session on this UDP port (0 = off)");
 REXCVAR_DEFINE_STRING(mk9_net_join, "", "MK9 Online", "Join a two-player session at host:port");
 REXCVAR_DEFINE_INT32(mk9_net_delay, 2, "MK9 Online",
@@ -146,6 +151,13 @@ REXCVAR_DEFINE_BOOL(mk9_net_light_live, true, "MK9 Online",
                     "A live frame of a fight whose rival input has already come (and the frame before it was shown) "
                     "runs without a snapshot or a rest too: it cannot be predicted wrong (false: every live frame "
                     "rests, as in 0.2.0)");
+REXCVAR_DEFINE_BOOL(mk9_net_log_ready, false, "MK9 Online", "Tests: log the readiness polls answered ready");
+REXCVAR_DEFINE_BOOL(mk9_watch_catch_up, true, "MK9 Online",
+                    "A spectator far behind the match catches up in the menus (frames hidden, fast and muted)");
+REXCVAR_DEFINE_BOOL(mk9_watch_catch_up_fights, false, "MK9 Online",
+                    "Tests: a spectator far behind the match catches up in the fights too (2026-11-10: the playback "
+                    "parted from the match within the fight's intro: its scripts ran others, the sounds' callbacks "
+                    "coming on FMOD's own clock)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay follows the round trip all fight long (from the host's "
                     "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
@@ -182,8 +194,9 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // mk9-lauta (2026-11-10): 8 from 0.2.1 on. 0.1.0 and 0.2.0 both said 7 and played each other, with a different
 // netcode on each side; a HELLO of another version now ends the handshake at once on this side, with the reason
 // (EndReason::kOtherVersion), and the other side gets a goodbye in its own version's words. From 8 on a HELLO also
-// says the release ("0.2.1").
-constexpr uint8_t kVersion = 8;
+// says the release ("0.2.1"). 9 from 0.3.0 on: an epoch's last frame (its barrier's) has a sync hash of its own (it
+// went into the next epoch's first frame's), and it is recorded (spectators: feed.h).
+constexpr uint8_t kVersion = 9;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -271,6 +284,25 @@ struct Session {
   bool speculating = false;          // past the learning frames: frames may run on predicted inputs
   uint64_t light_boundaries = 0;     // frames run again that started with no snapshot (mk9_net_light_resim)
   uint64_t light_live = 0;           // live frames that started with no snapshot (mk9_net_light_live)
+  // mk9-lauta (2026-11-10): a spectator's game (mk9_net_role=watch): the host's recording played back (feed.h)
+  bool watching = false;
+  struct WatchedFrame {
+    Pad p1, p2;
+    uint64_t hash = 0;
+  };
+  struct WatchedEpoch {
+    uint64_t start = 0;  // its frame 0's game frame there
+    bool rollback = false;
+    int64_t mode_end = -1;  // the fight's mode ended at this frame (from then on as lockstep)
+    std::vector<WatchedFrame> frames;
+  };
+  std::vector<WatchedEpoch> watched;  // by epoch
+  uint64_t watch_read = 0;            // the recording's bytes parsed
+  bool watch_header = false;
+  bool watch_hidden = false;          // catching up: frames hidden, unpaced and muted
+  std::atomic<int64_t> watch_behind{0};  // frames of the match beyond this one's (the game thread's count, for Info)
+  uint64_t watch_diffs = 0;
+  uint8_t watch_ready_before = 0;     // the last frame's recorded ready bits (a rise waits for this machine's loads)
   bool prev_hidden = true;           // the frame that ran last was one run again (not shown)
   uint64_t delay_changes = 0;        // a fight's delay changed for the round trip (AdjustFightDelay)
   snapshot::Timeline timeline;
@@ -307,8 +339,10 @@ Session g;
 //   header   "MK9NET1\0", u32 version 1, u8 player, u32 seed, u8 rollback, u8 lockstep delay, u8 rollback delay
 //   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
 //   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
+//   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
 struct Recorder {
   FILE* file = nullptr;
+  bool feeding = false;  // the host: every record also goes to the spectators (feed.h)
   std::string path;
   int64_t upto = -1;  // the epoch's frames written
   uint64_t frames = 0;
@@ -317,11 +351,22 @@ Recorder g_rec;
 
 void RecordPut(const void* data, size_t size) {
   if (g_rec.file) std::fwrite(data, 1, size, g_rec.file);
+  if (g_rec.feeding) feed::Append(data, size);
 }
 
 template <typename T>
 void RecordValue(T v) {
   RecordPut(&v, sizeof(v));
+}
+
+void RecordHeader() {
+  RecordPut("MK9NET1", 8);
+  RecordValue<uint32_t>(1);
+  RecordValue<uint8_t>(uint8_t(g.player));
+  RecordValue<uint32_t>(g.seed);
+  RecordValue<uint8_t>(g.rollback_wanted ? 1 : 0);
+  RecordValue<uint8_t>(uint8_t(g.lockstep_delay));
+  RecordValue<uint8_t>(uint8_t(g.rollback_delay));
 }
 
 void RecordPad(const Pad& pad) {
@@ -332,7 +377,12 @@ void RecordPad(const Pad& pad) {
 }
 
 void RecordOpen() {
-  if (!REXCVAR_GET(mk9_net_record) || g_rec.file) return;
+  if (g_rec.file || g_rec.feeding) return;
+  g_rec.feeding = g.host && !g.room.empty();  // a room's host: its spectators get the same records
+  if (!REXCVAR_GET(mk9_net_record)) {
+    if (g_rec.feeding) RecordHeader();
+    return;
+  }
   wchar_t exe[MAX_PATH] = {};
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
   const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
@@ -356,20 +406,15 @@ void RecordOpen() {
   std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
   const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
   g_rec.file = _wfopen(path.c_str(), L"wb");
-  if (!g_rec.file) return;
-  g_rec.path = path.string();
-  RecordPut("MK9NET1", 8);
-  RecordValue<uint32_t>(1);
-  RecordValue<uint8_t>(uint8_t(g.player));
-  RecordValue<uint32_t>(g.seed);
-  RecordValue<uint8_t>(g.rollback_wanted ? 1 : 0);
-  RecordValue<uint8_t>(uint8_t(g.lockstep_delay));
-  RecordValue<uint8_t>(uint8_t(g.rollback_delay));
-  REXLOG_INFO("[net] the session's inputs go to {}", g_rec.path);
+  if (g_rec.file) {
+    g_rec.path = path.string();
+    REXLOG_INFO("[net] the session's inputs go to {}", g_rec.path);
+  }
+  RecordHeader();
 }
 
 void RecordEpoch() {
-  if (!g_rec.file) return;
+  if (!g_rec.file && !g_rec.feeding) return;
   RecordValue<uint8_t>('E');
   RecordValue<uint32_t>(g.epoch);
   RecordValue<uint64_t>(g.start_game_frame);
@@ -381,7 +426,7 @@ int64_t FinalUpto();
 
 // The frames that are final now (both players' real inputs, their last run done), in order.
 void RecordFinal() {
-  if (!g_rec.file) return;
+  if (!g_rec.file && !g_rec.feeding) return;
   const int64_t upto = std::min(FinalUpto(), g.frame - 1);
   for (int64_t f = g_rec.upto + 1; f <= upto; ++f) {
     if (!g.have_remote[size_t(f)]) break;
@@ -393,7 +438,15 @@ void RecordFinal() {
     g_rec.upto = f;
     ++g_rec.frames;
   }
-  if ((g_rec.frames & 1023) == 0) std::fflush(g_rec.file);
+  if (g_rec.file && (g_rec.frames & 1023) == 0) std::fflush(g_rec.file);
+}
+
+// mk9-lauta (2026-11-10): 'M' u32 frame: the fight's mode ended at that frame (the rest of the epoch in lockstep), for a
+// spectator to play it as the players did.
+void RecordModeEnd(int64_t frame) {
+  if (!g_rec.file && !g_rec.feeding) return;
+  RecordValue<uint8_t>('M');
+  RecordValue<uint32_t>(uint32_t(frame));
 }
 
 void RecordClose() {
@@ -859,6 +912,21 @@ Pad ReadLocalPad() {
 // A lobby room's session: the lobby as the player's name, the room hosted (closed: the guest is in it) or joined, and
 // the players' own path through ICE.
 bool ConfigureRoom(const std::string& room, const std::string& role) {
+  if (role == "watch") {
+    // mk9-lauta (2026-11-10): a spectator: the lobby as the player's name, the room joined with an id of its own, and
+    // the host's recording through the relay (feed.h); it plays as player 1's seat, both pads from the recording
+    std::string name = REXCVAR_GET(mk9_online_name);
+    if (name.empty()) name = "Spectator";
+    lobby::Start(name);
+    std::random_device rd;
+    const std::string id = fmt::format("{:08x}{:08x}", rd(), rd());
+    lobby::Join(room, id);
+    g.watching = true;
+    g.host = false;
+    g.room = room;
+    room::EnterWatch(room, name, id);
+    return true;
+  }
   g.host = role == "host";
   if (!g.host && role != "guest") {
     REXLOG_ERROR("[net] mk9_net_role must be host or guest, not '{}'", role);
@@ -869,8 +937,11 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
   if (name.empty()) name = g.host ? "Host" : "Guest";
   lobby::Start(name);
   std::string id;
+  std::string title = REXCVAR_GET(mk9_net_room_title);
+  if (title.empty()) title = name;
+  const bool listed = g.host && REXCVAR_GET(mk9_net_room_listed);
   if (g.host) {
-    lobby::Host(room, name, false, true);
+    lobby::Host(room, title, listed, true);
   } else {
     std::random_device rd;
     id = fmt::format("{:08x}{:08x}", rd(), rd());
@@ -884,7 +955,7 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
   }
   g.link = net::WithTestConditions(std::move(link));
   g.room = room;
-  room::EnterSession(room, g.host, name, id);  // the room's chat goes on in the session
+  room::EnterSession(room, g.host, name, id, title, listed);  // the room's chat goes on in the session
   return true;
 }
 
@@ -901,11 +972,12 @@ bool Configure() {
   g.delay = g.lockstep_delay;
   if (!room.empty()) {
     if (!ConfigureRoom(room, REXCVAR_GET(mk9_net_role))) return false;
-    g.player = g.host ? 0 : 1;
+    g.player = g.host || g.watching ? 0 : 1;
     if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
     ParseRanges();
     REXLOG_INFO("[net] room {} as its {}; lockstep delay {}, rollback {} (delay {}); the host decides", room,
-                g.host ? "host" : "guest", g.lockstep_delay, g.rollback_wanted ? "on" : "off", g.rollback_delay);
+                g.host ? "host" : g.watching ? "spectator" : "guest", g.lockstep_delay, g.rollback_wanted ? "on" : "off",
+                g.rollback_delay);
     return true;
   }
   g.host = host_port > 0;
@@ -1446,6 +1518,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
                 g.mode_change_at, g.frame, g.rollbacks, g.resimulated);
     // mk9-lauta (2026-11-10): the match is decided, the same on both machines: its result for the players' records
     fight_state::Report(base, g.player);
+    RecordModeEnd(g.mode_change_at);
     g.rollback = false;
     g.mode_change_at = -1;
     g.delay_check_at = 0;  // the lockstep after the fight: its delay for the round trip from the next frame
@@ -1509,12 +1582,230 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   LogStats();
 }
 
+// --- a spectator (mk9-lauta, 2026-11-10) ---
+
+// The recording's bytes that came, parsed into epochs and frames (feed.h; the format of Recorder). They come from the
+// host through the relay: epochs and frames in order or nothing (a number out of it would size the vectors).
+void WatchParse() {
+  auto read = [](uint64_t at, void* out, size_t n) { return feed::Read(at, out, n); };
+  auto broken = [](const char* what, uint64_t value) {
+    REXLOG_ERROR("[watch] the recording is broken at byte {}: {} {}", g.watch_read, what, value);
+    g.failed = true;
+  };
+  if (!g.watch_header) {
+    uint8_t h[20];
+    if (!read(0, h, sizeof(h))) return;
+    if (std::memcmp(h, "MK9NET1", 8) != 0) {
+      REXLOG_ERROR("[watch] what came is not a session recording");
+      g.failed = true;
+      return;
+    }
+    std::memcpy(&g.seed, h + 13, 4);
+    g.rollback_wanted = h[17] != 0;
+    g.watch_header = true;
+    g.watch_read = sizeof(h);
+  }
+  for (;;) {
+    uint8_t tag = 0;
+    if (!read(g.watch_read, &tag, 1)) return;
+    if (tag == 'E') {
+      uint8_t r[14];
+      if (!read(g.watch_read, r, sizeof(r))) return;
+      uint32_t epoch;
+      std::memcpy(&epoch, r + 1, 4);
+      if (epoch != g.watched.size()) return broken("epoch", epoch);
+      g.watched.emplace_back();
+      std::memcpy(&g.watched[epoch].start, r + 5, 8);
+      g.watched[epoch].rollback = r[13] != 0;
+      g.watch_read += sizeof(r);
+    } else if (tag == 'F') {
+      uint8_t r[1 + 4 + 2 * kPadBytes + 8];
+      if (!read(g.watch_read, r, sizeof(r))) return;
+      uint32_t frame;
+      std::memcpy(&frame, r + 1, 4);
+      if (g.watched.empty() || frame != g.watched.back().frames.size()) return broken("frame", frame);
+      {
+        auto& frames = g.watched.back().frames;
+        frames.emplace_back();
+        Pad* pads[2] = {&frames[frame].p1, &frames[frame].p2};
+        for (int p = 0; p < 2; ++p) {
+          const uint8_t* at = r + 5 + p * kPadBytes;
+          std::memcpy(pads[p]->bytes, at, 12);
+          pads[p]->busy = at[12];
+          pads[p]->ready = at[13];
+          std::memcpy(&pads[p]->sound, at + 14, 4);
+        }
+        std::memcpy(&frames[frame].hash, r + 5 + 2 * kPadBytes, 8);
+      }
+      g.watch_read += sizeof(r);
+    } else if (tag == 'M') {
+      uint8_t r[5];
+      if (!read(g.watch_read, r, sizeof(r))) return;
+      uint32_t frame;
+      std::memcpy(&frame, r + 1, 4);
+      if (!g.watched.empty()) g.watched.back().mode_end = frame;
+      g.watch_read += sizeof(r);
+    } else {
+      REXLOG_ERROR("[watch] the recording has a record it does not know ({}) at byte {}", int(tag), g.watch_read);
+      g.failed = true;
+      return;
+    }
+  }
+}
+
+// Frames of the match there are beyond the one this game plays next.
+int64_t WatchBehind() {
+  int64_t behind = 0;
+  for (size_t e = g.epoch; e < g.watched.size(); ++e) behind += int64_t(g.watched[e].frames.size());
+  return behind - g.frame;
+}
+
+// In the recorded epoch's fight with rollback, up to the frame after its mode ended (the players' switch to lockstep
+// runs that one with the fight's busy 0 and ready 0xFF still: RollbackFrame): what the players' fights polled.
+bool WatchFight() {
+  if (!g.watching || g.epoch >= g.watched.size()) return false;
+  const auto& e = g.watched[g.epoch];
+  return e.rollback && (e.mode_end < 0 || g.frame <= e.mode_end + 1);
+}
+
+// Waits on the match (the relay brings it) until done(); false: it ended there, or 40 s without a byte.
+template <typename Done>
+bool WatchWait(Done done) {
+  uint64_t size = feed::Size(), changed = NowUs();
+  for (;;) {
+    WatchParse();
+    if (g.failed) return false;
+    if (done()) return true;
+    if (feed::Ended()) return false;
+    if (feed::Size() != size) {
+      size = feed::Size();
+      changed = NowUs();
+    } else if (NowUs() - changed > 40000000) {
+      REXLOG_ERROR("[watch] nothing came of the match for 40 s");
+      return false;
+    }
+    g_frame_started_us = 0;  // the watchdog: waiting on the relay is no hang
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+}
+
+// A spectator's frame that ran (the one before g.frame): its sync hash against the players'.
+void WatchCompareLast() {
+  FinishFrameHash();
+  if (g.frame <= 0 || g.epoch >= g.watched.size()) return;
+  const auto& frames = g.watched[g.epoch].frames;
+  if (size_t(g.frame - 1) >= frames.size()) return;
+  const uint64_t mine = g.local_hash[size_t(g.frame - 1)], theirs = frames[size_t(g.frame - 1)].hash;
+  if (mine && theirs && mine != theirs && ++g.watch_diffs <= 10) {
+    REXLOG_WARN("[watch] frame {} of epoch {} differs from the match (sync hash {:016x}, there {:016x})", g.frame - 1,
+                g.epoch, mine, theirs);
+  }
+}
+
+// A spectator's frame: the recording's two inputs of this frame, waited for. More than 5 s behind the match it catches
+// up (the frames hidden, unpaced and muted) until 1.5 s from it. Where the recording says a scene is ready, it first
+// waits for its own loads to end (the players' machines were ready then; this one may be slower).
+void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
+  if (!g.started) {
+    g_frame_started_us = 0;
+    if (!WatchWait([] { return g.watch_header && !g.watched.empty(); })) {
+      EndSession(EndReason::kFailed, false);
+      return;
+    }
+    g.started = true;
+    StartEpoch(game_frame, 0, false);
+    g.seed_pending = true;
+    REXLOG_INFO("[watch] the match comes: seed {}, playing it back from game frame {}", g.seed, game_frame);
+  } else if (g.at_barrier) {
+    g.at_barrier = false;
+    WatchCompareLast();
+    const uint32_t next = g.epoch + 1;
+    // (the epoch's game frame there is not this one's: the players' count the frames their rollbacks ran again)
+    if (!WatchWait([&] { return g.watched.size() > next; })) {
+      EndSession(EndReason::kPeerLeft, false);
+      return;
+    }
+    StartEpoch(game_frame, next, false);
+    REXLOG_INFO("[watch] epoch {} at game frame {}", next, game_frame);
+  }
+  // the frame's inputs; the match's next epoch already there and this one's frames over: this game missed the barrier
+  // the players reached (its playback went another way)
+  bool missed = false;
+  if (!WatchWait([&] {
+        if (g.epoch < g.watched.size() && g.watched[g.epoch].frames.size() > size_t(g.frame)) return true;
+        missed = g.watched.size() > g.epoch + 1 && g.watched[g.epoch].frames.size() <= size_t(g.frame);
+        return missed;
+      }) ||
+      missed) {
+    if (missed) {
+      REXLOG_ERROR("[watch] the match went on to epoch {} at frame {} of epoch {}, and this playback did not: it went "
+                   "another way",
+                   g.epoch + 1, g.watched[g.epoch].frames.size(), g.epoch);
+    }
+    EndSession(missed ? EndReason::kDesync : EndReason::kPeerLeft, false);
+    return;
+  }
+  g_frame_started_us = NowUs();
+  const auto& epoch = g.watched[g.epoch];
+  const bool fight = WatchFight();
+  // the sounds' callbacks as the players had them: in lockstep at the frames their announcements agreed on (with this
+  // machine's own FMOD's callbacks, waited for), in a fight as they come
+  sound_sync::SetMode(ctx, base, fight ? sound_sync::Mode::kOff : sound_sync::Mode::kLockstep, g.epoch);
+  // catching up (in the menus only: a fight's sounds, on FMOD's own clock, would come many frames late): hidden (no
+  // drawing, no pacing) and muted; the switch with UE3's render thread drained first
+  const int64_t behind = WatchBehind();
+  g.watch_behind.store(behind, std::memory_order_relaxed);
+  const bool hide = (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && REXCVAR_GET(mk9_watch_catch_up) &&
+                    (g.watch_hidden ? behind > 90 : behind > 300);
+  if (hide != g.watch_hidden) {
+    snapshot::FlushRendering(ctx, base);
+    sa2::renut::SetFrameHidden(hide);
+    rex::cvar::SetFlagByName("audio_mute", hide ? "true" : "false");
+    g.watch_hidden = hide;
+    REXLOG_INFO("[watch] {} at frame {} of epoch {} ({} frames behind the match)", hide ? "catching up" : "caught up",
+                g.frame, g.epoch, behind);
+  }
+  Ensure(g.frame + 2);
+  WatchCompareLast();
+  const auto& f = epoch.frames[size_t(g.frame)];
+  // a scene the players' machines found ready: this one's loads first (its disk may be slower)
+  const uint8_t ready = f.p1.ready & f.p2.ready;
+  if (!fight && (ready & ~g.watch_ready_before) != 0) {
+    const uint64_t start = NowUs();
+    while (Load32(base, kAsyncPackagesNum) != 0 && NowUs() - start < 20000000) {
+      g_frame_started_us = 0;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    g_frame_started_us = NowUs();
+  }
+  g.watch_ready_before = fight ? 0 : ready;
+  SetFramePads(f.p1, f.p2);
+  if (fight) {
+    g.frame_busy = 0;
+    g.frame_ready = 0xFF;
+  } else {
+    g.frame_busy = f.p1.busy | f.p2.busy;
+    g.frame_ready = ready;
+    // the callbacks the two announced by this frame, once this machine's FMOD has them too (4 s at most)
+    const uint64_t start = NowUs();
+    while (!sound_sync::AgreedReady(f.p1.sound, f.p2.sound) && NowUs() - start < 4000000) {
+      g_frame_started_us = 0;
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    g_frame_started_us = NowUs();
+    sound_sync::Deliver(ctx, base, f.p1.sound, f.p2.sound);
+  }
+  ++g.frames_window;
+  ++g.frame;
+  g.latest = g.frame;
+}
+
 }  // namespace
 
 bool Active() {
   if (!g.configured) Configure();
-  // a host waits for its guest; a room's guest waits for the path to the host too
-  return g.link && (g.link->HasPeer() || g.host || !g.room.empty()) && !g.failed && !g.ended;
+  // a host waits for its guest; a room's guest waits for the path to the host too; a spectator has no path
+  return (g.watching || (g.link && (g.link->HasPeer() || g.host || !g.room.empty()))) && !g.failed && !g.ended;
 }
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
@@ -1535,6 +1826,10 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   g.game_thread = std::this_thread::get_id();
   WatchFrames();
   g_frame_started_us = NowUs();
+  if (g.watching) {
+    SpectatorFrame(ctx, base, game_frame);
+    return;
+  }
   if (!g.started) {
     // the handshake can wait seconds for the peer's path (ICE): not a hang for the watchdog
     g_frame_started_us = 0;
@@ -1554,6 +1849,11 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
                 g.rollback_delay, g.seed);
   } else if (g.at_barrier) {
     g.at_barrier = false;
+    // mk9-lauta (2026-11-10): the epoch's last frame, the barrier's: its hash and its record (each frame's goes out at
+    // the start of the one after it, and the one after this is the next epoch's). A spectator plays that frame too,
+    // and without its record it never reached the barrier the players had
+    FinishFrameHash();
+    RecordFinal();
     if (!WaitAtBarrier()) return;
     StartEpoch(game_frame, g.epoch + 1, g.rollback_wanted);
     if (g.rollback) {
@@ -1586,14 +1886,15 @@ uint32_t Busy(BusyFlag flag, uint32_t local) {
   while (bit < 7 && !(flag & (1u << bit))) ++bit;
   if (local) {
     g.busy_value[bit] = local;
-    return local;
+    // a spectator follows the players' word alone: its own movie may play on (it started later, or plays slower)
+    if (!g.watching) return local;
   }
   return (g.frame_busy & flag) ? (g.busy_value[bit] ? g.busy_value[bit] : 1u) : 0u;
 }
 
 uint32_t Ready(ReadyFlag flag, uint32_t local) {
   if (!g.started || g.ended || g.failed || std::this_thread::get_id() != g.game_thread) return local;
-  if (g.rollback) {
+  if (g.rollback || WatchFight()) {
     // a fight polls none of these (a mode change goes back to lockstep first): one that does would answer each
     // machine's own
     static int logged = 0;
@@ -1610,7 +1911,13 @@ uint32_t Ready(ReadyFlag flag, uint32_t local) {
     g.ready_seen |= flag;
     g.ready_value[bit] = local;
   }
-  return (g.frame_ready & flag) ? (g.ready_value[bit] ? g.ready_value[bit] : 1u) : 0u;
+  const uint32_t answer = (g.frame_ready & flag) ? (g.ready_value[bit] ? g.ready_value[bit] : 1u) : 0u;
+  if (static int logged = 0; (g.watching || REXCVAR_GET(mk9_net_log_ready)) && answer && logged < 40) {
+    ++logged;
+    REXLOG_INFO("[net] readiness poll {} at frame {} of epoch {}: here {:#x}, answered {:#x}", int(flag), g.frame - 1,
+                g.epoch, local, answer);
+  }
+  return answer;
 }
 
 bool ConfirmFrame(const char* what) {
@@ -1649,7 +1956,7 @@ bool AboutToLoad() {
 }
 
 void Barrier(uint8_t* base, const char* what) {
-  if (!g.started || g.ended || g.failed || g.at_barrier || g.rollback) return;
+  if (!g.started || g.ended || g.failed || g.at_barrier || g.rollback || WatchFight()) return;
   g.at_barrier = true;
   const uint32_t seed = EpochSeed(g.epoch + 1);
   seed::Start(base, seed);
@@ -1722,6 +2029,12 @@ SessionInfo Info() {
   }
   info.loss_pct = sent >= 4 ? 100.0 * lost / sent : 0.0;
   info.relayed = g.relayed.load(std::memory_order_relaxed);
+  info.watching = g.watching;
+  if (g.watching && g.started) {
+    info.behind_s = double(std::max<int64_t>(0, g.watch_behind.load(std::memory_order_relaxed))) / 60.0;
+    info.catching_up = g.watch_hidden;
+    info.watch_diffs = g.watch_diffs;
+  }
   return info;
 }
 

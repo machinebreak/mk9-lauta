@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
+#include <iterator>
 #include <mutex>
 #include <sstream>
 #include <vector>
@@ -57,8 +59,14 @@ std::wstring Quote(const std::wstring& arg) {
   return out;
 }
 
-// This game's own options, without a session's (nor a test's way into one: mk9_online_test).
-std::vector<std::wstring> OwnOptions() {
+// This game's own options, without a session's (nor a test's way into one: mk9_online_test, nor the files a test's
+// run writes: the game started again would write over them), nor those in dropping, which the caller gives again: the
+// command line's parser (CLI11) refuses an option given twice, and then takes none of them (a spectator started this
+// way with two user_data_root came up offline, on the default lobby).
+std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropping = {}) {
+  static const wchar_t* const kTestOutputs[] = {L"--mk9_check_log",    L"--mk9_rand_log",     L"--mk9_native_log",
+                                                L"--mk9_script_log",   L"--mk9_state_hash",   L"--mk9_input_record",
+                                                L"--mk9_snapshot_s"};
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   std::vector<std::wstring> out;
@@ -66,7 +74,10 @@ std::vector<std::wstring> OwnOptions() {
     const std::wstring a = argv[i];
     if (a.rfind(L"--mk9_net_room", 0) == 0 || a.rfind(L"--mk9_net_role", 0) == 0 ||
         a.rfind(L"--mk9_online_name", 0) == 0 || a.rfind(L"--mk9_online_show", 0) == 0 ||
-        a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos) {
+        a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos ||
+        std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
+                    [&](const wchar_t* o) { return a.rfind(o, 0) == 0; }) ||
+        std::any_of(dropping.begin(), dropping.end(), [&](const wchar_t* o) { return a.rfind(o, 0) == 0; })) {
       continue;
     }
     out.push_back(a);
@@ -100,18 +111,35 @@ std::vector<std::wstring> OwnOptions() {
 
 }  // namespace
 
-void Launch(const std::string& room, bool host, const std::string& name) {
+void Launch(const std::string& room, bool host, const std::string& name, const std::string& title, bool listed) {
   // a profile made anew: both games start from the same save (the role's own, so two games on one PC do not share it)
   const std::filesystem::path profile = ExeDir() / (host ? "online_session_host" : "online_session_guest");
   std::error_code ec;
   std::filesystem::remove_all(profile, ec);
   std::filesystem::create_directories(profile, ec);
-  std::vector<std::wstring> options = OwnOptions();
+  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
   options.push_back(L"--mk9_net_room=" + Wide(room));
   options.push_back(std::wstring(L"--mk9_net_role=") + (host ? L"host" : L"guest"));
   options.push_back(L"--mk9_online_name=" + Wide(name));
+  if (host && listed) {
+    options.push_back(L"--mk9_net_room_listed=true");
+    if (!title.empty()) options.push_back(L"--mk9_net_room_title=" + Wide(title));
+  }
   options.push_back(L"--user_data_root=" + profile.wstring());
   Start(options, "the room's fight");
+}
+
+void Watch(const std::string& room, const std::string& name) {
+  const std::filesystem::path profile = ExeDir() / "online_session_watch";
+  std::error_code ec;
+  std::filesystem::remove_all(profile, ec);
+  std::filesystem::create_directories(profile, ec);
+  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
+  options.push_back(L"--mk9_net_room=" + Wide(room));
+  options.push_back(L"--mk9_net_role=watch");
+  options.push_back(L"--mk9_online_name=" + Wide(name));
+  options.push_back(L"--user_data_root=" + profile.wstring());
+  Start(options, "watching a room's session");
 }
 
 void Back() {

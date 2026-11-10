@@ -96,6 +96,12 @@ struct SessionInfo {
   double jitter_ms = 0;
   double loss_pct = 0;
   bool relayed = false;
+  // mk9-lauta (2026-11-10): a spectator's game (feed.h): how far behind the match it plays, whether it is catching up
+  // (frames run hidden and fast), and the frames whose sync hash differed from the players'
+  bool watching = false;
+  double behind_s = 0;
+  bool catching_up = false;
+  uint64_t watch_diffs = 0;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

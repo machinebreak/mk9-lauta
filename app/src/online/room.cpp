@@ -11,6 +11,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "online/feed.h"
 #include "online/flags.h"
 #include "online/i18n.h"
 #include "online/lobby.h"
@@ -20,7 +21,8 @@
 #include "online/stats.h"
 
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
-                      "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in");
+                      "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in; "
+                      "'watch' watches the first room playing (its Watch button)");
 
 namespace mk9::room {
 namespace {
@@ -190,6 +192,27 @@ void OnMessageLocked(const json& d) {
     g.s.other_lost = d.value("lost", -1);
   }
   if (g.s.host) {
+    // mk9-lauta (2026-11-10): someone watching the session (its own id): the two players, then the match (feed.h)
+    if (kind == "watch") {
+      const std::string id = d.value("id", "");
+      if (id.empty() || !g.s.in_session) return;
+      // a player this one silenced does not watch either (session.h, IsBlocked)
+      if (session::IsBlocked(d.value("name", "")) || !feed::Heard(id, d.value("have", uint64_t(0)))) {
+        lobby::SigToGuest(g.s.code, id, {{"room", "watch_full"}});
+        return;
+      }
+      // the players' names until the spectator has them (its asking says)
+      if (!d.value("named", false)) {
+        lobby::SigToGuest(g.s.code, id,
+                          {{"room", "watching"}, {"p1", g.s.me}, {"p2", g.s.other}, {"cc1", flags::Mine()},
+                           {"cc2", g.s.other_country}});
+      }
+      if (g.s.watchers != feed::Watchers()) {
+        g.s.watchers = feed::Watchers();
+        Touch();
+      }
+      return;
+    }
     if (kind == "hi") {
       const std::string id = d.value("id", ""), name = d.value("name", "");
       if (id.empty()) return;
@@ -220,6 +243,25 @@ void OnMessageLocked(const json& d) {
       return;
     }
   } else {
+    if (g.s.phase == Phase::kWatching) {
+      if (kind == "watching") {
+        g.s.watching = true;
+        g.s.p1 = d.value("p1", "");
+        g.s.p2 = d.value("p2", "");
+        g.s.p1_country = d.value("cc1", "");
+        g.s.p2_country = d.value("cc2", "");
+        Touch();
+      } else if (kind == "feed") {
+        feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
+      } else if (kind == "feed_end") {
+        feed::ReceivedEnd();
+      } else if (kind == "watch_full") {
+        g.s.watch_full = true;
+        feed::ReceivedEnd();
+        Touch();
+      }
+      return;
+    }
     if (kind == "welcome" && g.s.phase == Phase::kJoining) {
       g.s.other = d.value("name", "");
       g.s.other_country = d.value("cc", "");
@@ -290,6 +332,12 @@ void QuickMatch() {
 void Leave() {
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase == Phase::kNone) return;
+  if (g.s.phase == Phase::kWatching) {
+    // a spectator says nothing to the host: its "bye" would read as the other player's
+    lobby::Join("", "");
+    Reset();
+    return;
+  }
   SendOther({{"room", "bye"}});
   if (g.s.host) {
     lobby::Unhost();
@@ -322,13 +370,40 @@ State Snapshot() {
   return g.s;
 }
 
-void EnterSession(const std::string& code, bool host, const std::string& me, const std::string& id) {
+void Watch(const std::string& code) {
+  std::string name;
+  {
+    std::lock_guard<std::mutex> lock(g.mutex);
+    name = MyName();
+  }
+  lobby::Stop();
+  session::Watch(Normalize(code), name);
+}
+
+void EnterWatch(const std::string& code, const std::string& me, const std::string& id) {
+  std::lock_guard<std::mutex> lock(g.mutex);
+  g.s = State{};
+  g.s.in_session = true;
+  g.s.code = code;
+  g.s.me = me;
+  g.s.phase = Phase::kWatching;
+  g.s.status = T("Pidiendo la partida al host...");
+  g.guest_id = id;
+  g.joined_at = Clock::now();
+  g.heard = Clock::now();
+  Touch();
+}
+
+void EnterSession(const std::string& code, bool host, const std::string& me, const std::string& id,
+                  const std::string& title, bool open) {
   std::lock_guard<std::mutex> lock(g.mutex);
   g.s = State{};
   g.s.in_session = true;
   g.s.code = code;
   g.s.host = host;
   g.s.me = me;
+  g.s.title = title;
+  g.s.open = open;
   g.s.phase = host ? Phase::kHosting : Phase::kJoining;
   g.s.status = T("Conectando con el rival");
   g.guest_id = host ? std::string() : id;  // the session (netplay.cpp) has hosted or joined the room already
@@ -353,6 +428,14 @@ static void TestStep() {
     if (test == "quick") QuickMatch();
     return;
   }
+  if (test == "watch" && s.phase == Phase::kNone) {
+    for (const lobby::Room& r : lobby::Snapshot().rooms) {
+      if (!r.playing) continue;
+      REXLOG_INFO("[room] mk9_online_test=watch: room {} plays", r.code);
+      Watch(r.code);
+    }
+    return;
+  }
   if (s.phase == Phase::kTogether && !s.my_ready) SetReady(true);
 }
 
@@ -373,8 +456,8 @@ void Pump() {
     if (event.room == g.s.code && event.data.is_object()) OnMessageLocked(event.data);
   }
   bool launch = false;
-  std::string code, me;
-  bool host = false;
+  std::string code, me, title;
+  bool host = false, listed = false;
   {
     std::lock_guard<std::mutex> lock(g.mutex);
     const auto now = Clock::now();
@@ -388,6 +471,16 @@ void Pump() {
         Reset();
         g.s.status = Tf("La sala {} no responde", code_was);
         lobby::Join("", "");
+      }
+    } else if (g.s.phase == Phase::kWatching) {
+      // every 2 s: still here, with this much of the match (and the players' names, until the host has given them)
+      if (!g.s.watch_full && now - g.hi_at > std::chrono::seconds(2)) {
+        g.hi_at = now;
+        lobby::SigToHost(g.s.code, {{"room", "watch"},
+                                    {"id", g.guest_id},
+                                    {"name", g.s.me},
+                                    {"have", feed::Size()},
+                                    {"named", g.s.watching}});
       }
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {
@@ -403,11 +496,31 @@ void Pump() {
       code = g.s.code;
       me = g.s.me;
       host = g.s.host;
+      title = g.s.title;
+      listed = g.s.open;
     }
   }
   if (launch) {
     lobby::Stop();
-    session::Launch(code, host, me);
+    session::Launch(code, host, me, title, listed);
+  }
+  // mk9-lauta (2026-11-10): the session's host passes the match to whoever watches it (feed.h)
+  {
+    std::string room_code;
+    bool feeding = false;
+    {
+      std::lock_guard<std::mutex> lock(g.mutex);
+      feeding = g.s.host && g.s.in_session;
+      room_code = g.s.code;
+    }
+    if (feeding) {
+      feed::Pump(room_code, netplay::Info().ended);
+      std::lock_guard<std::mutex> lock(g.mutex);
+      if (g.s.watchers != feed::Watchers()) {
+        g.s.watchers = feed::Watchers();  // one that stopped asking is gone
+        Touch();
+      }
+    }
   }
 }
 

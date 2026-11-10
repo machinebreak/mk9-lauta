@@ -23,6 +23,7 @@ enum class Phase {
   kJoining,    // joining, the host has not welcomed us yet
   kTogether,   // both in the room
   kStarting,   // the fight is starting (the game starts again)
+  kWatching,   // mk9-lauta (2026-11-10): this game watches the room's session (feed.h)
 };
 
 struct Line {
@@ -39,6 +40,11 @@ struct State {
   std::string me, other;      // the names
   std::string other_country;  // the other player's (two letters; "" not said): mk9-lauta, flags.h
   int other_won = -1, other_lost = -1;  // the other player's online record (stats.h; -1: not said)
+  // mk9-lauta (2026-11-10): spectators. The watching game: the two players (the host's answer), or the room has
+  // feed::kMaxWatchers already (watch_full); the host: how many watch.
+  bool watching = false, watch_full = false;
+  std::string p1, p2, p1_country, p2_country;
+  int watchers = 0;
   bool my_ready = false, other_ready = false;
   std::vector<Line> chat;
   std::string status;         // a line for the screen
@@ -55,7 +61,14 @@ State Snapshot();
 // Every overlay frame (the UI thread): the relayed messages, the keepalives, the start.
 void Pump();
 // This game is a room's session (netplay.cpp, mk9_net_room): the room as it was, for its chat. id: the guest's id the
-// session joined the room with (the lobby keeps one per player; its ICE handshake uses it too).
-void EnterSession(const std::string& code, bool host, const std::string& me, const std::string& id);
+// session joined the room with (the lobby keeps one per player; its ICE handshake uses it too). The host's title and
+// open (in the lobby's list) are what it announces the room with again (a guest's hello).
+void EnterSession(const std::string& code, bool host, const std::string& me, const std::string& id,
+                  const std::string& title, bool open);
+// mk9-lauta (2026-11-10): spectators. Watch: the lobby's screens start the game again watching the room (a playing
+// one); EnterWatch: that game (netplay.cpp, mk9_net_role=watch) joins the room with its own id and asks the host for
+// the match (feed.h).
+void Watch(const std::string& code);
+void EnterWatch(const std::string& code, const std::string& me, const std::string& id);
 
 }  // namespace mk9::room

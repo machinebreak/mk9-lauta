@@ -50,6 +50,11 @@ uint32_t Announcement();
 // both machines' inputs have announced go to the game.
 void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote);
 
+// mk9-lauta (2026-11-10), a spectator (feed.h): whether every callback the two players' recorded announcements agree
+// on, with this frame's, has come from this machine's own FMOD already (its game then gets them at the same frame as
+// theirs did; else the frame waits for them).
+bool AgreedReady(uint32_t local, uint32_t remote);
+
 // kFrames: this machine's announcement for its input of frame input_frame (0: none): each callback once.
 uint32_t AnnounceFor(int64_t input_frame);
 // kFrames: the peer's real input of frame `frame` announces `key`: the frame the callback goes to the game at, once

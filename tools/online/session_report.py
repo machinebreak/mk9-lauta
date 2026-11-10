@@ -43,6 +43,8 @@ def read(path):
             if not epochs:
                 epochs.append((0, 0, 0, {}))
             epochs[-1][3][frame] = (mine, theirs, hash_)
+        elif tag == ord('M'):
+            pos += 4  # the fight's mode ended at that frame (0.3.0 and later)
         else:
             break
     return info, epochs

@@ -385,6 +385,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
           ImGui::PushID(r.code.c_str());
           if (ImGui::SmallButton(T("Entrar"))) room::JoinRoom(r.code);
           ImGui::PopID();
+        } else if (r.playing && room.phase == room::Phase::kNone && online) {
+          // mk9-lauta (2026-11-10): a playing room can be watched (the game starts again watching it: feed.h)
+          ImGui::PushID(r.code.c_str());
+          if (ImGui::SmallButton(T("Mirar"))) room::Watch(r.code);
+          ImGui::PopID();
         }
       }
       ImGui::EndTable();
@@ -392,6 +397,22 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   void DrawRoom(const room::State& room) {
+    if (room.phase == room::Phase::kWatching) {
+      ImGui::Text(T("Sala %s"), room.code.c_str());
+      if (room.watching) {
+        ImGui::Text("%s", T("Mirando:"));
+        ImGui::SameLine();
+        FlagInline(room.p1_country);
+        ImGui::Text("%s  vs", room.p1.c_str());
+        ImGui::SameLine();
+        FlagInline(room.p2_country);
+        ImGui::Text("%s", room.p2.c_str());
+      } else {
+        ImGui::TextColored(kGold, "%s", T("Pidiendo la partida al host..."));
+      }
+      if (ImGui::Button(T("Dejar de mirar"))) session::Back();
+      return;
+    }
     ImGui::Text(T("Sala %s"), room.code.c_str());
     ImGui::SameLine();
     ImGui::TextColored(kGrey, "(%s)", T(room.open ? "pública" : "privada"));
@@ -574,6 +595,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (!room.in_session) return;
     const netplay::SessionInfo info = netplay::Info();
     if (info.ended) return;
+    if (info.watching) {
+      DrawWatchBadge(room, info);
+      return;
+    }
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
     ImGui::SetNextWindowBgAlpha(0.45f);
@@ -597,6 +622,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
           ImGui::TextColored(kGold, T("Conexión inestable (%.0f%% perdidos, variación %.0f ms)"), info.loss_pct,
                              info.jitter_ms);
         }
+        if (room.host && room.watchers > 0) ImGui::TextColored(kGrey, T("%d mirando"), room.watchers);
         if (info.waiting) ImGui::TextColored(kGold, T("Esperando a %s... %.0f s"), Other(room).c_str(), info.waiting_s);
         // mk9-lauta (2026-11-10): the two games apart (the session goes on): each player sees a different fight, so
         // they know it and can send their logs (logs/session_*.mk9net)
@@ -607,6 +633,34 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       } else {
         ImGui::TextColored(kGold, T("Conectando con %s..."), Other(room).c_str());
       }
+    }
+    ImGui::End();
+  }
+
+  // mk9-lauta (2026-11-10): a spectator's corner: who plays, how far behind the match, catching up.
+  void DrawWatchBadge(const room::State& room, const netplay::SessionInfo& info) {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+    ImGui::SetNextWindowBgAlpha(0.45f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+    if (ImGui::Begin("##watch_badge", nullptr, flags)) {
+      ImGui::Text("%s", T("Mirando:"));
+      ImGui::SameLine();
+      FlagInline(room.p1_country);
+      ImGui::Text("%s  vs", room.p1.empty() ? "-" : room.p1.c_str());
+      ImGui::SameLine();
+      FlagInline(room.p2_country);
+      ImGui::Text("%s", room.p2.empty() ? "-" : room.p2.c_str());
+      if (!info.active) {
+        ImGui::TextColored(kGold, "%s", T("Pidiendo la partida al host..."));
+      } else if (info.catching_up) {
+        ImGui::TextColored(kGold, T("Alcanzando el vivo... (%.0f s)"), info.behind_s);
+      } else {
+        ImGui::TextColored(kGrey, T("%.1f s detrás del vivo"), info.behind_s);
+      }
+      if (info.watch_diffs > 0) ImGui::TextColored(kRed, "%s", T("La repetición se desvió de la partida."));
     }
     ImGui::End();
   }
@@ -630,10 +684,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ly = ry = 0.086f * io.DisplaySize.y;
       if (frame_h <= 0) return;
     }
-    const std::string& p1 = room.host ? room.me : room.other;
-    const std::string& p2 = room.host ? room.other : room.me;
-    const std::string c1 = room.host ? flags::Mine() : room.other_country;
-    const std::string c2 = room.host ? room.other_country : flags::Mine();
+    const bool watching = room.phase == room::Phase::kWatching;
+    const std::string& p1 = watching ? room.p1 : room.host ? room.me : room.other;
+    const std::string& p2 = watching ? room.p2 : room.host ? room.other : room.me;
+    const std::string c1 = watching ? room.p1_country : room.host ? flags::Mine() : room.other_country;
+    const std::string c2 = watching ? room.p2_country : room.host ? room.other_country : flags::Mine();
     ImDrawList* list = ImGui::GetBackgroundDrawList();
     ImFont* font = ImGui::GetFont();
     const float size = std::max(12.0f, frame_h * 0.030f);
@@ -665,7 +720,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   void UpdatePresence(const room::State& room) {
     std::string details = T("En los menús"), state;
     int64_t since = 0;
-    if (room.in_session) {
+    if (room.phase == room::Phase::kWatching) {
+      details = T("Mirando una partida online");
+      if (room.watching) state = fmt::format("{} vs {}", room.p1, room.p2);
+    } else if (room.in_session) {
       const netplay::SessionInfo info = netplay::Info();
       state = Tf("vs {}", Other(room));
       if (info.active && info.rollback) {
@@ -782,7 +840,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       return;
     }
     std::string why;
-    switch (info.end_reason) {
+    if (info.watching) {
+      if (room.watch_full) why = T("La sala ya tiene el máximo de espectadores.");
+      else if (info.end_reason == netplay::EndReason::kFailed) why = T("No se pudo traer la partida.");
+      else why = T("La partida que mirabas terminó.");
+    } else switch (info.end_reason) {
       case netplay::EndReason::kLeft: why = T("Saliste de la sesión."); break;
       case netplay::EndReason::kPeerLeft: why = Tf("{} se fue de la sesión.", Other(room)); break;
       case netplay::EndReason::kPeerLost: why = Tf("Se cortó la conexión con {}.", Other(room)); break;
