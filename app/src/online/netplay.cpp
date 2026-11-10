@@ -158,6 +158,10 @@ REXCVAR_DEFINE_BOOL(mk9_sound_sync_fights, false, "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_net_sync_ranges, "", "MK9 Online",
                       "Guest ranges (hex lo-hi, comma-separated) that also go into the sync hash both players compare");
 REXCVAR_DEFINE_INT32(mk9_net_sync_every, 1, "MK9 Online", "Hash mk9_net_sync_ranges every this many frames");
+REXCVAR_DEFINE_INT32(mk9_net_test_protocol, 0, "MK9 Online",
+                     "Tests: speak this session protocol version instead of the build's (7: as 0.1.0 and 0.2.0 do), "
+                     "to see the other-version handshake")
+    .range(0, 255);
 
 #ifndef MK9_LAUTA_VERSION
 #define MK9_LAUTA_VERSION "0.0.0"
@@ -420,10 +424,16 @@ void Put64(std::vector<uint8_t>& out, uint64_t v) {
 uint32_t Get32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 uint64_t Get64(const uint8_t* p) { return uint64_t(Get32(p)) | uint64_t(Get32(p + 4)) << 32; }
 
+// The protocol version this side speaks (mk9_net_test_protocol: another one, for tests).
+uint8_t Protocol() {
+  static const int test = REXCVAR_GET(mk9_net_test_protocol);
+  return test > 0 ? uint8_t(test) : kVersion;
+}
+
 std::vector<uint8_t> Header(uint8_t type) {
   std::vector<uint8_t> out;
   Put16(out, kMagic);
-  out.push_back(kVersion);
+  out.push_back(Protocol());
   out.push_back(type);
   return out;
 }
@@ -626,7 +636,7 @@ void Receive() {
       continue;
     }
     if ((buf[0] | buf[1] << 8) != kMagic) continue;
-    if (buf[2] != kVersion) {
+    if (buf[2] != Protocol()) {
       // another release's game (the HELLO's type byte is where it always was): the handshake ends with the reason
       if (buf[3] == kHello && g.peer_version < 0) {
         g.peer_version = buf[2];
@@ -636,7 +646,7 @@ void Receive() {
         }
         REXLOG_WARN("[net] the other player's game speaks the session protocol {} (this one {}): another release of "
                     "mk9-lauta ({}; this one {})",
-                    buf[2], kVersion, g.peer_release.empty() ? "0.2.0 or older" : g.peer_release, MK9_LAUTA_VERSION);
+                    buf[2], Protocol(), g.peer_release.empty() ? "0.2.0 or older" : g.peer_release, MK9_LAUTA_VERSION);
       }
       continue;
     }
