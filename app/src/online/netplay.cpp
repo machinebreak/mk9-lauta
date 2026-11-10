@@ -113,6 +113,7 @@
 #include "online/snapshot.h"
 #include "online/transport.h"
 #include "profiler/sa2_cpu_profile_pc.h"
+#include "renut_engine/gpu/backend/render_thread.h"
 #include "renut_engine/gpu/sa2_renut_pacing.h"
 
 #define XXH_INLINE_ALL
@@ -1361,6 +1362,12 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     }
     const int64_t to = g.rollback_to;
     const uint64_t t0 = NowUs();
+    // mk9-lauta (2026-11-10): the renderer's queued work done first. The last shown frame's draws are recorded after its
+    // Swap and read their vertex streams in guest memory then, and some of those live in the memory the timeline puts
+    // back (the 4 KB pages under 0x40000000): read while the restore rewrote them, they drew stretched particles in
+    // green and cyan and, once, a whole frame overexposed (the "green lights" left after the drain's gate, recorded at
+    // ~200 ms). The rest has the guest's render thread flushed already: what is queued ends with that Swap.
+    renut::gpu::render_thread::Drain();
     heap_undo::RollBack(to);  // the allocations of the frames undone go, the frees held for them are forgotten
     if (!g.timeline.RollBack(base, uint64_t(to))) {
       quiesce::Release();

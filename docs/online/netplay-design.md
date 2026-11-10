@@ -486,3 +486,50 @@ cubre (sin clears ni resolves en un cuadro que no se dibuja), offline también.
 Pendiente (menor): el costo del borde en los cuadros que se vuelven a
 correr (~3 ms del hilo de render de UE3 + 2,3 ms de la línea de tiempo cada uno: un rollback de 5 cuadros es un
 cuadro de 40-70 ms).
+
+### Lo que encontraron los testers de la 0.2.0 (2026-11-10)
+
+1. **El parpadeo, la escena negra y los triángulos de colores en las peleas online** ("la pantalla sigue
+   parpadeando, como con luces verdes"). Reproducido con dos instancias y una grabación de lo que se muestra
+   (`sa2_video_s`, análisis cuadro por cuadro): 31-44 cuadros cada 900 con la escena 3D negra bajo el HUD y 2-4 con
+   triángulos enormes magenta, amarillos o azules, aun sin ningún rollback. La causa: el reposo de cada cuadro de una
+   pelea con rollback vacía el hilo de render de UE3 (`FlushRenderingCommands`) y, desde 2026-11-07, mantenía abierta
+   la compuerta de Renut (`mk9_record_after_swap`) todo ese tiempo, para no colgarse si ese hilo esperaba una cerca de
+   GPU detrás de ella. Con la compuerta abierta el hilo de render tomaba los dibujos del cuadro a medida que llegaban,
+   antes de que MK9 escribiera los vértices de sus partículas (los escribe después de pedir el dibujo, hasta el Swap):
+   vértices viejos o en cero, o sea basura o nada (la pasada que compone la escena, la escena negra). Ahora
+   (`mk9_drain_gate = watch`) el vaciado sólo vigila: si el hilo de UE3 deja de encolar trabajo 50 ms con cosas detrás
+   de la compuerta, la abre (ninguna vez en las pruebas). Y el present de las esperas (el overlay, cuando el juego
+   tarda más de 100 ms en mostrar un cuadro) ya no entra en medio de un cuadro: cortaba la lista de comandos y pasaba
+   al slot siguiente con el resto del cuadro todavía por grabar. Quedaban destellos de otra clase, con rollbacks:
+   partículas estiradas verdes y celestes y algún cuadro sobreexpuesto (las "luces verdes"): un rollback restauraba la
+   memoria del juego mientras el hilo de render todavía grababa los dibujos del último cuadro mostrado, que leen sus
+   vértices de la memoria del juego al grabarse (algunos viven en las páginas de 4 KB bajo 0x40000000, que la línea de
+   tiempo pone de vuelta). Ahora el rollback espera ese trabajo (`render_thread::Drain`, ~4 ms por rollback, no por
+   cuadro). Grabado de nuevo por ICE con 190 y 290 ms (rollbacks de hasta 7): 1500 cuadros, ninguno negro, de basura ni
+   con verde; el reposo cuesta lo mismo.
+2. **La resolución dinámica en 480p toda la noche**: decidía por el largo del cuadro, y un video corre a 30 por segundo
+   con la GPU casi quieta: cada cinemática la bajaba a 480p, y el trabajo de 2-3 ms de una CPU rápida nunca decía que
+   había lugar para subir (el jugador volvía a elegir Ultra a mano). Ahora va por el tiempo de GPU de los cuadros
+   mostrados (sus timestamps): baja con más de 15 ms, sube si el nivel siguiente (por sus píxeles) tomaría menos de
+   12,5 ms; mientras un video se reproduce no decide nada (tampoco el modo de dibujo automático).
+3. **Una pelea con 180-585 ms de ping que se puso cada vez peor**: el retraso se elegía una vez, al final de la intro
+   (184 ms: 2) y quedaba así con 300-350 ms: rollbacks de 10 cuadros, cuadros de hasta 850 ms, 27-40 por segundo. Ahora
+   `AdjustFightDelay` lo revisa cada 2 s de pelea (sube de una, baja de a un cuadro tras tres chequeos; los cuadros que
+   salta una subida repiten la última entrada), hasta 7. El de los menús llega a 20 (antes 12). El final de esa pelea
+   ("se laggeó toda y se reinició") fue la red del jugador: Windows dijo "red inalcanzable" (10051/10065) y el lobby no
+   respondía, y la sesión terminó a los 20 s sin noticias del otro, como corresponde.
+4. **El ping medido con las esperas adentro**: el juego lee los datagramas en el borde del cuadro, así que un cuadro
+   largo (una carga, un rollback, una GPU ocupada) se sumaba al ping (400-500 ms medidos sobre un camino de 160 ms, y
+   el retraso subía a 7 medio minuto). Ahora ICE marca la llegada de cada datagrama en su hilo
+   (`Transport::LastArrivalUs`), el PONG dice cuánto esperó el PING del otro lado y el que mide descuenta las dos
+   esperas: con 120-180 ms emulados mide 160-170 y el retraso queda en 2.
+5. **Versiones mezcladas**: la 0.1.0 y la 0.2.0 hablaban el mismo protocolo (7) con netcodes distintos. Desde la 0.2.1
+   es el 8, el HELLO dice la versión, y un HELLO de otra versión termina el intento al instante con "tiene otra versión
+   de mk9-lauta... actualicen los dos"; al otro le llega un BYE en el formato de su versión (la 0.2.0 deja de esperar 2
+   minutos). Prueba: `mk9_net_test_protocol=7`.
+6. **El audio que se fue en una fatality**: no se reprodujo (una prueba de 7 minutos con peleas enteras y rollbacks:
+   el sonido sigue después de cada fin de pelea). Hipótesis a confirmar con un log: FMOD vive fuera del rollback, y
+   un cambio de volumen o pausa de una categoría hecho en un cuadro que un rollback deshace no se deshace con él.
+7. **Pruebas nuevas**: `mk9_net_lag_steps` ("s:ms,s:ms": el lag cambia en la sesión) y las grabaciones analizadas
+   con un detector de cuadros negros y de colores basura.

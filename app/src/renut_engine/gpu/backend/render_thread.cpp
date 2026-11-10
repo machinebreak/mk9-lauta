@@ -163,7 +163,7 @@ bool DrainOpensGate() {
   static const bool open = REXCVAR_GET(mk9_drain_gate) == "open";
   return open;
 }
-constexpr auto kDrainStall = std::chrono::milliseconds(25);
+constexpr auto kDrainStall = std::chrono::milliseconds(50);
 Clock::time_point g_last_push{};  // when the last item was queued
 uint64_t g_gate_drain_opens = 0;
 // Requires g_mutex.
