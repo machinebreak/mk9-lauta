@@ -19,6 +19,7 @@
 #include <fmt/format.h>
 #include <rex/cvar.h>
 
+#include "online/discord.h"
 #include "online/flags.h"
 #include "online/i18n.h"
 #include "online/lobby.h"
@@ -167,6 +168,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     DrawSessionBadge(room);
     DrawNamePlates(room);
+    UpdatePresence(room);
     overlay_input::SetOpen(overlay_input::kOnline, visible_);
     if (!visible_) {
       DrawToast(room);
@@ -639,6 +641,35 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     plate(p2, c2, rx, ry, true);
   }
 
+  // mk9-lauta (2026-11-10): what Discord shows of the player (discord.h): the menus, the lobby, a room, a session's
+  // menus or a fight (since it began).
+  void UpdatePresence(const room::State& room) {
+    std::string details = T("En los menús"), state;
+    int64_t since = 0;
+    if (room.in_session) {
+      const netplay::SessionInfo info = netplay::Info();
+      state = Tf("vs {}", Other(room));
+      if (info.active && info.rollback) {
+        if (!fight_since_) fight_since_ = int64_t(std::time(nullptr));
+        details = T("Peleando online");
+        since = fight_since_;
+      } else {
+        fight_since_ = 0;
+        details = T("Online: en los menús");
+      }
+    } else if (room.phase == room::Phase::kHosting || room.phase == room::Phase::kJoining ||
+               room.phase == room::Phase::kSearching) {
+      details = T("En una sala online");
+      state = T("Esperando un rival");
+    } else if (room.phase == room::Phase::kTogether || room.phase == room::Phase::kStarting) {
+      details = T("En una sala online");
+      state = Tf("con {}", Other(room));
+    } else if (visible_ && lobby::Snapshot().link == lobby::Link::kOnline) {
+      details = T("En el lobby online");
+    }
+    discord::SetPresence(details, state, since);
+  }
+
   // The session is over: why, and back to the lobby (by itself after a few seconds).
   void DrawSessionEnd(const room::State& room, const netplay::SessionInfo& info) {
     if (ended_at_ == Clock::time_point{}) ended_at_ = Clock::now();
@@ -711,6 +742,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   std::string tab_ = "Salas";        // the tab showing
   std::string name_, name_note_, toast_;
   std::string person_;               // the chat's name clicked (its menu)
+  int64_t fight_since_ = 0;          // the session's fight began (seconds since 1970; Discord's timer)
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;
   Clock::time_point toast_until_{}, leave_deadline_{}, ended_at_{};

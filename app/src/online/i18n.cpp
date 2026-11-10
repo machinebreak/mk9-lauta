@@ -167,6 +167,14 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"Nadie esperando: tu sala quedó abierta para el próximo que busque",
        {"Nobody waiting: your room stays open for the next one who looks", "Ninguém esperando: sua sala ficou aberta para o próximo que procurar"}},
       {"La sala {} no responde", {"Room {} does not answer", "A sala {} não responde"}},
+      // Discord's Rich Presence (discord.h)
+      {"En los menús", {"In the menus", "Nos menus"}},
+      {"En el lobby online", {"In the online lobby", "No lobby online"}},
+      {"En una sala online", {"In an online room", "Em uma sala online"}},
+      {"con {}", {"with {}", "com {}"}},
+      {"Online: en los menús", {"Online: in the menus", "Online: nos menus"}},
+      {"Peleando online", {"Fighting online", "Lutando online"}},
+      {"vs {}", {"vs {}", "vs {}"}},
   };
   return table;
 }
