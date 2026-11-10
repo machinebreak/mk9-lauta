@@ -469,7 +469,12 @@ TURN de Cloudflare). Lo que había y lo que se hizo:
     ms con 2 % de pérdida (13.562 iguales, retraso 4, rollbacks hasta 10), el flujo entero por sala con lobby local e
     ICE con 70 ± 15 ms (sala pública, partida rápida, los dos listos, la pelea en el mismo cuadro).
 
-Pendiente: los personajes con "pixelado azul, verde, rojo" con un traje elegido (un solo tester; no se reprodujo:
-las peleas con trajes alternativos de la Escalera se ven bien); el costo del borde en los cuadros que se vuelven a
+Los personajes con "pixelado azul, verde, rojo" (un tester): su log de esa partida (offline, 480p, "Cuadros
+dibujados: Automático") muestra el modo pasando una y otra vez a dibujar uno de cada dos. En los cuadros salteados se
+hacían los clears y los resolves: un render target recién creado tiene contenido indefinido en D3D12 (ruido de colores
+en AMD) y el resolve lo copiaba a texturas que el cuadro dibujado siguiente usaba: el mismo arreglo del punto 6 lo
+cubre (sin clears ni resolves en un cuadro que no se dibuja), offline también.
+
+Pendiente: el costo del borde en los cuadros que se vuelven a
 correr (~3 ms del hilo de render de UE3 + 2,3 ms de la línea de tiempo cada uno: un rollback de 5 cuadros es un
 cuadro de 40-70 ms).
