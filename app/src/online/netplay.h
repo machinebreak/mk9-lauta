@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 struct PPCContext;
 
@@ -73,6 +74,7 @@ enum class EndReason : uint8_t {
   kPeerLost,  // no word from the other player for mk9_net_timeout_s
   kDesync,    // the two games' sync hashes differed: each game went its own way
   kFailed,    // the session could not start (no path to the other player, a different build)
+  kOtherVersion,  // the other player's game is another release of mk9-lauta (SessionInfo::peer_release)
 };
 // The session as the online screens show it.
 struct SessionInfo {
@@ -88,6 +90,7 @@ struct SessionInfo {
   bool desynced = false;
   bool waiting = false;     // the game is waiting for the other player's inputs (for longer than a moment)
   double waiting_s = 0;     // ... this long so far
+  std::string peer_release; // the other player's release ("0.2.1"; empty: not said, 0.2.0 and older say nothing)
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

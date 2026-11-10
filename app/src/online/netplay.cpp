@@ -139,8 +139,9 @@ REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
                     "a rest (no rollback can come back to it): rollbacks cost about half (tests: false = every frame "
                     "rests)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
-                    "A fight's input delay grows with a long round trip (from the host's mk9_net_rollback_delay up to "
-                    "6 frames) so rollbacks stay about 5 frames deep: steadier characters with 150-350 ms of ping");
+                    "A fight's input delay follows the round trip all fight long (from the host's "
+                    "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
+                    "with 150-400 ms of ping");
 REXCVAR_DEFINE_BOOL(mk9_net_record, true, "MK9 Online",
                     "Each session's final frames (both players' inputs and the sync hash) go to "
                     "logs/session_<date>_<player>.mk9net: the two players' files say where the games parted "
@@ -158,11 +159,19 @@ REXCVAR_DEFINE_STRING(mk9_net_sync_ranges, "", "MK9 Online",
                       "Guest ranges (hex lo-hi, comma-separated) that also go into the sync hash both players compare");
 REXCVAR_DEFINE_INT32(mk9_net_sync_every, 1, "MK9 Online", "Hash mk9_net_sync_ranges every this many frames");
 
+#ifndef MK9_LAUTA_VERSION
+#define MK9_LAUTA_VERSION "0.0.0"
+#endif
+
 namespace mk9::netplay {
 namespace {
 
 constexpr uint16_t kMagic = 0x394D;  // "M9"
-constexpr uint8_t kVersion = 7;
+// mk9-lauta (2026-11-10): 8 from 0.2.1 on. 0.1.0 and 0.2.0 both said 7 and played each other, with a different
+// netcode on each side; a HELLO of another version now ends the handshake at once on this side, with the reason
+// (EndReason::kOtherVersion), and the other side gets a goodbye in its own version's words. From 8 on a HELLO also
+// says the release ("0.2.1").
+constexpr uint8_t kVersion = 8;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -205,6 +214,8 @@ struct Session {
   uint16_t local_port = 0;
   bool heard_peer = false, peer_hello = false;
   int peer_delay = -1, peer_rollback = -1, peer_rollback_delay = -1;
+  int peer_version = -1;             // the protocol version of a HELLO that was not this one's (another release)
+  std::string peer_release;          // the other player's release, as its HELLO said it (8 and up)
   uint32_t seed = 0;                 // the host's
   int64_t peer_seed = -1;
   bool seed_pending = false;         // for TakeSessionSeed (epoch 0; barriers reseed on the spot)
@@ -247,6 +258,7 @@ struct Session {
   bool frames_sound = false;         // this epoch started with rollback: its sounds' callbacks by frame (sound_sync.h)
   bool speculating = false;          // past the learning frames: frames may run on predicted inputs
   uint64_t light_boundaries = 0;     // frames run again that started with no snapshot (mk9_net_light_resim)
+  uint64_t delay_changes = 0;        // a fight's delay changed for the round trip (AdjustFightDelay)
   snapshot::Timeline timeline;
   int64_t latest = 0;                // the live edge: the newest frame started + 1 (frame < latest while replaying)
   int64_t rollback_to = -1;          // the earliest frame that ran on a prediction that turned out wrong
@@ -501,6 +513,7 @@ const char* ReasonText(EndReason why) {
     case EndReason::kPeerLost: return "no word from the other player";
     case EndReason::kDesync: return "the two games went out of sync";
     case EndReason::kFailed: return "it could not start";
+    case EndReason::kOtherVersion: return "the other player has another release of mk9-lauta";
     default: return "?";
   }
 }
@@ -545,6 +558,9 @@ bool SendHello() {
   Put32(p, g.seed);
   p.push_back(uint8_t(g.rollback_wanted ? 1 : 0));
   p.push_back(uint8_t(g.rollback_delay));
+  const std::string_view release = MK9_LAUTA_VERSION;
+  p.push_back(uint8_t(std::min<size_t>(release.size(), 15)));
+  p.insert(p.end(), release.begin(), release.begin() + std::min<size_t>(release.size(), 15));
   const bool sent = g.link->Send(p.data(), p.size());
   g.last_sent_us = NowUs();
   return sent;
@@ -609,7 +625,21 @@ void Receive() {
       if (n < 0) return;
       continue;
     }
-    if ((buf[0] | buf[1] << 8) != kMagic || buf[2] != kVersion) continue;
+    if ((buf[0] | buf[1] << 8) != kMagic) continue;
+    if (buf[2] != kVersion) {
+      // another release's game (the HELLO's type byte is where it always was): the handshake ends with the reason
+      if (buf[3] == kHello && g.peer_version < 0) {
+        g.peer_version = buf[2];
+        // 8 and up say their release after the 12 bytes of 0.2.0's HELLO
+        if (buf[2] >= 8 && n >= 4 + 13 && n >= 4 + 13 + buf[4 + 12]) {
+          g.peer_release.assign(reinterpret_cast<const char*>(buf + 4 + 13), buf[4 + 12]);
+        }
+        REXLOG_WARN("[net] the other player's game speaks the session protocol {} (this one {}): another release of "
+                    "mk9-lauta ({}; this one {})",
+                    buf[2], kVersion, g.peer_release.empty() ? "0.2.0 or older" : g.peer_release, MK9_LAUTA_VERSION);
+      }
+      continue;
+    }
     g.heard_peer = true;
     g.last_heard_us = NowUs();
     ++g.received;
@@ -622,6 +652,10 @@ void Receive() {
       g.peer_seed = Get32(p + 6);
       g.peer_rollback = p[10];
       g.peer_rollback_delay = p[11];
+      if (left >= 13 && left >= 13 + p[12] && g.peer_release.empty()) {
+        g.peer_release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
+        REXLOG_INFO("[net] the other player has mk9-lauta {}", g.peer_release);
+      }
       if (g.started) AnswerHello();
     } else if (type == kInput && left >= 13) {
       const uint32_t epoch = Get32(p);
@@ -883,6 +917,17 @@ bool Handshake() {
     Receive();
     TakeEndRequest();
     if (g.ended) return false;
+    if (g.peer_version >= 0) {
+      // another release: no session (their netcode is not this one's). Their game hears a goodbye in its own
+      // version's words (0.2.0 ends its handshake with "the other player left" instead of waiting 2 minutes).
+      if (g.link->HasPeer()) {
+        const uint8_t bye[5] = {uint8_t(kMagic & 0xFF), uint8_t(kMagic >> 8), uint8_t(g.peer_version), kBye,
+                                uint8_t(EndReason::kLeft)};
+        for (int i = 0; i < 3; ++i) g.link->Send(bye, sizeof(bye));
+      }
+      EndSession(EndReason::kOtherVersion, false);
+      return false;
+    }
     // Both sides need the other's HELLO and a path to answer on. Over ICE a HELLO can arrive before the pair this side
     // sends on is chosen: the host of 0.1.0 started on any word from the guest, its own HELLO went nowhere and the
     // guest waited for it while the host waited for the guest's inputs (the sessions that froze at their start).
@@ -1022,7 +1067,7 @@ void LogStats() {
                        "keeping a frame {:.2f} ms, a rollback's restore {:.2f} ms; at rest {:.2f} ms a boundary "
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
                        "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; {} frames "
-                       "run again with no snapshot",
+                       "run again with no snapshot; the delay changed {} times",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
                        g.rollbacks ? g.ms_restore / double(g.rollbacks) : 0.0,
@@ -1030,7 +1075,7 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries);
+                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries, g.delay_changes);
     }
     const sound::HeapStats sound = sound::Stats();
     const sound_replay::Stats sounds = sound_replay::GetStats();
@@ -1086,10 +1131,11 @@ double RoundTripTypical() {
 }
 
 // The lockstep delay a round trip needs: the two sides' delays cover it and ~25 ms of jitter, from the host's
-// mk9_net_delay up to 12 frames.
+// mk9_net_delay up to 20 frames. mk9-lauta (2026-11-10): 12 at most covered 375 ms; a 0.2.0 player's round trip went
+// 170-585 ms and the menus stopped for 200-500 ms every few seconds (a third of a second of delay in a menu is better).
 int LockstepDelayFor(double rtt_ms) {
   const int needed = int(std::ceil((rtt_ms + 25.0) / (2.0 * 1000.0 / 60.0)));
-  return std::clamp(needed, g.lockstep_delay, 12);
+  return std::clamp(needed, g.lockstep_delay, 20);
 }
 
 // Every 2 s of lockstep: this side's delay for the round trip, up at once, down after three checks in a row.
@@ -1110,13 +1156,33 @@ void AdjustDelayForRoundTrip() {
 
 // The input delay of a fight with rollback, once its intro is over: the host's (mk9_net_rollback_delay, 0-2), raised
 // with a long round trip (mk9_net_auto_delay) so a wrong prediction goes back about kTargetRollbackDepth frames:
-// 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 260 ms -> 4, 6 at most (300 ms and more: 340 ms with 4 went back 9-10 frames,
-// frames of 50-120 ms). Each side picks its own (its inputs carry their frames).
+// 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 260 ms -> 4, 300 ms -> 6, 7 at most (340 ms and more: with 4, 340 ms went back
+// 9-10 frames, frames of 50-120 ms). Each side picks its own (its inputs carry their frames).
 int FightDelay() {
   const double rtt = RoundTripTypical();
   if (!REXCVAR_GET(mk9_net_auto_delay) || rtt <= 0) return g.rollback_delay;
   const int one_way = int(std::ceil(rtt / 2.0 / (1000.0 / 60.0)));
-  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 6);
+  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 7);
+}
+
+// mk9-lauta (2026-11-10): every 2 s of a fight with rollback, its delay for the round trip of now: up at once, down a
+// frame at a time after three checks in a row (RollbackFrame fills the frames a raise skips with the last input, and
+// makes no input for a frame after a lowering). 0.2.0 chose it once, at the end of the intro: a fight that began at
+// 184 ms kept 2 frames with 300-350 ms later on; its rollbacks went back 10 frames, its frames took up to 850 ms and
+// it showed 27-40 frames a second.
+void AdjustFightDelay() {
+  if (!REXCVAR_GET(mk9_net_auto_delay) || g.latest < g.delay_check_at || RoundTripTypical() <= 0) return;
+  g.delay_check_at = g.latest + 120;
+  const int wanted = FightDelay();
+  if (wanted < g.delay && ++g.lower_votes < 3) return;
+  if (wanted >= g.delay) g.lower_votes = 0;
+  if (wanted == g.delay) return;
+  const int next = wanted > g.delay ? wanted : g.delay - 1;
+  REXLOG_INFO("[net] fight delay {} -> {} frames at frame {} (round trip {:.0f} ms typical, {:.0f} at least)", g.delay,
+              next, g.latest, RoundTripTypical(), RoundTripFloor());
+  g.delay = next;
+  g.lower_votes = 0;
+  ++g.delay_changes;
 }
 
 // One frame of a lockstep epoch (the menus, the loads, a fight without rollback).
@@ -1189,11 +1255,21 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   Receive();
   const bool live = g.frame == g.latest;
   if (live) {
+    if (g.speculating) AdjustFightDelay();
     Ensure(g.latest + g.delay + 1);
     // the input of frame latest + delay, once: a rollback in the call that made it leaves the live frame where it
     // was, and making it again here would replace an input the peer already has (the two games would then play
     // that frame with different buttons: the desyncs of bad networks, 2026-11-09)
     if (g.latest + g.delay > g.local_made_upto) {
+      // a raised delay: the frames it skipped get the last input again (this side's inputs stay one a frame)
+      const Pad last = g.local_made_upto >= 0 ? g.local[size_t(g.local_made_upto)] : Pad{};
+      for (int64_t f = g.local_made_upto + 1; f < g.latest + g.delay; ++f) {
+        Pad& fill = g.local[size_t(f)];
+        std::memcpy(fill.bytes, last.bytes, 12);
+        fill.busy = last.busy;
+        fill.ready = 0;
+        fill.sound = sound_sync::AnnounceFor(f);
+      }
       Pad pad = ReadLocalPad();
       // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
       // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
@@ -1248,6 +1324,8 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
         // the ones it made already (the intro's last frames)
         const int intro_delay = g.delay;
         g.delay = FightDelay();
+        g.delay_check_at = g.latest + 120;  // AdjustFightDelay from here on
+        g.lower_votes = 0;
         REXLOG_INFO("[net] rollback on from frame {} of the fight ({} pages written with no card learnt); input delay "
                     "{} frames (the intro's {}; round trip {:.0f} ms typical)",
                     g.frame, g.timeline.suspect_pages(), g.delay, intro_delay, RoundTripTypical());
@@ -1549,6 +1627,7 @@ SessionInfo Info() {
   info.resimulated = g.resimulated;
   // two games apart for good: a lone frame that differed (and matched again) says nothing to the players
   info.desynced = g.desync_at >= 0 && g.desync_frames >= 20;
+  info.peer_release = g.peer_release;
   return info;
 }
 

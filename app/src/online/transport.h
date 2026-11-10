@@ -14,6 +14,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace mk9::net {
@@ -39,7 +40,7 @@ class Transport {
 class LaggedTransport : public Transport {
  public:
   LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct, int late_path_ms = 0,
-                  int mute_ms = 0);
+                  int mute_ms = 0, std::vector<std::pair<int, int>> lag_steps = {});
   // late_path_ms (tests): for that long no path to send on (HasPeer false, sends dropped) while datagrams still come
   // in, as an ICE link before its pair is chosen
   bool HasPeer() const override;
@@ -59,6 +60,8 @@ class LaggedTransport : public Transport {
   int lag_ms_, jitter_ms_, loss_pct_;
   uint64_t path_from_us_ = 0;
   uint64_t mute_until_us_ = 0;  // tests: sends dropped (the path still up) until then
+  uint64_t made_us_ = 0;
+  std::vector<std::pair<int, int>> lag_steps_;  // tests: (seconds after the link is made, the one-way lag from then)
   std::deque<Held> held_;
   uint64_t last_due_us_ = 0;
   std::mt19937 rng_{12345};

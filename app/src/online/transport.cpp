@@ -3,6 +3,8 @@
 #include "online/transport.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 #include <chrono>
 #include <thread>
 
@@ -16,6 +18,9 @@ REXCVAR_DEFINE_INT32(mk9_net_loss_pct, 0, "MK9 Online", "Tests: the share of dat
 REXCVAR_DEFINE_INT32(mk9_net_mute_ms, 0, "MK9 Online",
                      "Tests: for this long after the session's link is made every datagram sent is lost though the "
                      "path is up (the ICE sessions that froze: connected, and nothing came)");
+REXCVAR_DEFINE_STRING(mk9_net_lag_steps, "", "MK9 Online",
+                      "Tests: the one-way lag changes during the session: \"s:ms,s:ms\" (from s seconds after the "
+                      "link is made, ms instead of mk9_net_lag_ms), as a connection whose round trip grows mid-fight");
 REXCVAR_DEFINE_INT32(mk9_net_late_path_ms, 0, "MK9 Online",
                      "Tests: for this long after the session's link is made there is no path to send on (sends "
                      "dropped) while datagrams still come in, as an ICE link before its pair is chosen");
@@ -32,13 +37,15 @@ uint64_t NowUs() {
 }  // namespace
 
 LaggedTransport::LaggedTransport(std::unique_ptr<Transport> inner, int lag_ms, int jitter_ms, int loss_pct,
-                                 int late_path_ms, int mute_ms)
+                                 int late_path_ms, int mute_ms, std::vector<std::pair<int, int>> lag_steps)
     : inner_(std::move(inner)),
       lag_ms_(std::max(0, lag_ms)),
       jitter_ms_(std::max(0, jitter_ms)),
       loss_pct_(std::clamp(loss_pct, 0, 100)),
       path_from_us_(NowUs() + uint64_t(std::max(0, late_path_ms)) * 1000),
-      mute_until_us_(NowUs() + uint64_t(std::max(0, mute_ms)) * 1000) {}
+      mute_until_us_(NowUs() + uint64_t(std::max(0, mute_ms)) * 1000),
+      made_us_(NowUs()),
+      lag_steps_(std::move(lag_steps)) {}
 
 bool LaggedTransport::HasPeer() const { return NowUs() >= path_from_us_ && inner_->HasPeer(); }
 
@@ -60,7 +67,11 @@ bool LaggedTransport::Send(const void* data, size_t size) {
   if (NowUs() < path_from_us_) return false;  // no path yet (mk9_net_late_path_ms)
   if (NowUs() < mute_until_us_) return true;  // lost on a path that seems up (mk9_net_mute_ms)
   if (loss_pct_ && int(rng_() % 100) < loss_pct_) return true;  // lost on the way
-  uint64_t due = NowUs() + uint64_t(lag_ms_) * 1000;
+  int lag = lag_ms_;
+  for (const auto& [at_s, ms] : lag_steps_) {
+    if (NowUs() >= made_us_ + uint64_t(at_s) * 1000000) lag = ms;
+  }
+  uint64_t due = NowUs() + uint64_t(std::max(0, lag)) * 1000;
   if (jitter_ms_) due += uint64_t(rng_() % uint32_t(jitter_ms_ * 1000 + 1));
   due = std::max(due, last_due_us_);  // in order, as a real path mostly keeps them
   last_due_us_ = due;
@@ -90,10 +101,18 @@ std::unique_ptr<Transport> WithTestConditions(std::unique_ptr<Transport> transpo
   const int lag = REXCVAR_GET(mk9_net_lag_ms), jitter = REXCVAR_GET(mk9_net_jitter_ms),
             loss = REXCVAR_GET(mk9_net_loss_pct), late = REXCVAR_GET(mk9_net_late_path_ms),
             mute = REXCVAR_GET(mk9_net_mute_ms);
-  if (lag <= 0 && jitter <= 0 && loss <= 0 && late <= 0 && mute <= 0) return transport;
-  REXLOG_WARN("[net] emulated network conditions: +{} ms one way, jitter {} ms, loss {}%, no path for {} ms (tests)",
-              lag, jitter, loss, late);
-  return std::make_unique<LaggedTransport>(std::move(transport), lag, jitter, loss, late, mute);
+  std::vector<std::pair<int, int>> steps;
+  const std::string& text = REXCVAR_GET(mk9_net_lag_steps);
+  for (size_t at = 0; at < text.size();) {
+    const size_t end = std::min(text.find(',', at), text.size());
+    int s = 0, ms = 0;
+    if (std::sscanf(text.substr(at, end - at).c_str(), "%d:%d", &s, &ms) == 2) steps.emplace_back(s, ms);
+    at = end + 1;
+  }
+  if (lag <= 0 && jitter <= 0 && loss <= 0 && late <= 0 && mute <= 0 && steps.empty()) return transport;
+  REXLOG_WARN("[net] emulated network conditions: +{} ms one way, jitter {} ms, loss {}%, no path for {} ms{} (tests)",
+              lag, jitter, loss, late, text.empty() ? "" : ", lag steps " + text);
+  return std::make_unique<LaggedTransport>(std::move(transport), lag, jitter, loss, late, mute, std::move(steps));
 }
 
 }  // namespace mk9::net

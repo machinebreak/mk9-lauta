@@ -30,6 +30,12 @@ REXCVAR_DEFINE_INT32(mk9_online_test_leave_s, 0, "MK9 Online",
                      "Tests: in a room's session, this player leaves this many seconds after the game's first frame "
                      "(0 = never)");
 
+#if defined(MK9_LAUTA_VERSION)
+#define MK9_LAUTA_VERSION_TEXT MK9_LAUTA_VERSION
+#else
+#define MK9_LAUTA_VERSION_TEXT "0.0.0"
+#endif
+
 namespace mk9::online_ui {
 namespace {
 
@@ -447,6 +453,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       case netplay::EndReason::kPeerLost: why = "Se cortó la conexión con " + Other(room) + "."; break;
       case netplay::EndReason::kDesync: why = "Las dos partidas dejaron de coincidir (se desincronizaron)."; break;
       case netplay::EndReason::kFailed: why = "No se pudo conectar con " + Other(room) + "."; break;
+      case netplay::EndReason::kOtherVersion:
+        why = Other(room) + " tiene otra versión de mk9-lauta (" +
+              (info.peer_release.empty() ? std::string("la 0.2.0 o una anterior") : "la " + info.peer_release) +
+              "; vos, la " MK9_LAUTA_VERSION_TEXT ").\nPara jugar online tienen que tener la misma: actualicen los "
+              "dos (F2 > Acerca de).";
+        break;
       default: why = "La sesión terminó."; break;
     }
     const ImGuiIO& io = ImGui::GetIO();
