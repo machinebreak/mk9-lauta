@@ -28,7 +28,7 @@ Remove-Item (Join-Path $dir 'logs\room_*.log') -ErrorAction SilentlyContinue
 function Args-For([string]$role) {
     $script = if ($role -eq 'host') { $HostScript } else { $GuestScript }
     $a = @('--audio_mute=true', '--window_start_minimized=true', '--sa2_renderer=renut', '--renut_gpu_backend=d3d12',
-           "--log_file=logs/room_$role.log", "--mk9_lobby_url=$Lobby",
+           "--log_file=logs/room_$role.log", "--mk9_lobby_url=$Lobby", '--mk9_discord_presence=false',
            "--mk9_online_test=$(if ($role -eq 'host') { 'host' } else { 'quick' })",
            "--mk9_online_name=$(if ($role -eq 'host') { 'Prueba1' } else { 'Prueba2' })",
            "--mk9_input_script_file=$(Join-Path $root $script)")

@@ -53,7 +53,7 @@ Remove-Item (Join-Path $dir 'logs\pair_*.log') -ErrorAction SilentlyContinue
 function Args-For([string]$role) {
     $a = @('--audio_mute=true', '--window_start_minimized=true', '--sa2_renderer=renut', "--renut_gpu_backend=$Backend",
            "--log_file=logs/pair_$role.log", "--user_data_root=$root\out\$($Profiles)_$role", "--mk9_net_delay=$Delay",
-           "--mk9_net_skip_logos=$(if ($SkipLogos) { 'true' } else { 'false' })")
+           "--mk9_net_skip_logos=$(if ($SkipLogos) { 'true' } else { 'false' })", '--mk9_discord_presence=false')
     if ($Room) {
         $name = if ($role -eq 'host') { 'Prueba1' } else { 'Prueba2' }
         $a += "--mk9_net_room=$Room", "--mk9_net_role=$role", "--mk9_lobby_url=$Lobby", "--mk9_online_name=$name"

@@ -23,9 +23,9 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
-REXCVAR_DEFINE_STRING(mk9_discord_app_id, "", "MK9 Online",
+REXCVAR_DEFINE_STRING(mk9_discord_app_id, "1569708793200250910", "MK9 Online",
                       "Discord's Rich Presence: the Discord application's id (developer portal, Application ID) whose "
-                      "name shows as what you play; empty = no Rich Presence");
+                      "name shows as what you play (mk9-lauta's own by default); empty = no Rich Presence");
 REXCVAR_DEFINE_BOOL(mk9_discord_presence, true, "MK9 Online",
                     "Show in Discord what you are doing (online, in a room, fighting whom), with the Discord app open");
 
