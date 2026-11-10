@@ -1230,6 +1230,10 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     }
     g.resimulated += uint64_t(g.frame - to);
     g.max_depth = std::max<uint64_t>(g.max_depth, uint64_t(g.frame - to));
+    // the frames run again get their hashes again: the old ones (their wrong predictions' runs) must not go out as the
+    // final frame's (SendInputs takes the newest final frame's hash before the frame that just ran has its new one:
+    // the lone false DESYNC of a very long round trip, 2026-11-10)
+    for (int64_t f = to; f <= g.latest && size_t(f) < g.local_hash.size(); ++f) g.local_hash[size_t(f)] = 0;
     g.frame = to;
     if (g.mode_change_at >= to) g.mode_change_at = -1;
   }
