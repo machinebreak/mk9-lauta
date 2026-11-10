@@ -201,12 +201,10 @@ void OnMessageLocked(const json& d) {
         lobby::SigToGuest(g.s.code, id, {{"room", "watch_full"}});
         return;
       }
-      // the players' names until the spectator has them (its asking says)
-      if (!d.value("named", false)) {
-        lobby::SigToGuest(g.s.code, id,
-                          {{"room", "watching"}, {"p1", g.s.me}, {"p2", g.s.other}, {"cc1", flags::Mine()},
-                           {"cc2", g.s.other_country}});
-      }
+      // the players' names and flags as this side has them now (the other's may come later)
+      lobby::SigToGuest(g.s.code, id,
+                        {{"room", "watching"}, {"p1", g.s.me}, {"p2", g.s.other}, {"cc1", flags::Mine()},
+                         {"cc2", g.s.other_country}});
       if (g.s.watchers != feed::Watchers()) {
         g.s.watchers = feed::Watchers();
         Touch();
@@ -245,12 +243,16 @@ void OnMessageLocked(const json& d) {
   } else {
     if (g.s.phase == Phase::kWatching) {
       if (kind == "watching") {
-        g.s.watching = true;
-        g.s.p1 = d.value("p1", "");
-        g.s.p2 = d.value("p2", "");
-        g.s.p1_country = d.value("cc1", "");
-        g.s.p2_country = d.value("cc2", "");
-        Touch();
+        const std::string p1 = d.value("p1", ""), p2 = d.value("p2", ""), cc1 = d.value("cc1", ""),
+                          cc2 = d.value("cc2", "");
+        if (!g.s.watching || p1 != g.s.p1 || p2 != g.s.p2 || cc1 != g.s.p1_country || cc2 != g.s.p2_country) {
+          g.s.watching = true;
+          g.s.p1 = p1;
+          g.s.p2 = p2;
+          g.s.p1_country = cc1;
+          g.s.p2_country = cc2;
+          Touch();
+        }
       } else if (kind == "feed") {
         feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
       } else if (kind == "feed_end") {
@@ -473,14 +475,10 @@ void Pump() {
         lobby::Join("", "");
       }
     } else if (g.s.phase == Phase::kWatching) {
-      // every 2 s: still here, with this much of the match (and the players' names, until the host has given them)
+      // every 2 s: still here, with this much of the match (the host answers with the players' names)
       if (!g.s.watch_full && now - g.hi_at > std::chrono::seconds(2)) {
         g.hi_at = now;
-        lobby::SigToHost(g.s.code, {{"room", "watch"},
-                                    {"id", g.guest_id},
-                                    {"name", g.s.me},
-                                    {"have", feed::Size()},
-                                    {"named", g.s.watching}});
+        lobby::SigToHost(g.s.code, {{"room", "watch"}, {"id", g.guest_id}, {"name", g.s.me}, {"have", feed::Size()}});
       }
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {

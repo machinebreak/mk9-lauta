@@ -100,6 +100,11 @@ struct SessionInfo {
   // (frames run hidden and fast), and the frames whose sync hash differed from the players'
   bool watching = false;
   double behind_s = 0;
+  // in a fight's epoch (the players': with rollback; a spectator's: the one it plays back), past its intro, and the
+  // game's state (fight_state.h State) at the last frame
+  bool in_fight = false;
+  bool fight_on = false;
+  int game_state = -1;
   bool catching_up = false;
   uint64_t watch_diffs = 0;
 };

@@ -301,6 +301,9 @@ struct Session {
   bool watch_header = false;
   bool watch_hidden = false;          // catching up: frames hidden, unpaced and muted
   std::atomic<int64_t> watch_behind{0};  // frames of the match beyond this one's (the game thread's count, for Info)
+  std::atomic<bool> watch_in_fight{false};  // it plays a fight back (for Info)
+  std::atomic<bool> watch_fight{false};  // the fight it plays back is past its intro (for Info)
+  std::atomic<int> game_state{-1};       // fight_state::State at the last frame (for Info)
   uint64_t watch_diffs = 0;
   uint8_t watch_ready_before = 0;     // the last frame's recorded ready bits (a rise waits for this machine's loads)
   bool prev_hidden = true;           // the frame that ran last was one run again (not shown)
@@ -1748,6 +1751,8 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   g_frame_started_us = NowUs();
   const auto& epoch = g.watched[g.epoch];
   const bool fight = WatchFight();
+  g.watch_in_fight.store(fight, std::memory_order_relaxed);
+  g.watch_fight.store(fight && g.frame >= kLearnFrames, std::memory_order_relaxed);
   // the sounds' callbacks as the players had them: in lockstep at the frames their announcements agreed on (with this
   // machine's own FMOD's callbacks, waited for), in a fight as they come
   sound_sync::SetMode(ctx, base, fight ? sound_sync::Mode::kOff : sound_sync::Mode::kLockstep, g.epoch);
@@ -1824,6 +1829,10 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     return;
   }
   g.game_thread = std::this_thread::get_id();
+  if (const int state = fight_state::State(base); state != g.game_state.load(std::memory_order_relaxed)) {
+    REXLOG_INFO("[net] the game's state {} at frame {} of epoch {}", state, g.frame, g.epoch);
+    g.game_state.store(state, std::memory_order_relaxed);
+  }
   WatchFrames();
   g_frame_started_us = NowUs();
   if (g.watching) {
@@ -2030,6 +2039,9 @@ SessionInfo Info() {
   info.loss_pct = sent >= 4 ? 100.0 * lost / sent : 0.0;
   info.relayed = g.relayed.load(std::memory_order_relaxed);
   info.watching = g.watching;
+  info.in_fight = g.watching ? g.watch_in_fight.load(std::memory_order_relaxed) : g.rollback;
+  info.fight_on = g.watching ? g.watch_fight.load(std::memory_order_relaxed) : g.rollback && g.speculating;
+  info.game_state = g.game_state.load(std::memory_order_relaxed);
   if (g.watching && g.started) {
     info.behind_s = double(std::max<int64_t>(0, g.watch_behind.load(std::memory_order_relaxed))) / 60.0;
     info.catching_up = g.watch_hidden;

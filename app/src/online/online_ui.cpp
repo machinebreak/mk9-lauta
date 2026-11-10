@@ -591,6 +591,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   // In a session, a corner of the screen says who the rival is and the ping (and when the game waits for the rival).
+  // mk9-lauta (2026-11-10): a session's corner, the top right; in a fight the bottom center, between the two super
+  // meters (the top right is player 2's health bar and name).
+  static void PlaceBadge(const netplay::SessionInfo& info) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (info.in_fight) {
+      ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 8), ImGuiCond_Always, ImVec2(0.5f, 1));
+    } else {
+      ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+    }
+  }
+
   void DrawSessionBadge(const room::State& room) {
     if (!room.in_session) return;
     const netplay::SessionInfo info = netplay::Info();
@@ -599,8 +610,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       DrawWatchBadge(room, info);
       return;
     }
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+    PlaceBadge(info);
     ImGui::SetNextWindowBgAlpha(0.45f);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -639,8 +649,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
   // mk9-lauta (2026-11-10): a spectator's corner: who plays, how far behind the match, catching up.
   void DrawWatchBadge(const room::State& room, const netplay::SessionInfo& info) {
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 12, 12), ImGuiCond_Always, ImVec2(1, 0));
+    PlaceBadge(info);
     ImGui::SetNextWindowBgAlpha(0.45f);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
@@ -668,20 +677,25 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   // mk9-lauta (2026-11-10): in a session's fight, each player's name and flag under their health bar (player 1, the
   // room's host, on the left), as the game's own online showed its gamertags. Drawn over the frame where the last
   // present put it (any window shape), at its scale; behind the online windows.
+  // mk9-lauta (2026-11-10): and in the character select, over each side's fighter name (where the frame has it at
+  // 1280x720: 195 and 1085, the names' banners at 578).
   void DrawNamePlates(const room::State& room) {
     if (!room.in_session) return;
     const netplay::SessionInfo info = netplay::Info();
-    if (!info.active || !info.rollback || !info.speculating) return;
+    if (!info.active) return;
+    const bool select = !info.fight_on && info.game_state == fight_state::kStateSelect;
+    if (!info.fight_on && !select) return;
+    const float u1 = select ? 0.152f : 0.118f, u2 = select ? 0.848f : 0.882f, v = select ? 0.752f : 0.086f;
     float frame_h = renut::gpu::overlay::FrameHeightInOutput();
     float lx = 0, ly = 0, rx = 0, ry = 0;
-    if (frame_h <= 0 || !renut::gpu::overlay::FramePointToOutput(0.118f, 0.086f, &lx, &ly) ||
-        !renut::gpu::overlay::FramePointToOutput(0.882f, 0.086f, &rx, &ry)) {
+    if (frame_h <= 0 || !renut::gpu::overlay::FramePointToOutput(u1, v, &lx, &ly) ||
+        !renut::gpu::overlay::FramePointToOutput(u2, v, &rx, &ry)) {
       // nothing presented yet (a minimized window: the tests' captures): the frame over the whole overlay
       const ImGuiIO& io = ImGui::GetIO();
       frame_h = io.DisplaySize.y;
-      lx = 0.118f * io.DisplaySize.x;
-      rx = 0.882f * io.DisplaySize.x;
-      ly = ry = 0.086f * io.DisplaySize.y;
+      lx = u1 * io.DisplaySize.x;
+      rx = u2 * io.DisplaySize.x;
+      ly = ry = v * io.DisplaySize.y;
       if (frame_h <= 0) return;
     }
     const bool watching = room.phase == room::Phase::kWatching;
@@ -691,7 +705,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const std::string c2 = watching ? room.p2_country : room.host ? room.other_country : flags::Mine();
     ImDrawList* list = ImGui::GetBackgroundDrawList();
     ImFont* font = ImGui::GetFont();
-    const float size = std::max(12.0f, frame_h * 0.030f);
+    const float size = std::max(12.0f, frame_h * (select ? 0.036f : 0.030f));
     const float gap = size * 0.35f, flag_w = size * 40.0f / 30.0f;
     const ImU32 shadow = IM_COL32(0, 0, 0, 200), text = IM_COL32(255, 236, 190, 255);
     auto plate = [&](const std::string& name, const std::string& country, float x, float y, bool right) {

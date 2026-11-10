@@ -36,6 +36,10 @@ constexpr uint32_t kName = 0xB6C;           // player 1's character name
 constexpr uint32_t kObject = 0xDF4;         // player 1's fighter object (a pointer)
 constexpr uint32_t kHealth = 0x78C0;        // the health float in a fighter's object
 constexpr uint32_t kTagMode = 13436;        // nonzero: a tag match (engine-map.md)
+// mk9-lauta (2026-11-10): the game object (the one sub_829B02E8 reads), whose +4 is the state: GS_INIT 0,
+// GS_LOADING_FIGHT 1, GS_ATTRACT 2, GS_MAINMENU 3, GS_ONLINE 4, GS_KOTH 5, GS_PROFILES 6, GS_PSELECT 7 (the character
+// select), GS_PLAY 8, GS_GAME_OVER 9, GS_MOVIE 10, GS_FATALITY 11, GS_LADDER 12, GS_INVALID 13 (sub_829B01D8)
+constexpr uint32_t kGameObject = 0x833848D4;
 constexpr unsigned long kAccessViolation = 0xC0000005ul;
 
 uint8_t* Raw(uint8_t* base, uint32_t a) { return base + a + (a >= 0xE0000000u ? 0x1000u : 0u); }
@@ -115,6 +119,14 @@ float Health(uint8_t* base, int player) {
   float health;
   std::memcpy(&health, &bits, 4);
   return health >= 0.0f && health <= 1.0f ? health : -1;
+}
+
+int State(uint8_t* base) {
+  QuietFaults quiet;
+  uint32_t game = 0, state = 0;
+  if (!Read32(base, kGameObject, &game) || game < 0x30000000u || game >= 0xA0000000u) return -1;
+  if (!Read32(base, game + 4, &state) || state > 13) return -1;
+  return int(state);
 }
 
 void Report(uint8_t* base, int me) {
