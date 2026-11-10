@@ -14,6 +14,7 @@ extern "C" void RexSwitchPerfCount(unsigned id);
 
 #include "profiler/profiler.h"                      // the on-screen profiler's GPU, present and render thread rows
 #include "renut_engine/gpu/banjo_renut_tuning.h"  // the [renut] report and its in-run A/B
+#include "renut_engine/gpu/sa2_renut_pacing.h"    // mk9-lauta: the dynamic resolution's GPU times
 
 namespace renut::frame_stats {
 
@@ -84,6 +85,7 @@ void OnGameFrame() {
 
 void OnGpuFrame(double ms) {
   banjo::renut_gpu::StatsGpuFrame(ms);
+  sa2::renut::NoteGpuFrame(ms);  // mk9-lauta (2026-11-10): the dynamic resolution's measure
   banjo::profiler::SetGpuFrameMs(ms);  // the profiler window's "GPU Frame" (package 27: nobody fed it before)
   State& s = S();
   std::lock_guard lock(s.mutex);

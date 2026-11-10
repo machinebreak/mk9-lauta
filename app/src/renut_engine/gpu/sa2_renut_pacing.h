@@ -26,6 +26,9 @@ bool FrameSkipped();
 void AfterSwap(bool rollback_hidden);
 // Whether the last Swap presented an image (not a frame run again, not a frame left undrawn).
 bool LastSwapShown();
+// mk9-lauta (2026-11-10): a presented frame's GPU time, from its timestamps (renut_engine/perf/frame_stats.cpp, the
+// render thread): what the dynamic resolution goes by.
+void NoteGpuFrame(double ms);
 
 // mk9-nx online (2026-11-08): the guest words of the title D3D device that count the GPU's progress (the current fence
 // tag, the fence completion word, the Swap's counters and tags, the kick flag, the ring stub's pointers: [start, end)

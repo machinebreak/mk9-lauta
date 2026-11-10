@@ -120,6 +120,7 @@ struct Decoder {
 
 std::mutex g_mutex;
 std::unordered_map<uint32_t, std::unique_ptr<Decoder>> g_decoders;  // by codec table (guest address)
+std::atomic<uint32_t> g_playing{0};  // mk9-lauta (2026-11-10): g_decoders' size, for mk9::movie::Playing
 
 Decoder* Find(uint32_t table) {
   std::lock_guard<std::mutex> lock(g_mutex);
@@ -334,6 +335,7 @@ REX_HOOK_RAW(sub_82D255C0) {  // Init
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_decoders[table] = std::move(d);
+    g_playing.store(uint32_t(g_decoders.size()), std::memory_order_relaxed);
   }
   ctx.r3.u64 = 0;
 }
@@ -431,6 +433,7 @@ REX_HOOK_RAW(sub_82D25280) {  // Close
     if (it != g_decoders.end()) {
       d = std::move(it->second);
       g_decoders.erase(it);
+      g_playing.store(uint32_t(g_decoders.size()), std::memory_order_relaxed);
     }
   }
   if (!d) {
@@ -445,3 +448,9 @@ REX_HOOK_RAW(sub_82D25280) {  // Close
   St32(base, table + 32, 0);
   ctx.r3.u64 = 0;
 }
+
+// mk9-lauta (2026-11-10): a movie decoded here is playing (the dynamic resolution and the draw mode's auto leave its
+// windows alone: its frames come at its own 30 a second, sa2_renut_pacing.cpp).
+namespace mk9::movie {
+bool Playing() { return g_playing.load(std::memory_order_relaxed) != 0; }
+}  // namespace mk9::movie

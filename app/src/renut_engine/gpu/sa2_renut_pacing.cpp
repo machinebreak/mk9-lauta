@@ -49,9 +49,10 @@ REXCVAR_DEFINE_BOOL(sa2_renut_vblank_pacing, true, "SA2",
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 REXCVAR_DEFINE_BOOL(mk9_dynamic_resolution, false, "MK9/Renderer",
-                    "The internal resolution goes down a step (1080p to 720p to 480p) while the frames take too long "
-                    "(over 15.5 ms: an X-Ray, many effects) and up again when there is room, never above "
-                    "renut_resolution; drawing every other frame (mk9_draw_mode auto) only once at 480p");
+                    "The internal resolution goes down a step (1080p to 720p to 480p) while the GPU takes too long "
+                    "for a frame (over 15 ms: an X-Ray, many effects) and up again when there is room, never above "
+                    "renut_resolution (movies do not count); drawing every other frame (mk9_draw_mode auto) only once "
+                    "at 480p");
 REXCVAR_DEFINE_STRING(mk9_draw_mode, "all", "MK9/Renderer",
                       "Which frames are drawn: all; half (every other frame: the game keeps its 60 frames a second, "
                       "the GPU draws 30, for a PC whose graphics cannot keep up); auto (all while the PC keeps up, "
@@ -206,10 +207,48 @@ double Median(double* values, uint32_t count) {
   return values[count / 2];
 }
 
-// mk9-lauta (2026-11-09): the dynamic resolution (mk9_dynamic_resolution), on the same windows of 60 frames: over
-// 15.5 ms a step down (over 25 ms two; 2 s at least before another change), 3 to 10 ms three windows in a row a step
-// up (towards renut_resolution; a load's near-empty frames do not count); a step up undone within 6 s doubles the
-// wait before the next one (3 s up to 2 minutes).
+// mk9-lauta (2026-11-10): the GPU's time of the presented frames since the last window (NoteGpuFrame, the render
+// thread; read by the Direct3D calls' thread at a window's end).
+std::mutex g_gpu_mutex;
+double g_gpu_ms[256] = {};
+uint32_t g_gpu_count = 0;
+
+// The median GPU time of the frames presented since the last call (0: fewer than 20 measured, nothing to go by).
+double TakeGpuMedian() {
+  double v[256];
+  uint32_t n;
+  {
+    std::lock_guard lock(g_gpu_mutex);
+    n = std::min<uint32_t>(g_gpu_count, 256);
+    std::copy(g_gpu_ms, g_gpu_ms + n, v);
+    g_gpu_count = 0;
+  }
+  return n >= 20 ? Median(v, n) : 0.0;
+}
+
+// The GPU's time of the next level up over this one's: their pixels (480p 853x480, 720p, 1080p, 1440p, 4K).
+constexpr double kStepCost[4] = {2.25, 2.25, 1.78, 2.25};
+
+}  // namespace
+}  // namespace sa2::renut
+
+// mk9-lauta (2026-11-10): a cutscene's movie playing (mk9_movie.cpp): its frames come at the movie's own 30 a second.
+namespace mk9::movie {
+bool Playing();
+}
+
+namespace sa2::renut {
+namespace {
+
+// mk9-lauta (2026-11-09): the dynamic resolution (mk9_dynamic_resolution), on the same windows of 60 frames. 2026-11-10:
+// by the GPU's own time of a frame (its timestamps: what the resolution changes): over 15 ms a step down (over 22 ms
+// two; 2 s at least before another change); three windows in a row in which the next level up would still take
+// under 12.5 ms (this one's time by their pixels) a step up (towards renut_resolution; near-empty frames, under 1.5
+// ms, do not count); a step up undone within 6 s doubles the wait before the next one (3 s up to 2 minutes). A movie's
+// windows decide nothing. 0.2.0 went by the frame's length (the game's work and any wait): a movie's 30 frames a second
+// took every cutscene to 480p with the GPU almost idle, and a fast CPU's 2-3 ms of work never said there was room to go
+// back up (a player's whole evening at 480p but for the presets they kept choosing again). Without GPU times (no
+// timestamps) the frame's length decides, as before.
 struct Dynamic {
   int cap = 4;          // the level drawn at most (0 480p ... 4 4K)
   bool latched = false;
@@ -250,25 +289,35 @@ void NoteWorkForResolution(double work_ms) {
   if (d.count < 60) return;
   const double median = Median(d.work, d.count);
   d.count = 0;
+  const double gpu = TakeGpuMedian();
   const auto now = Clock::now();
   if (now < d.hold_until) return;
-  if (median > 15.5 && d.cap > 0) {
+  if (mk9::movie::Playing()) {  // its frames' pace is the movie's
+    d.roomy = 0;
+    return;
+  }
+  const bool by_gpu = gpu > 0.0;
+  const double load = by_gpu ? gpu : median;
+  if (load > (by_gpu ? 15.0 : 15.5) && d.cap > 0) {
     if (d.raised_at != Clock::time_point{} && now - d.raised_at < std::chrono::seconds(6)) {
       d.wait = std::min<Clock::duration>(d.wait * 2, std::chrono::minutes(2));
     }
-    d.cap = std::max(0, d.cap - (median > 25.0 ? 2 : 1));  // far over: two steps at once
+    d.cap = std::max(0, d.cap - (load > (by_gpu ? 22.0 : 25.0) ? 2 : 1));  // far over: two steps at once
     d.roomy = 0;
     d.hold_until = now + std::chrono::seconds(2);
     ::renut::gpu::SetResolutionCap(d.cap);
-    REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms: {}", median, LevelName(d.cap));
-  } else if (median >= 3.0 && median < 10.0 && d.cap < chosen) {  // a load's or a menu's near-empty frames say nothing
+    REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms ({:.1f} ms of GPU): {}", median, gpu,
+                LevelName(d.cap));
+  } else if (d.cap < chosen && (by_gpu ? gpu >= 1.5 && gpu * kStepCost[std::clamp(d.cap, 0, 3)] < 12.5
+                                       : median >= 3.0 && median < 10.0)) {  // near-empty frames say nothing
     if (++d.roomy >= 3) {
       ++d.cap;
       d.roomy = 0;
       d.raised_at = now;
       d.hold_until = now + d.wait;
       ::renut::gpu::SetResolutionCap(d.cap);
-      REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms: {}", median, LevelName(d.cap));
+      REXLOG_INFO("[renut] dynamic resolution: frames take {:.1f} ms ({:.1f} ms of GPU): {}", median, gpu,
+                  LevelName(d.cap));
     }
   } else {
     d.roomy = 0;
@@ -285,6 +334,7 @@ void NoteWork(double work_ms, bool drawn) {
   if (a.count < 60) return;
   const double median = Median(a.work, a.count);
   a.count = 0;
+  if (mk9::movie::Playing()) return;  // mk9-lauta (2026-11-10): a movie's 30 frames a second are its own pace
   const auto now = Clock::now();
   if (!a.skipping && median > 15.0) {
     a.skipping = true;
@@ -305,6 +355,12 @@ void NoteWork(double work_ms, bool drawn) {
 
 bool FrameSkipped() { return g_skip_this; }
 bool LastSwapShown() { return g_last_shown.load(std::memory_order_relaxed); }
+
+void NoteGpuFrame(double ms) {
+  std::lock_guard lock(g_gpu_mutex);
+  g_gpu_ms[g_gpu_count % 256] = ms;
+  ++g_gpu_count;
+}
 
 void AfterSwap(bool rollback_hidden) {
   g_last_shown.store(!rollback_hidden && !g_skip_this, std::memory_order_relaxed);
