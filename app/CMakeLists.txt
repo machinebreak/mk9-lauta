@@ -116,6 +116,7 @@ set(MK9_SOURCES
     src/online/online_ui.cpp
     src/online/flags.cpp
     src/online/notify.cpp
+    src/online/i18n.cpp
     src/online/sound_replay.cpp
     src/online/sound_sync.cpp
     src/online/sound_stream.cpp

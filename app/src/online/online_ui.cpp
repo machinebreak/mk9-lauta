@@ -11,6 +11,7 @@
 #include <ctime>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "imgui.h"
@@ -19,6 +20,7 @@
 #include <rex/cvar.h>
 
 #include "online/flags.h"
+#include "online/i18n.h"
 #include "online/lobby.h"
 #include "online/netplay.h"
 #include "online/room.h"
@@ -39,6 +41,17 @@ REXCVAR_DEFINE_INT32(mk9_online_test_leave_s, 0, "MK9 Online",
 
 namespace mk9::online_ui {
 namespace {
+
+using i18n::T;
+
+// A runtime format (fmt) of a translated text.
+template <typename... Args>
+std::string Tf(const char* es, Args&&... args) {
+  return fmt::format(fmt::runtime(T(es)), std::forward<Args>(args)...);
+}
+
+// A label in the player's language with a fixed ImGui id (the Spanish key).
+std::string Label(const char* es) { return std::string(T(es)) + "###" + es; }
 
 using Clock = std::chrono::steady_clock;
 
@@ -64,12 +77,12 @@ std::string Clock24(int64_t ms) {
 }
 
 std::string ErrorText(const std::string& code) {
-  if (code == "slow") return "Más despacio: un mensaje por segundo.";
-  if (code == "links") return "En el chat no se pueden pasar links.";
-  if (code == "muted") return "Estás silenciado por un rato.";
-  if (code == "banned") return "No podés escribir en el chat.";
-  if (code == "reserved") return "Ese nombre está reservado.";
-  if (code == "empty") return "El nombre no puede quedar vacío.";
+  if (code == "slow") return T("Más despacio: un mensaje por segundo.");
+  if (code == "links") return T("En el chat no se pueden pasar links.");
+  if (code == "muted") return T("Estás silenciado por un rato.");
+  if (code == "banned") return T("No podés escribir en el chat.");
+  if (code == "reserved") return T("Ese nombre está reservado.");
+  if (code == "empty") return T("El nombre no puede quedar vacío.");
   return code;
 }
 
@@ -113,8 +126,8 @@ void SignalBars(const netplay::SessionInfo& info) {
 
 // The connection in words (the room's tab).
 std::string ConnectionText(const netplay::SessionInfo& info) {
-  return fmt::format("Ping {:.0f} ms - variación {:.0f} ms - {:.0f}% perdidos - {}", info.rtt_ms, info.jitter_ms,
-                     info.loss_pct, info.relayed ? "por relay (TURN)" : "conexión directa");
+  return Tf("Ping {:.0f} ms - variación {:.0f} ms - {:.0f}% perdidos - {}", info.rtt_ms, info.jitter_ms,
+            info.loss_pct, T(info.relayed ? "por relay (TURN)" : "conexión directa"));
 }
 
 class OnlineWindow : public renut::gpu::overlay::Dialog {
@@ -171,7 +184,8 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                         ImVec2(std::max(320.0f, io.DisplaySize.x - 16), std::max(200.0f, io.DisplaySize.y - 16)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
-    if (!ImGui::Begin("Online  (F1 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin((std::string(T("Online  (F1 para mostrar u ocultar)")) + "###online").c_str(), &visible_,
+                      ImGuiWindowFlags_NoCollapse)) {
       ImGui::End();
       return;
     }
@@ -179,7 +193,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (overlay_input::ClosePressed()) visible_ = false;
     tab_step_ = overlay_input::TabStep();
     if (!lobby::Configured()) {
-      ImGui::TextWrapped("El online está apagado (mk9_lobby_url vacío).");
+      ImGui::TextWrapped("%s", T("El online está apagado (mk9_lobby_url vacío)."));
       ImGui::End();
       return;
     }
@@ -211,19 +225,19 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       };
       if (in_room) {
         const ImGuiTabItemFlags flags = in_room && !was_in_room_ ? ImGuiTabItemFlags_SetSelected : 0;
-        if (ImGui::BeginTabItem("Sala", nullptr, tab_flags("Sala", flags))) {
+        if (ImGui::BeginTabItem(Label("Sala").c_str(), nullptr, tab_flags("Sala", flags))) {
           tab_ = "Sala";
           DrawRoom(room);
           ImGui::EndTabItem();
         }
       }
       was_in_room_ = in_room;
-      if (!room.in_session && ImGui::BeginTabItem("Salas", nullptr, tab_flags("Salas", 0))) {
+      if (!room.in_session && ImGui::BeginTabItem(Label("Salas").c_str(), nullptr, tab_flags("Salas", 0))) {
         tab_ = "Salas";
         DrawRooms(lobby, room);
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Chat global", nullptr, tab_flags("Chat global", 0))) {
+      if (ImGui::BeginTabItem(Label("Chat global").c_str(), nullptr, tab_flags("Chat global", 0))) {
         tab_ = "Chat global";
         DrawGlobalChat(lobby);
         ImGui::EndTabItem();
@@ -235,19 +249,19 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
  private:
   void DrawName(const lobby::State& lobby) {
-    ImGui::TextWrapped("Elegí tu nombre de usuario para jugar online. Es el que ven los demás en las salas y en el "
-                       "chat (de 2 a 20 letras).");
+    ImGui::TextWrapped("%s", T("Elegí tu nombre de usuario para jugar online. Es el que ven los demás en las salas y "
+                               "en el chat (de 2 a 20 letras)."));
     ImGui::Spacing();
     ImGui::SetNextItemWidth(260);
     const bool enter = ImGui::InputText("##name", name_buf_, sizeof(name_buf_),
                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
     ImGui::SameLine();
-    const bool save = ImGui::Button("Guardar");
+    const bool save = ImGui::Button(T("Guardar"));
     if (!editing_name_) {
       // nothing else until there is one
     } else {
       ImGui::SameLine();
-      if (ImGui::Button("Cancelar")) {
+      if (ImGui::Button(T("Cancelar"))) {
         editing_name_ = false;
         std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
       }
@@ -255,7 +269,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (enter || save) {
       const std::string name = Trim(name_buf_);
       if (name.size() < 2) {
-        name_note_ = "El nombre tiene que tener por lo menos 2 letras.";
+        name_note_ = T("El nombre tiene que tener por lo menos 2 letras.");
       } else {
         name_ = name;
         name_note_.clear();
@@ -271,60 +285,60 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   void DrawHeader(const lobby::State& lobby) {
     switch (lobby.link) {
       case lobby::Link::kOnline:
-        ImGui::TextColored(kGreen, "Conectado");
+        ImGui::TextColored(kGreen, "%s", T("Conectado"));
         ImGui::SameLine();
-        ImGui::Text("- %d en línea", lobby.online);
+        ImGui::Text(T("- %d en línea"), lobby.online);
         break;
       case lobby::Link::kConnecting:
-        ImGui::TextColored(kGold, "Conectando al lobby...");
+        ImGui::TextColored(kGold, "%s", T("Conectando al lobby..."));
         break;
       case lobby::Link::kRetrying:
-        ImGui::TextColored(kRed, "Sin conexión con el lobby: reintentando");
+        ImGui::TextColored(kRed, "%s", T("Sin conexión con el lobby: reintentando"));
         break;
       default:
-        ImGui::TextColored(kGrey, "Desconectado");
+        ImGui::TextColored(kGrey, "%s", T("Desconectado"));
         break;
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - 250);
-    ImGui::Text("Sos:");
+    ImGui::Text("%s", T("Sos:"));
     ImGui::SameLine();
     FlagInline(flags::Mine());
     ImGui::Text("%s", lobby.name.empty() ? name_.c_str() : lobby.name.c_str());
     ImGui::SameLine();
-    if (ImGui::SmallButton("Cambiar")) {
+    if (ImGui::SmallButton(T("Cambiar"))) {
       editing_name_ = true;
       std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
     }
     if (!lobby.name_error.empty()) ImGui::TextColored(kRed, "%s", ErrorText(lobby.name_error).c_str());
-    if (!lobby.notice.empty()) ImGui::TextColored(kGold, "Aviso: %s", lobby.notice.c_str());
+    if (!lobby.notice.empty()) ImGui::TextColored(kGold, T("Aviso: %s"), lobby.notice.c_str());
     ImGui::Separator();
   }
 
   void DrawRooms(const lobby::State& lobby, const room::State& room) {
     const bool online = lobby.link == lobby::Link::kOnline;
     ImGui::BeginDisabled(!online || room.phase != room::Phase::kNone);
-    if (ImGui::Button("Partida rápida")) QuickMatch(lobby);
+    if (ImGui::Button(T("Partida rápida"))) QuickMatch(lobby);
     ImGui::SameLine();
-    if (ImGui::Button("Crear sala pública")) room::CreateRoom(true);
+    if (ImGui::Button(T("Crear sala pública"))) room::CreateRoom(true);
     ImGui::SameLine();
-    if (ImGui::Button("Crear sala privada")) room::CreateRoom(false);
-    ImGui::Text("Unirse con código:");
+    if (ImGui::Button(T("Crear sala privada"))) room::CreateRoom(false);
+    ImGui::Text("%s", T("Unirse con código:"));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
     const bool enter = ImGui::InputText("##code", code_buf_, sizeof(code_buf_),
                                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsUppercase);
     ImGui::SameLine();
-    if ((ImGui::Button("Unirse") || enter) && std::strlen(code_buf_)) room::JoinRoom(code_buf_);
+    if ((ImGui::Button(T("Unirse")) || enter) && std::strlen(code_buf_)) room::JoinRoom(code_buf_);
     ImGui::EndDisabled();
     if (!room.status.empty()) ImGui::TextColored(kGold, "%s", room.status.c_str());
     ImGui::Spacing();
-    ImGui::Text("Salas abiertas (%d)", int(lobby.rooms.size()));
+    ImGui::Text(T("Salas abiertas (%d)"), int(lobby.rooms.size()));
     if (ImGui::BeginTable("rooms", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0, 0))) {
-      ImGui::TableSetupColumn("Sala", ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn(T("Sala"), ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthFixed, 150);
-      ImGui::TableSetupColumn("Ping aprox.", ImGuiTableColumnFlags_WidthFixed, 90);
-      ImGui::TableSetupColumn("Estado", ImGuiTableColumnFlags_WidthFixed, 90);
+      ImGui::TableSetupColumn(T("Ping aprox."), ImGuiTableColumnFlags_WidthFixed, 90);
+      ImGui::TableSetupColumn(T("Estado"), ImGuiTableColumnFlags_WidthFixed, 90);
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70);
       ImGui::TableHeadersRow();
       for (const lobby::Room& r : lobby.rooms) {
@@ -340,17 +354,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         if (const double ms = flags::EstimatedRoundTripMs(flags::Mine(), r.country); ms > 0) {
           ImGui::TextColored(ms < 100 ? kGreen : ms < 180 ? kGold : kRed, "~%.0f ms", ms);
           if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Estimado por la distancia entre los dos países; el real se ve al entrar.");
+            ImGui::SetTooltip("%s", T("Estimado por la distancia entre los dos países; el real se ve al entrar."));
           }
         } else {
           ImGui::TextColored(kGrey, "-");
         }
         ImGui::TableNextColumn();
-        ImGui::TextColored(r.playing ? kGrey : kGreen, "%s", r.playing ? "jugando" : "esperando");
+        ImGui::TextColored(r.playing ? kGrey : kGreen, "%s", T(r.playing ? "jugando" : "esperando"));
         ImGui::TableNextColumn();
         if (!r.playing && room.phase == room::Phase::kNone && online) {
           ImGui::PushID(r.code.c_str());
-          if (ImGui::SmallButton("Entrar")) room::JoinRoom(r.code);
+          if (ImGui::SmallButton(T("Entrar"))) room::JoinRoom(r.code);
           ImGui::PopID();
         }
       }
@@ -359,18 +373,18 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   void DrawRoom(const room::State& room) {
-    ImGui::Text("Sala %s", room.code.c_str());
+    ImGui::Text(T("Sala %s"), room.code.c_str());
     ImGui::SameLine();
-    ImGui::TextColored(kGrey, "(%s)", room.open ? "pública" : "privada");
+    ImGui::TextColored(kGrey, "(%s)", T(room.open ? "pública" : "privada"));
     ImGui::SameLine();
-    if (ImGui::SmallButton("Copiar código")) ImGui::SetClipboardText(room.code.c_str());
+    if (ImGui::SmallButton(T("Copiar código"))) ImGui::SetClipboardText(room.code.c_str());
     if (room.host) {
-      ImGui::Text("Host: vos (");
+      ImGui::Text("%s", T("Host: vos ("));
       ImGui::SameLine(0, 0);
       FlagInline(flags::Mine());
       ImGui::SameLine(0, 0);
       ImGui::Text("%s)", room.me.c_str());
-      ImGui::Text("Rival:");
+      ImGui::Text("%s", T("Rival:"));
       ImGui::SameLine();
       if (!room.other.empty()) FlagInline(room.other_country);
       ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
@@ -379,7 +393,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::SameLine();
       if (!room.other.empty()) FlagInline(room.other_country);
       ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
-      ImGui::Text("Vos:");
+      ImGui::Text("%s", T("Vos:"));
       ImGui::SameLine();
       FlagInline(flags::Mine());
       ImGui::Text("%s", room.me.c_str());
@@ -391,25 +405,25 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         SignalBars(info);
         ImGui::SameLine();
         ImGui::Text("%s", ConnectionText(info).c_str());
-        ImGui::TextColored(kGrey, "%s", info.rollback ? "Pelea con rollback" : "Menús en lockstep");
+        ImGui::TextColored(kGrey, "%s", T(info.rollback ? "Pelea con rollback" : "Menús en lockstep"));
       }
-      ImGui::TextWrapped("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
-                         "pantalla de 2 jugadores. Después cada uno elige su luchador.");
-      if (ImGui::Button("Terminar la sesión y volver al lobby")) LeaveSession();
+      ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
+                                 "pantalla de 2 jugadores. Después cada uno elige su luchador."));
+      if (ImGui::Button(T("Terminar la sesión y volver al lobby"))) LeaveSession();
     } else if (room.phase == room::Phase::kTogether) {
-      if (ImGui::Button(room.my_ready ? "Cancelar listo" : "Estoy listo")) room::SetReady(!room.my_ready);
+      if (ImGui::Button(Label(room.my_ready ? "Cancelar listo" : "Estoy listo").c_str())) room::SetReady(!room.my_ready);
       ImGui::SameLine();
-      ImGui::TextColored(room.other_ready ? kGreen : kGrey, "%s %s", room.other.c_str(),
-                         room.other_ready ? "está listo" : "todavía no está listo");
-      ImGui::TextColored(kGrey, "Cuando los dos estén listos, el juego arranca de nuevo ya conectado.");
+      ImGui::TextColored(room.other_ready ? kGreen : kGrey, T(room.other_ready ? "%s está listo" : "%s todavía no está listo"),
+                         room.other.c_str());
+      ImGui::TextColored(kGrey, "%s", T("Cuando los dos estén listos, el juego arranca de nuevo ya conectado."));
     } else if (room.phase == room::Phase::kStarting) {
-      ImGui::TextColored(kGreen, "Arrancando la pelea...");
+      ImGui::TextColored(kGreen, "%s", T("Arrancando la pelea..."));
     }
     if (!room.in_session && room.phase != room::Phase::kStarting) {
-      if (ImGui::Button("Salir de la sala")) room::Leave();
+      if (ImGui::Button(T("Salir de la sala"))) room::Leave();
     }
     ImGui::Separator();
-    ImGui::Text("Chat de la sala");
+    ImGui::Text("%s", T("Chat de la sala"));
     const float input_h = ImGui::GetFrameHeightWithSpacing() + 4;
     if (ImGui::BeginChild("room_chat", ImVec2(0, -input_h), ImGuiChildFlags_Borders)) {
       for (const room::Line& l : room.chat) {
@@ -431,7 +445,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::SetNextItemWidth(-80);
     const bool enter = ImGui::InputText("##room_say", room_buf_, sizeof(room_buf_), ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
-    if ((ImGui::Button("Enviar##room") || enter) && std::strlen(room_buf_)) {
+    if ((ImGui::Button((std::string(T("Enviar")) + "##room").c_str()) || enter) && std::strlen(room_buf_)) {
       room::Say(Trim(room_buf_));
       room_buf_[0] = '\0';
       ImGui::SetKeyboardFocusHere(-1);
@@ -442,12 +456,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   void DrawGlobalChat(const lobby::State& lobby) {
     // mk9-lauta (2026-11-10): the players silenced on this machine, and taking it back
     const std::vector<std::string> blocked = session::Blocked();
-    if (!blocked.empty() && ImGui::TreeNode("silenced", "Silenciados (%d)", int(blocked.size()))) {
+    if (!blocked.empty() && ImGui::TreeNode("silenced", T("Silenciados (%d)"), int(blocked.size()))) {
       for (const std::string& name : blocked) {
         ImGui::PushID(name.c_str());
         ImGui::Text("%s", name.c_str());
         ImGui::SameLine();
-        if (ImGui::SmallButton("Quitar")) session::SetBlocked(name, false);
+        if (ImGui::SmallButton(T("Quitar"))) session::SetBlocked(name, false);
         ImGui::PopID();
       }
       ImGui::TreePop();
@@ -477,7 +491,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginPopup("chat_person")) {
         ImGui::TextColored(kGold, "%s", person_.c_str());
         ImGui::Separator();
-        if (ImGui::MenuItem("Silenciar (no ver sus mensajes ni sus salas)")) session::SetBlocked(person_, true);
+        if (ImGui::MenuItem(T("Silenciar (no ver sus mensajes ni sus salas)"))) session::SetBlocked(person_, true);
         ImGui::EndPopup();
       }
       if (lobby.chat.size() != global_lines_) {
@@ -492,7 +506,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const bool enter = ImGui::InputText("##global_say", global_buf_, sizeof(global_buf_),
                                         ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
-    if ((ImGui::Button("Enviar##global") || enter) && std::strlen(global_buf_)) {
+    if ((ImGui::Button((std::string(T("Enviar")) + "##global").c_str()) || enter) && std::strlen(global_buf_)) {
       lobby::Chat(Trim(global_buf_));
       global_buf_[0] = '\0';
       ImGui::SetKeyboardFocusHere(-1);
@@ -510,7 +524,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     netplay::Leave();
   }
 
-  static std::string Other(const room::State& room) { return room.other.empty() ? "el rival" : room.other; }
+  static std::string Other(const room::State& room) { return room.other.empty() ? T("el rival") : room.other; }
 
   // mk9-lauta (2026-11-10): quick match picks, of the rooms waiting, the one with the shortest round trip to expect
   // (then the one waiting longest), leaving out the silenced players'; with none, the lobby's own quick match (it opens
@@ -555,22 +569,22 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         SignalBars(info);
         ImGui::SameLine();
         std::string line = fmt::format("{:.0f} ms", info.rtt_ms);
-        if (info.rollback && info.speculating) line += fmt::format(" - retraso {}", info.delay);
+        if (info.rollback && info.speculating) line += Tf(" - retraso {}", info.delay);
         if (info.relayed) line += " - relay";
         ImGui::Text("%s", line.c_str());
         if (info.loss_pct >= 3 || info.jitter_ms >= 30) {
-          ImGui::TextColored(kGold, "Conexión inestable (%.0f%% perdidos, variación %.0f ms)", info.loss_pct,
+          ImGui::TextColored(kGold, T("Conexión inestable (%.0f%% perdidos, variación %.0f ms)"), info.loss_pct,
                              info.jitter_ms);
         }
-        if (info.waiting) ImGui::TextColored(kGold, "Esperando a %s... %.0f s", Other(room).c_str(), info.waiting_s);
+        if (info.waiting) ImGui::TextColored(kGold, T("Esperando a %s... %.0f s"), Other(room).c_str(), info.waiting_s);
         // mk9-lauta (2026-11-10): the two games apart (the session goes on): each player sees a different fight, so
         // they know it and can send their logs (logs/session_*.mk9net)
         if (info.desynced) {
-          ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1),
-                             "Las dos partidas dejaron de coincidir: mandá logs\\session_*.mk9net");
+          ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1), "%s",
+                             T("Las dos partidas dejaron de coincidir: mandá logs\\session_*.mk9net"));
         }
       } else {
-        ImGui::TextColored(kGold, "Conectando con %s...", Other(room).c_str());
+        ImGui::TextColored(kGold, T("Conectando con %s..."), Other(room).c_str());
       }
     }
     ImGui::End();
@@ -636,18 +650,18 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     std::string why;
     switch (info.end_reason) {
-      case netplay::EndReason::kLeft: why = "Saliste de la sesión."; break;
-      case netplay::EndReason::kPeerLeft: why = Other(room) + " se fue de la sesión."; break;
-      case netplay::EndReason::kPeerLost: why = "Se cortó la conexión con " + Other(room) + "."; break;
-      case netplay::EndReason::kDesync: why = "Las dos partidas dejaron de coincidir (se desincronizaron)."; break;
-      case netplay::EndReason::kFailed: why = "No se pudo conectar con " + Other(room) + "."; break;
+      case netplay::EndReason::kLeft: why = T("Saliste de la sesión."); break;
+      case netplay::EndReason::kPeerLeft: why = Tf("{} se fue de la sesión.", Other(room)); break;
+      case netplay::EndReason::kPeerLost: why = Tf("Se cortó la conexión con {}.", Other(room)); break;
+      case netplay::EndReason::kDesync: why = T("Las dos partidas dejaron de coincidir (se desincronizaron)."); break;
+      case netplay::EndReason::kFailed: why = Tf("No se pudo conectar con {}.", Other(room)); break;
       case netplay::EndReason::kOtherVersion:
-        why = Other(room) + " tiene otra versión de mk9-lauta (" +
-              (info.peer_release.empty() ? std::string("la 0.2.0 o una anterior") : "la " + info.peer_release) +
-              "; vos, la " MK9_LAUTA_VERSION_TEXT ").\nPara jugar online tienen que tener la misma: actualicen los "
-              "dos (F2 > Acerca de).";
+        why = Tf("{} tiene otra versión de mk9-lauta: {} (vos: {}).\nPara jugar online tienen que tener la misma: "
+                 "actualicen los dos (F2 > Acerca de).",
+                 Other(room), info.peer_release.empty() ? std::string(T("0.2.0 o anterior")) : info.peer_release,
+                 MK9_LAUTA_VERSION_TEXT);
         break;
-      default: why = "La sesión terminó."; break;
+      default: why = T("La sesión terminó."); break;
     }
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always,
@@ -657,15 +671,15 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##session_end", nullptr, flags)) {
       ImGui::PushFont(nullptr, 30.0f);
-      ImGui::TextColored(kGold, "Fin de la sesión");
+      ImGui::TextColored(kGold, "%s", T("Fin de la sesión"));
       ImGui::PopFont();
       ImGui::Spacing();
       ImGui::PushFont(nullptr, 22.0f);
       ImGui::Text("%s", why.c_str());
       ImGui::PopFont();
-      ImGui::TextColored(kGrey, "Volvés al lobby en %d s.", left);
+      ImGui::TextColored(kGrey, T("Volvés al lobby en %d s."), left);
       ImGui::Spacing();
-      if (ImGui::Button("Volver al lobby ahora", ImVec2(260, 0))) LeaveSession();
+      if (ImGui::Button(T("Volver al lobby ahora"), ImVec2(260, 0))) LeaveSession();
     }
     ImGui::End();
   }

@@ -5,12 +5,14 @@
 #include <chrono>
 #include <mutex>
 #include <random>
+#include <utility>
 
 #include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
 #include "online/flags.h"
+#include "online/i18n.h"
 #include "online/lobby.h"
 #include "online/netplay.h"
 #include "online/notify.h"
@@ -21,6 +23,14 @@ REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
 
 namespace mk9::room {
 namespace {
+
+using i18n::T;
+
+// A runtime format (fmt) of a translated text.
+template <typename... Args>
+std::string Tf(const char* es, Args&&... args) {
+  return fmt::format(fmt::runtime(T(es)), std::forward<Args>(args)...);
+}
 
 using json = nlohmann::json;
 using Clock = std::chrono::steady_clock;
@@ -103,7 +113,7 @@ void HostLocked(bool open, const std::string& status) {
   g.s.open = open;
   g.s.host = true;
   g.s.me = MyName();
-  g.s.title = "Sala de " + g.s.me;
+  g.s.title = Tf("Sala de {}", g.s.me);
   g.s.status = status;
   lobby::Host(g.s.code, g.s.title, open, false);
   REXLOG_INFO("[room] hosting {} ({})", g.s.code, open ? "open" : "private");
@@ -115,7 +125,7 @@ void JoinLocked(const std::string& code) {
   g.s.code = code;
   g.s.host = false;
   g.s.me = MyName();
-  g.s.status = "Entrando a la sala " + code + "...";
+  g.s.status = Tf("Entrando a la sala {}...", code);
   g.guest_id = NewId();
   g.joined_at = Clock::now();
   g.hi_at = {};
@@ -123,31 +133,32 @@ void JoinLocked(const std::string& code) {
   REXLOG_INFO("[room] joining {}", code);
 }
 
-// The other player left (or went quiet): the host waits for another, the guest is out.
-void OtherGoneLocked(const std::string& why) {
+// The other player left (or went quiet): the host waits for another, the guest is out. why: a text with the name's
+// place ("{} se fue de la sala").
+void OtherGoneLocked(const char* why) {
   if (g.s.phase != Phase::kTogether) return;
-  const std::string other = g.s.other.empty() ? "El rival" : g.s.other;
+  const std::string other = g.s.other.empty() ? T("El rival") : g.s.other;
   if (g.s.host && !g.s.in_session) {
     g.s.phase = Phase::kHosting;
     g.s.other.clear();
     g.s.other_country.clear();
     g.s.my_ready = g.s.other_ready = false;
     g.guest_id.clear();
-    g.s.status = "Esperando un rival";
+    g.s.status = T("Esperando un rival");
     lobby::Host(g.s.code, g.s.title, g.s.open, false);
   } else {
     g.s.phase = Phase::kNone;
-    g.s.status = other + " " + why;
+    g.s.status = Tf(why, other);
     if (!g.s.host) lobby::Join("", "");
   }
-  AddLine("", other + " " + why, true);
+  AddLine("", Tf(why, other), true);
 }
 
 void MaybeStartLocked() {
   if (!g.s.host || g.s.in_session || g.s.phase != Phase::kTogether || !g.s.my_ready || !g.s.other_ready) return;
   SendOther({{"room", "start"}});
   g.s.phase = Phase::kStarting;
-  g.s.status = "Arranca la pelea";
+  g.s.status = T("Arranca la pelea");
   g.start_pending = true;
   g.start_at = Clock::now() + std::chrono::milliseconds(1200);  // the guest gets the start first
   Touch();
@@ -182,9 +193,9 @@ void OnMessageLocked(const json& d) {
         lobby::SigToGuest(g.s.code, id, {{"room", "welcome"}, {"name", g.s.me}, {"cc", flags::Mine()}});
         if (fresh) {
           g.s.my_ready = g.s.other_ready = false;
-          g.s.status = "Rival en la sala";
+          g.s.status = T("Rival en la sala");
           lobby::Host(g.s.code, g.s.title, g.s.open, true);
-          AddLine("", name + " entró a la sala", true);
+          AddLine("", Tf("{} entró a la sala", name), true);
           if (!g.s.in_session) notify::Attention(true);
         }
       } else {
@@ -197,20 +208,20 @@ void OnMessageLocked(const json& d) {
       g.s.other = d.value("name", "");
       g.s.other_country = d.value("cc", "");
       g.s.phase = Phase::kTogether;
-      g.s.status = "En la sala de " + g.s.other;
-      AddLine("", "Entraste a la sala de " + g.s.other, true);
+      g.s.status = Tf("En la sala de {}", g.s.other);
+      AddLine("", Tf("Entraste a la sala de {}", g.s.other), true);
       if (!g.s.in_session) notify::Attention(true);
       return;
     }
     if (kind == "full" && g.s.phase == Phase::kJoining) {
       Reset();
-      g.s.status = "Esa sala ya tiene dos jugadores";
+      g.s.status = T("Esa sala ya tiene dos jugadores");
       lobby::Join("", "");
       return;
     }
     if (kind == "start" && g.s.phase == Phase::kTogether && !g.s.in_session) {
       g.s.phase = Phase::kStarting;
-      g.s.status = "Arranca la pelea";
+      g.s.status = T("Arranca la pelea");
       g.start_pending = true;
       g.start_at = Clock::now() + std::chrono::milliseconds(300);
       Touch();
@@ -228,7 +239,7 @@ void OnMessageLocked(const json& d) {
     MaybeStartLocked();
   } else if (kind == "bye") {
     if (g.s.in_session) netplay::PeerLeft();  // its goodbye over the session's own path may not have come
-    OtherGoneLocked("se fue de la sala");
+    OtherGoneLocked("{} se fue de la sala");
   }
 }
 
@@ -236,14 +247,14 @@ void OnMessageLocked(const json& d) {
 
 void CreateRoom(bool open) {
   std::lock_guard<std::mutex> lock(g.mutex);
-  HostLocked(open, open ? "Sala pública: esperando un rival" : "Sala privada: pasale el código a tu rival");
+  HostLocked(open, T(open ? "Sala pública: esperando un rival" : "Sala privada: pasale el código a tu rival"));
 }
 
 void JoinRoom(const std::string& code) {
   const std::string c = Normalize(code);
   std::lock_guard<std::mutex> lock(g.mutex);
   if (c.size() < 4) {
-    g.s.status = "El código tiene que tener de 4 a 8 letras o números";
+    g.s.status = T("El código tiene que tener de 4 a 8 letras o números");
     Touch();
     return;
   }
@@ -254,7 +265,7 @@ void QuickMatch() {
   std::lock_guard<std::mutex> lock(g.mutex);
   Reset();
   g.s.phase = Phase::kSearching;
-  g.s.status = "Buscando rival...";
+  g.s.status = T("Buscando rival...");
   lobby::Quick();
 }
 
@@ -268,7 +279,7 @@ void Leave() {
     lobby::Join("", "");
   }
   Reset();
-  g.s.status = "Saliste de la sala";
+  g.s.status = T("Saliste de la sala");
 }
 
 void SetReady(bool ready) {
@@ -301,7 +312,7 @@ void EnterSession(const std::string& code, bool host, const std::string& me, con
   g.s.host = host;
   g.s.me = me;
   g.s.phase = host ? Phase::kHosting : Phase::kJoining;
-  g.s.status = "Conectando con el rival";
+  g.s.status = T("Conectando con el rival");
   g.guest_id = host ? std::string() : id;  // the session (netplay.cpp) has hosted or joined the room already
   g.joined_at = Clock::now();
   g.heard = Clock::now();
@@ -337,7 +348,7 @@ void Pump() {
       if (!event.room.empty()) {
         JoinLocked(event.room);
       } else {
-        HostLocked(true, "Nadie esperando: tu sala quedó abierta para el próximo que busque");
+        HostLocked(true, T("Nadie esperando: tu sala quedó abierta para el próximo que busque"));
       }
       continue;
     }
@@ -357,7 +368,7 @@ void Pump() {
       if (!g.s.in_session && now - g.joined_at > kJoinFor) {
         const std::string code_was = g.s.code;
         Reset();
-        g.s.status = "La sala " + code_was + " no responde";
+        g.s.status = Tf("La sala {} no responde", code_was);
         lobby::Join("", "");
       }
     } else if (g.s.phase == Phase::kTogether) {
@@ -366,7 +377,7 @@ void Pump() {
         SendOther({{"room", "ping"}, {"cc", flags::Mine()}});
       }
       // in a session the fight's own path says whether the other player is there (the lobby may be what is down)
-      if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("se desconectó");
+      if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("{} se desconectó");
     }
     if (g.start_pending && now >= g.start_at) {
       g.start_pending = false;
