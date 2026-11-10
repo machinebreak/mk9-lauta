@@ -58,7 +58,8 @@ game's files from it, and they stay on your computer.
   one. When both players press **Estoy listo** (ready), the game starts again already connected. The game's own
   menus are shared: either player chooses VERSUS (ONE VS ONE or TWO VS TWO), the other joins with START, and each
   picks a fighter. Fights run with rollback: your own moves come out at once (with one frame of input delay unless
-  the host chooses 0 or 2, raised by itself with a long ping so rollbacks stay about five frames deep) and the game
+  the host chooses 0 or 2, raised by itself with a long ping, all fight long, so rollbacks stay about five frames
+  deep) and the game
   corrects itself when the other player's buttons arrive. Menus and loads run
   in lockstep, with their delay set from the ping. There is no pause in an online fight. The opponent's name and
   ping show at the top right; when the match ends, the loser chooses REMATCH, another fighter or the menu.
@@ -68,8 +69,10 @@ lobby: X-Ray-heavy fights with 3 % packet loss and heavy jitter, and 21-minute s
 and with ~200 ms of ping (jitter, 1 % loss), where the two games stayed the same from the first frame to the last
 (75,000-77,000 frames compared). The 0.1.0 testers' logs (Argentina-Venezuela, 140-220 ms, partly over the TURN
 relay) showed sessions frozen at their start, slow menus, slow fight intros, crashes and desyncs in fights: all
-traced and fixed in 0.2.0 (docs/online/netplay-design.md). It has not been played between two machines
-over the internet yet. Both players need the same release. Each online session saves both players' inputs in
+traced and fixed in 0.2.0 (docs/online/netplay-design.md). The 0.2.0 testers' reports (the screen flickering in
+online fights with "green lights", a black scene or coloured triangles; sessions frozen at the logo; fights that got
+worse as the ping rose) were reproduced on one PC, by recording what each game showed, and fixed in 0.2.1. Both
+players need the same release: since 0.2.1 the game says so when they do not. Each online session saves both players' inputs in
 `logs/session_*.mk9net` (the newest ten): if two games ever part, the two players' files say where
 (`tools/online/session_report.py`). [docs/online/netplay-design.md](docs/online/netplay-design.md) is the working
 log of how it is built and what was checked.

@@ -24,13 +24,16 @@ En la pestaña **Salas**:
 Adentro de la sala tenés el **chat de la sala**. Cuando los dos tocan **"Estoy listo"**, el juego se vuelve a abrir solo,
 ya conectado con tu rival. No toques nada mientras se vuelve a abrir.
 
+Los dos tienen que tener **la misma versión** de mk9-lauta (F2 > Acerca de). Si no, el juego lo avisa al conectar ("tiene
+otra versión de mk9-lauta") y vuelve al lobby: actualicen los dos a la última.
+
 En la pestaña **Chat global** se habla con todos los que están en línea.
 
 ## La pelea
 
 - Los menús son los del juego: cualquiera de los dos puede elegir VERSUS, ONE VS ONE o TWO VS TWO. El otro se suma con
   START en la pantalla de 2 jugadores, y cada uno elige su luchador.
-- Arriba a la derecha ves contra quién jugás y el ping ("vs Rival - 45 ms").
+- Arriba a la derecha ves contra quién jugás, el ping y, en la pelea, el retraso ("vs Rival - 180 ms - retraso 2").
 - Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los menús y la
   intro de cada pelea van sincronizados con un retraso según el ping, así no se traban.
 - En la pelea online **no hay pausa** (START no pausa).
@@ -90,8 +93,9 @@ al volver a abrir el juego.
   F2** (Automático los agranda en pantallas 1440p o 4K).
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
 - **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala. Con ping
-  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, hasta 6 con más de 300 ms) para
-  que los personajes no "salten" cuando llegan los botones del otro.
+  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, 4 con 260 ms, hasta 7 con más de
+  340 ms) para que los personajes no "salten" cuando llegan los botones del otro, y lo sigue ajustando toda la pelea
+  si el ping cambia.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 
 ## Actualizaciones
@@ -125,3 +129,5 @@ dos archivos se ve en qué cuadro se separaron los juegos.
 - Cerrá los programas que no uses mientras jugás (el navegador, sobre todo), y más en una notebook con gráficos
   integrados: comparten la placa de video con el juego.
 - En el online, las peleas siguen a 60 aunque se dibujen menos cuadros: el rival no nota nada.
+- Para jugar online conviene el cable de red o un Wi-Fi estable: con más de 250 ms de ping la pelea se corrige seguido
+  y los personajes "saltan" aunque el juego suba el retraso.
