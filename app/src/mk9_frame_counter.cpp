@@ -7,6 +7,7 @@
 // From usf4-nx's usf4_frame_counter.cpp, without its "[hitch]" breakdown (that needs USF4's GPU/job/limiter wait
 // hooks, which MK9 does not have yet): a frame longer than mk9_hitch_log_ms is only reported with its length.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -30,6 +31,22 @@ std::atomic<uint64_t> g_mk9_game_frames{0};
 extern "C" void RexSwitchPerfHitch(uint64_t start, uint64_t end);  // sdk switch_perf.cpp (PC: me_pc_stubs.cpp)
 
 namespace {
+
+// mk9-lauta (2026-11-10): the window's shown frames by length, 0.1 ms buckets up to 100 ms (longer ones in the last),
+// for the line's percentiles: what a test's gate reads (docs/online/baseline-0.3.0.md).
+constexpr size_t kBuckets = 1000;
+uint32_t g_lengths[kBuckets] = {};
+
+double Percentile(uint64_t frames, double fraction) {
+  if (!frames) return 0.0;
+  const uint64_t wanted = uint64_t(double(frames - 1) * fraction) + 1;
+  uint64_t seen = 0;
+  for (size_t i = 0; i < kBuckets; ++i) {
+    seen += g_lengths[i];
+    if (seen >= wanted) return (double(i) + 0.5) / 10.0;
+  }
+  return double(kBuckets) / 10.0;
+}
 
 void Report() {
   using clock = std::chrono::steady_clock;
@@ -62,17 +79,21 @@ void Report() {
     REXLOG_INFO("[hitch] frame {} took {:.1f} ms", g_mk9_game_frames.load(std::memory_order_relaxed), dt / 1000.0);
   }
   ++window_frames;
+  ++g_lengths[std::min<uint64_t>(dt / 100, kBuckets - 1)];
   const double elapsed = std::chrono::duration<double>(now - window_start).count();
   if (elapsed >= 5.0) {
-    REXLOG_INFO("[fps] {:.1f} fps over {:.1f} s ({} frames{}), longest frame {:.1f} ms, {} over 20 ms, total {}",
+    REXLOG_INFO("[fps] {:.1f} fps over {:.1f} s ({} frames{}), longest frame {:.1f} ms, {} over 20 ms, total {}; "
+                "p50 {:.1f} ms, p90 {:.1f}, p99 {:.1f}",
                 window_frames / elapsed, elapsed, window_frames,
                 window_hidden ? fmt::format(" shown, {} not shown: run again or left undrawn", window_hidden) : std::string(),
-                worst_us / 1000.0, window_late, g_mk9_game_frames.load(std::memory_order_relaxed));
+                worst_us / 1000.0, window_late, g_mk9_game_frames.load(std::memory_order_relaxed),
+                Percentile(window_frames, 0.50), Percentile(window_frames, 0.90), Percentile(window_frames, 0.99));
     window_start = now;
     window_frames = 0;
     window_hidden = 0;
     window_late = 0;
     worst_us = 0;
+    std::fill(std::begin(g_lengths), std::end(g_lengths), 0u);
   }
 }
 

@@ -65,6 +65,7 @@
 #include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/snapshot.h"
+#include "mk9_frame_budget.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
 
@@ -533,6 +534,7 @@ uint64_t CurrentFrame() { return g_frame; }
 // first frame the shared seed (seed.h; mk9_seed outside a session), and the pending loads finished (loading.h).
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
+  const auto boundary_start = std::chrono::steady_clock::now();
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)
@@ -547,6 +549,8 @@ REX_HOOK_RAW(sub_829D5230) {
     mk9::seed::Start(base, seed);
   }
   if (mk9::loading::Enabled() || mk9::netplay::Active()) mk9::loading::FlushPending(ctx, base);
+  mk9::frame_budget::NoteBoundary(
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - boundary_start).count());
   __imp__sub_829D5230(ctx, base);
 }
 

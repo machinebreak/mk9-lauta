@@ -50,6 +50,7 @@ set(MK9_SOURCES
     src/mk9_script_input.cpp
     # Presented frames per second in the log (hook on the game's Direct3D swap, sub_82BF6D58).
     src/mk9_frame_counter.cpp
+    src/mk9_frame_budget.cpp
     # The job system: a parent job waiting for its children keeps popping them (jobs.toml; the Krypt hang).
     src/mk9_jobs.cpp
     src/mk9_movie.cpp
