@@ -63,6 +63,9 @@ void Stop();
 State Snapshot();
 
 void SetName(const std::string& name);
+// mk9-lauta (2026-11-10): this player's country (two letters, flags.h): the lobby shows it next to the name in the
+// global chat and the rooms list. Said with the name at every connection, and at once when it changes.
+void SetCountry(const std::string& country);
 void Chat(const std::string& text);
 // Hosts the room code (open: in the list; playing: no longer waiting for a guest).
 void Host(const std::string& room, const std::string& title, bool open, bool playing);

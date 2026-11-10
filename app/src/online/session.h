@@ -7,6 +7,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace mk9::session {
 
@@ -18,5 +19,12 @@ namespace mk9::session {
 // The player's name in the lobby (online_name.txt beside the executable; mk9_online_name before it): "" none yet.
 std::string LoadName();
 void SaveName(const std::string& name);
+
+// mk9-lauta (2026-11-10): the players this one silenced (online_blocked.txt beside the executable, a name a line; any
+// thread): their lines in the chats, their rooms in the list and their hellos to this one's room are left out, on
+// this machine only. Names compare without regard to case.
+bool IsBlocked(const std::string& name);
+void SetBlocked(const std::string& name, bool blocked);
+std::vector<std::string> Blocked();
 
 }  // namespace mk9::session

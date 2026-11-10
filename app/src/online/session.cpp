@@ -8,8 +8,10 @@
 // after windows.h
 #include <shellapi.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <vector>
 
@@ -133,6 +135,61 @@ std::string LoadName() {
 void SaveName(const std::string& name) {
   std::ofstream out(ExeDir() / "online_name.txt", std::ios::binary | std::ios::trunc);
   out << name << "\n";
+}
+
+namespace {
+
+std::mutex g_blocked_mutex;
+std::vector<std::string> g_blocked;
+bool g_blocked_loaded = false;
+
+std::string Folded(std::string s) {
+  for (char& c : s) {
+    if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+  }
+  return s;
+}
+
+// The mutex held.
+void LoadBlockedLocked() {
+  if (g_blocked_loaded) return;
+  g_blocked_loaded = true;
+  std::ifstream in(ExeDir() / "online_blocked.txt", std::ios::binary);
+  std::string line;
+  while (std::getline(in, line)) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (!line.empty()) g_blocked.push_back(line);
+  }
+}
+
+}  // namespace
+
+bool IsBlocked(const std::string& name) {
+  if (name.empty()) return false;
+  std::lock_guard<std::mutex> lock(g_blocked_mutex);
+  LoadBlockedLocked();
+  const std::string folded = Folded(name);
+  return std::any_of(g_blocked.begin(), g_blocked.end(), [&](const std::string& b) { return Folded(b) == folded; });
+}
+
+void SetBlocked(const std::string& name, bool blocked) {
+  if (name.empty()) return;
+  std::lock_guard<std::mutex> lock(g_blocked_mutex);
+  LoadBlockedLocked();
+  const std::string folded = Folded(name);
+  g_blocked.erase(std::remove_if(g_blocked.begin(), g_blocked.end(),
+                                 [&](const std::string& b) { return Folded(b) == folded; }),
+                  g_blocked.end());
+  if (blocked) g_blocked.push_back(name);
+  std::ofstream out(ExeDir() / "online_blocked.txt", std::ios::binary | std::ios::trunc);
+  for (const std::string& b : g_blocked) out << b << "\n";
+  REXLOG_INFO("[session] {} {}", name, blocked ? "silenced" : "no longer silenced");
+}
+
+std::vector<std::string> Blocked() {
+  std::lock_guard<std::mutex> lock(g_blocked_mutex);
+  LoadBlockedLocked();
+  return g_blocked;
 }
 
 }  // namespace mk9::session

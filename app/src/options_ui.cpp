@@ -148,9 +148,11 @@ const Option kButtonIconsOption = {
 const std::vector<Option>& OnlineOptions() {
   static const std::vector<Option> options = {
       {"mk9_net_rollback_delay", "Retraso de entrada en las peleas",
-       {{"0", "Ninguno (más correcciones)"}, {"1", "1 cuadro (recomendado)"}, {"2", "2 cuadros (conexiones malas)"}},
-       "Cuadros que espera cada golpe antes de verse. Con 0 no hay espera y el rollback corrige todo lo que llega tarde; "
-       "con 1 o 2 se ven menos correcciones. Vale el que elige el host de la sala."},
+       {{"-1", "Automático (recomendado)"}, {"0", "Ninguno"}, {"1", "1 cuadro"}, {"2", "2 cuadros"},
+        {"3", "3 cuadros"}, {"4", "4 cuadros"}, {"5", "5 cuadros"}, {"6", "6 cuadros"}, {"7", "7 cuadros"}},
+       "Cuadros que espera cada golpe tuyo antes de verse. Con menos retraso tus golpes salen antes pero el rollback "
+       "corrige más (los personajes \"saltan\"); con más, al revés. Automático: 1 cuadro con ping bajo y más con ping "
+       "alto, ajustándose durante toda la pelea. Cada jugador elige el suyo."},
   };
   return options;
 }

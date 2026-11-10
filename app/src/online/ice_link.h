@@ -30,6 +30,7 @@ class IceLink : public Transport {
   bool Send(const void* data, size_t size) override;
   int Receive(void* buffer, size_t capacity) override;
   uint64_t LastArrivalUs() const override;
+  bool Relayed() const override;
   bool WaitReadable(int timeout_ms) override;
   // The guest's side: a new exchange (a new agent and offer; the host answers it with a new agent too).
   bool Restart() override;

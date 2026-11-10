@@ -341,6 +341,17 @@ std::string IceLink::PeerText() const {
   return fmt::format("{} ({}, from {})", remote, relayed ? "relayed by TURN" : "direct", local);
 }
 
+bool IceLink::Relayed() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->agent) return false;
+  char local_c[JUICE_MAX_CANDIDATE_SDP_STRING_LEN] = {}, remote_c[JUICE_MAX_CANDIDATE_SDP_STRING_LEN] = {};
+  if (juice_get_selected_candidates(impl_->agent, local_c, sizeof(local_c), remote_c, sizeof(remote_c)) !=
+      JUICE_ERR_SUCCESS) {
+    return false;
+  }
+  return IsRelay(local_c) || IsRelay(remote_c);
+}
+
 bool IceLink::Send(const void* data, size_t size) {
   if (!HasPeer()) return false;
   std::lock_guard<std::mutex> lock(impl_->mutex);

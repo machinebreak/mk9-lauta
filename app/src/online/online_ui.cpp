@@ -18,6 +18,7 @@
 #include <fmt/format.h>
 #include <rex/cvar.h>
 
+#include "online/flags.h"
 #include "online/lobby.h"
 #include "online/netplay.h"
 #include "online/room.h"
@@ -72,11 +73,56 @@ std::string ErrorText(const std::string& code) {
   return code;
 }
 
+// mk9-lauta (2026-11-10): a country's flag inline, before what comes next on the line (nothing for none).
+void FlagInline(const std::string& country) {
+  if (flags::Draw(country, ImGui::GetTextLineHeight() * 0.85f)) ImGui::SameLine(0, 5);
+}
+
+// mk9-lauta (2026-11-10): the connection as four bars, from its round trip, how much that moves and the pings lost:
+// 4 good, 1 bad.
+int Quality(const netplay::SessionInfo& info) {
+  int q = 4;
+  if (info.rtt_ms > 120) --q;
+  if (info.rtt_ms > 200) --q;
+  if (info.rtt_ms > 300) --q;
+  if (info.jitter_ms > 20) --q;
+  if (info.jitter_ms > 50) --q;
+  if (info.loss_pct > 2) --q;
+  if (info.loss_pct > 8) --q;
+  return std::clamp(q, 1, 4);
+}
+
+void SignalBars(const netplay::SessionInfo& info) {
+  const int q = Quality(info);
+  const float h = ImGui::GetTextLineHeight();
+  const float bar = h * 0.22f, gap = h * 0.12f;
+  const ImVec2 at = ImGui::GetCursorScreenPos();
+  ImDrawList* list = ImGui::GetWindowDrawList();
+  const ImU32 on = q >= 4   ? IM_COL32(110, 220, 120, 255)
+                   : q == 3 ? IM_COL32(190, 220, 90, 255)
+                   : q == 2 ? IM_COL32(240, 170, 60, 255)
+                            : IM_COL32(240, 90, 80, 255);
+  const ImU32 off = IM_COL32(120, 120, 130, 110);
+  for (int i = 0; i < 4; ++i) {
+    const float bh = h * (0.35f + 0.65f * float(i + 1) / 4.0f);
+    const ImVec2 a(at.x + float(i) * (bar + gap), at.y + h - bh), b(a.x + bar, at.y + h);
+    list->AddRectFilled(a, b, i < q ? on : off, 1.0f);
+  }
+  ImGui::Dummy(ImVec2(4 * bar + 3 * gap, h));
+}
+
+// The connection in words (the room's tab).
+std::string ConnectionText(const netplay::SessionInfo& info) {
+  return fmt::format("Ping {:.0f} ms - variación {:.0f} ms - {:.0f}% perdidos - {}", info.rtt_ms, info.jitter_ms,
+                     info.loss_pct, info.relayed ? "por relay (TURN)" : "conexión directa");
+}
+
 class OnlineWindow : public renut::gpu::overlay::Dialog {
  public:
   OnlineWindow() {
     name_ = session::LoadName();
     std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
+    flags::Detect();  // this player's country, for the lobby and the rival (a thread: Cloudflare's trace)
     if (!name_.empty() && lobby::Configured()) lobby::Start(name_);
     // with no name yet the window opens by itself (it has to be chosen to play online), and so it does back from a
     // room's session: the player is in the lobby again
@@ -85,6 +131,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
   void Draw() override {
     ImGui::GetStyle().FontScaleMain = options_ui::UiScale();
+    if (const std::string country = flags::Mine(); !country.empty()) lobby::SetCountry(country);
     room::Pump();
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false) || overlay_input::ToggleOnlinePressed()) {
       visible_ = !visible_;
@@ -106,6 +153,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
     }
     DrawSessionBadge(room);
+    DrawNamePlates(room);
     overlay_input::SetOpen(overlay_input::kOnline, visible_);
     if (!visible_) {
       DrawToast(room);
@@ -237,8 +285,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::TextColored(kGrey, "Desconectado");
         break;
     }
-    ImGui::SameLine(ImGui::GetWindowWidth() - 230);
-    ImGui::Text("Sos: %s", lobby.name.empty() ? name_.c_str() : lobby.name.c_str());
+    ImGui::SameLine(ImGui::GetWindowWidth() - 250);
+    ImGui::Text("Sos:");
+    ImGui::SameLine();
+    FlagInline(flags::Mine());
+    ImGui::Text("%s", lobby.name.empty() ? name_.c_str() : lobby.name.c_str());
     ImGui::SameLine();
     if (ImGui::SmallButton("Cambiar")) {
       editing_name_ = true;
@@ -276,11 +327,13 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70);
       ImGui::TableHeadersRow();
       for (const lobby::Room& r : lobby.rooms) {
+        if (session::IsBlocked(r.host)) continue;  // mk9-lauta: a silenced player's room is not offered
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::Text("%s", r.title.empty() ? r.code.c_str() : r.title.c_str());
         ImGui::TableNextColumn();
-        ImGui::Text("%s%s%s", r.host.c_str(), r.country.empty() ? "" : " - ", r.country.c_str());
+        FlagInline(r.country);
+        ImGui::Text("%s", r.host.c_str());
         ImGui::TableNextColumn();
         ImGui::TextColored(r.playing ? kGrey : kGreen, "%s", r.playing ? "jugando" : "esperando");
         ImGui::TableNextColumn();
@@ -301,17 +354,33 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::SameLine();
     if (ImGui::SmallButton("Copiar código")) ImGui::SetClipboardText(room.code.c_str());
     if (room.host) {
-      ImGui::Text("Host: vos (%s)", room.me.c_str());
-      ImGui::Text("Rival: %s", room.other.empty() ? "-" : room.other.c_str());
+      ImGui::Text("Host: vos (");
+      ImGui::SameLine(0, 0);
+      FlagInline(flags::Mine());
+      ImGui::SameLine(0, 0);
+      ImGui::Text("%s)", room.me.c_str());
+      ImGui::Text("Rival:");
+      ImGui::SameLine();
+      if (!room.other.empty()) FlagInline(room.other_country);
+      ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
     } else {
-      ImGui::Text("Host: %s", room.other.empty() ? "-" : room.other.c_str());
-      ImGui::Text("Vos: %s", room.me.c_str());
+      ImGui::Text("Host:");
+      ImGui::SameLine();
+      if (!room.other.empty()) FlagInline(room.other_country);
+      ImGui::Text("%s", room.other.empty() ? "-" : room.other.c_str());
+      ImGui::Text("Vos:");
+      ImGui::SameLine();
+      FlagInline(flags::Mine());
+      ImGui::Text("%s", room.me.c_str());
     }
     if (!room.status.empty()) ImGui::TextColored(kGold, "%s", room.status.c_str());
     if (room.in_session) {
       const netplay::SessionInfo info = netplay::Info();
       if (info.active) {
-        ImGui::Text("Ping: %.0f ms - %s", info.rtt_ms, info.rollback ? "pelea con rollback" : "menús en lockstep");
+        SignalBars(info);
+        ImGui::SameLine();
+        ImGui::Text("%s", ConnectionText(info).c_str());
+        ImGui::TextColored(kGrey, "%s", info.rollback ? "Pelea con rollback" : "Menús en lockstep");
       }
       ImGui::TextWrapped("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
                          "pantalla de 2 jugadores. Después cada uno elige su luchador.");
@@ -360,18 +429,45 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   void DrawGlobalChat(const lobby::State& lobby) {
+    // mk9-lauta (2026-11-10): the players silenced on this machine, and taking it back
+    const std::vector<std::string> blocked = session::Blocked();
+    if (!blocked.empty() && ImGui::TreeNode("silenced", "Silenciados (%d)", int(blocked.size()))) {
+      for (const std::string& name : blocked) {
+        ImGui::PushID(name.c_str());
+        ImGui::Text("%s", name.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Quitar")) session::SetBlocked(name, false);
+        ImGui::PopID();
+      }
+      ImGui::TreePop();
+    }
     const float input_h = ImGui::GetFrameHeightWithSpacing() * (lobby.error.empty() ? 1.0f : 2.0f) + 4;
     if (ImGui::BeginChild("global_chat", ImVec2(0, -input_h), ImGuiChildFlags_Borders)) {
+      const std::string me = lobby.name.empty() ? name_ : lobby.name;
       for (const lobby::ChatLine& l : lobby.chat) {
+        if (session::IsBlocked(l.name)) continue;
         ImGui::TextColored(kGrey, "%s", Clock24(l.at).c_str());
         ImGui::SameLine();
         if (l.id == 0 && l.name.empty()) {
           ImGui::TextColored(kGold, "%s", l.text.c_str());
           continue;
         }
+        FlagInline(l.country);
         ImGui::TextColored(l.staff ? kGold : kGreen, "%s%s:", l.staff ? "[staff] " : "", l.name.c_str());
+        // a click on a name: silence that player (on this machine)
+        if (l.name != me && ImGui::IsItemClicked()) {
+          person_ = l.name;
+          ImGui::OpenPopup("chat_person");
+        }
+        if (l.name != me && ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         ImGui::SameLine();
         ImGui::TextWrapped("%s", l.text.c_str());
+      }
+      if (ImGui::BeginPopup("chat_person")) {
+        ImGui::TextColored(kGold, "%s", person_.c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Silenciar (no ver sus mensajes ni sus salas)")) session::SetBlocked(person_, true);
+        ImGui::EndPopup();
       }
       if (lobby.chat.size() != global_lines_) {
         global_lines_ = lobby.chat.size();
@@ -418,10 +514,20 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##session_badge", nullptr, flags)) {
       if (info.active) {
-        if (info.rollback && info.speculating) {
-          ImGui::Text("vs %s - %.0f ms - retraso %d", Other(room).c_str(), info.rtt_ms, info.delay);
-        } else {
-          ImGui::Text("vs %s - %.0f ms", Other(room).c_str(), info.rtt_ms);
+        ImGui::Text("vs");
+        ImGui::SameLine();
+        FlagInline(room.other_country);
+        ImGui::Text("%s", Other(room).c_str());
+        ImGui::SameLine();
+        SignalBars(info);
+        ImGui::SameLine();
+        std::string line = fmt::format("{:.0f} ms", info.rtt_ms);
+        if (info.rollback && info.speculating) line += fmt::format(" - retraso {}", info.delay);
+        if (info.relayed) line += " - relay";
+        ImGui::Text("%s", line.c_str());
+        if (info.loss_pct >= 3 || info.jitter_ms >= 30) {
+          ImGui::TextColored(kGold, "Conexión inestable (%.0f%% perdidos, variación %.0f ms)", info.loss_pct,
+                             info.jitter_ms);
         }
         if (info.waiting) ImGui::TextColored(kGold, "Esperando a %s... %.0f s", Other(room).c_str(), info.waiting_s);
         // mk9-lauta (2026-11-10): the two games apart (the session goes on): each player sees a different fight, so
@@ -435,6 +541,55 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
     }
     ImGui::End();
+  }
+
+  // mk9-lauta (2026-11-10): in a session's fight, each player's name and flag under their health bar (player 1, the
+  // room's host, on the left), as the game's own online showed its gamertags. Drawn over the frame where the last
+  // present put it (any window shape), at its scale; behind the online windows.
+  void DrawNamePlates(const room::State& room) {
+    if (!room.in_session) return;
+    const netplay::SessionInfo info = netplay::Info();
+    if (!info.active || !info.rollback || !info.speculating) return;
+    float frame_h = renut::gpu::overlay::FrameHeightInOutput();
+    float lx = 0, ly = 0, rx = 0, ry = 0;
+    if (frame_h <= 0 || !renut::gpu::overlay::FramePointToOutput(0.118f, 0.086f, &lx, &ly) ||
+        !renut::gpu::overlay::FramePointToOutput(0.882f, 0.086f, &rx, &ry)) {
+      // nothing presented yet (a minimized window: the tests' captures): the frame over the whole overlay
+      const ImGuiIO& io = ImGui::GetIO();
+      frame_h = io.DisplaySize.y;
+      lx = 0.118f * io.DisplaySize.x;
+      rx = 0.882f * io.DisplaySize.x;
+      ly = ry = 0.086f * io.DisplaySize.y;
+      if (frame_h <= 0) return;
+    }
+    const std::string& p1 = room.host ? room.me : room.other;
+    const std::string& p2 = room.host ? room.other : room.me;
+    const std::string c1 = room.host ? flags::Mine() : room.other_country;
+    const std::string c2 = room.host ? room.other_country : flags::Mine();
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float size = std::max(12.0f, frame_h * 0.030f);
+    const float gap = size * 0.35f, flag_w = size * 40.0f / 30.0f;
+    const ImU32 shadow = IM_COL32(0, 0, 0, 200), text = IM_COL32(255, 236, 190, 255);
+    auto plate = [&](const std::string& name, const std::string& country, float x, float y, bool right) {
+      if (name.empty()) return;
+      const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, name.c_str());
+      const bool has_flag = flags::Known(country);
+      const float total = extent.x + (has_flag ? flag_w + gap : 0.0f);
+      float at = right ? x - total : x;
+      if (has_flag && !right) {
+        flags::DrawAt(list, country, ImVec2(at, y + (extent.y - size) * 0.5f), size);
+        at += flag_w + gap;
+      }
+      const float d = std::max(1.0f, size / 14.0f);
+      list->AddText(font, size, ImVec2(at + d, y + d), shadow, name.c_str());
+      list->AddText(font, size, ImVec2(at, y), text, name.c_str());
+      if (has_flag && right) {
+        flags::DrawAt(list, country, ImVec2(at + extent.x + gap, y + (extent.y - size) * 0.5f), size);
+      }
+    };
+    plate(p1, c1, lx, ly, false);
+    plate(p2, c2, rx, ry, true);
   }
 
   // The session is over: why, and back to the lobby (by itself after a few seconds).
@@ -508,6 +663,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   int tab_step_ = 0;                 // LB / RB this frame
   std::string tab_ = "Salas";        // the tab showing
   std::string name_, name_note_, toast_;
+  std::string person_;               // the chat's name clicked (its menu)
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;
   Clock::time_point toast_until_{}, leave_deadline_{}, ended_at_{};

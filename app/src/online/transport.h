@@ -37,6 +37,9 @@ class Transport {
   // this transport cannot tell: the game reads datagrams at its frame boundaries, a long frame (a load, a rollback, a
   // busy GPU) later, and a round trip measured at the reading had those waits in it.
   virtual uint64_t LastArrivalUs() const { return 0; }
+  // mk9-lauta (2026-11-10): the path goes through a relay (TURN), not straight between the two (the connection's
+  // indicator).
+  virtual bool Relayed() const { return false; }
 };
 
 // Emulated network conditions around another transport: each datagram sent is held for the delay (plus jitter, in
@@ -54,6 +57,7 @@ class LaggedTransport : public Transport {
   bool WaitReadable(int timeout_ms) override;
   bool Restart() override { return inner_->Restart(); }
   uint64_t LastArrivalUs() const override { return inner_->LastArrivalUs(); }
+  bool Relayed() const override { return inner_->Relayed(); }
 
  private:
   struct Held {

@@ -6,8 +6,8 @@
 //   mk9_net_join=<host:port>     a LAN, a forwarded port), or join one (player 2)
 //   mk9_net_delay=<frames>       input delay in lockstep (menus, loads); the host's counts for both
 //   mk9_net_rollback=<bool>      fights with rollback (else lockstep all along)
-//   mk9_net_rollback_delay=<f>   input delay in a fight with rollback (the host's counts for both): 0 = none, every
-//                                late input repaired by a rollback; 1-2 trade a little delay for fewer rollbacks
+//   mk9_net_rollback_delay=<f>   this player's input delay in a fight with rollback (each side its own): -1 = automatic
+//                                (follows the round trip), 0 = none (every late input repaired by a rollback), 1-7 fixed
 //   mk9_net_sync_ranges=<lo-hi,...>   guest ranges that also go into the sync hash, every mk9_net_sync_every frames
 //   transport.h: mk9_net_lag_ms / mk9_net_jitter_ms / mk9_net_loss_pct emulate a network for tests
 //
@@ -127,8 +127,10 @@ REXCVAR_DEFINE_STRING(mk9_net_join, "", "MK9 Online", "Join a two-player session
 REXCVAR_DEFINE_INT32(mk9_net_delay, 2, "MK9 Online",
                      "Input delay in frames in lockstep (menus, loads; the host's is used by both)");
 REXCVAR_DEFINE_BOOL(mk9_net_rollback, true, "MK9 Online", "Fights with rollback (the host's is used by both)");
-REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, 1, "MK9 Online",
-                     "Input delay in frames in a fight with rollback (0 = none; the host's is used by both)");
+REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, -1, "MK9 Online",
+                     "Your input delay in a fight with rollback: -1 = automatic (1 frame, more with a long round trip, "
+                     "all fight long), 0-7 = that many frames always. Each player's own")
+    .range(-1, 7);
 REXCVAR_DEFINE_INT32(mk9_net_timeout_s, 20, "MK9 Online", "Seconds without the peer before the session ends");
 REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "A session's start skips the boot's logo movies (WB, NetherRealm: 16 s): the host's pad taps START "
@@ -276,6 +278,15 @@ struct Session {
   double rtt_ms = 0, wait_ms_window = 0, wait_ms_max = 0;
   double rtt_samples[8] = {};        // the last pongs' round trips (their floor sets the lockstep delay)
   int rtt_count = 0;
+  // mk9-lauta (2026-11-10): the last pings sent (their send time) and whether a pong came back (loss, the indicator)
+  struct PingSent {
+    uint64_t at_us = 0;
+    bool answered = false;
+  };
+  PingSent pings[32] = {};
+  int ping_next = 0;
+  std::atomic<bool> relayed{false};  // the path goes through TURN (checked every few seconds on the game thread)
+  uint64_t relayed_checked_us = 0;
   uint64_t frames_window = 0, stalls_window = 0, sent = 0, received = 0;
   uint64_t rollbacks = 0, resimulated = 0, max_depth = 0, predicted = 0, mispredicted = 0, syncs_slept = 0;
   uint64_t confirms = 0, confirms_doomed = 0;  // ConfirmFrame: actions a rollback cannot undo, and those left to a rerun
@@ -742,6 +753,9 @@ void Receive() {
       const double rtt = std::max(0.1, (double(at > sent ? at - sent : 0) - double(held_there)) / 1000.0);
       g.rtt_ms = g.rtt_ms == 0 ? rtt : g.rtt_ms * 0.8 + rtt * 0.2;
       g.rtt_samples[g.rtt_count++ % 8] = rtt;
+      for (auto& ping : g.pings) {
+        if (ping.at_us == sent) ping.answered = true;
+      }
     } else if (type == kBye) {
       // its game found the two out of sync, or its player left
       const bool desync = left >= 1 && p[0] == uint8_t(EndReason::kDesync);
@@ -753,10 +767,16 @@ void Receive() {
 
 void Ping() {
   if (NowUs() - g.last_ping_us > 500000) {
+    const uint64_t now = NowUs();
     auto p = Header(kPing);
-    Put64(p, NowUs());
+    Put64(p, now);
     Send(p);
-    g.last_ping_us = NowUs();
+    g.last_ping_us = now;
+    g.pings[g.ping_next++ % 32] = {now, false};
+  }
+  if (NowUs() - g.relayed_checked_us > 3000000) {
+    g.relayed_checked_us = NowUs();
+    g.relayed.store(g.link->Relayed(), std::memory_order_relaxed);
   }
 }
 
@@ -869,7 +889,7 @@ bool Configure() {
   if (host_port <= 0 && join.empty() && room.empty()) return false;
   g.player = 0;
   g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
-  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), 0, 6);
+  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), -1, 7);
   g.rollback_wanted = REXCVAR_GET(mk9_net_rollback);
   g.delay = g.lockstep_delay;
   if (!room.empty()) {
@@ -884,7 +904,7 @@ bool Configure() {
   g.host = host_port > 0;
   g.player = g.host ? 0 : 1;
   g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
-  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), 0, 6);
+  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), -1, 7);
   g.rollback_wanted = REXCVAR_GET(mk9_net_rollback);
   g.delay = g.lockstep_delay;
   if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
@@ -953,11 +973,11 @@ bool Handshake() {
     // sends on is chosen: the host of 0.1.0 started on any word from the guest, its own HELLO went nowhere and the
     // guest waited for it while the host waited for the guest's inputs (the sessions that froze at their start).
     if (g.peer_hello && g.link->HasPeer()) {
+      // the host's seed and its choice of rollback; the delays are each player's own (mk9-lauta, 2026-11-10: the
+      // inputs carry their frames, so the two sides need not wait the same)
       if (!g.host && g.peer_delay >= 0) {
-        g.lockstep_delay = g.peer_delay;
         g.seed = uint32_t(g.peer_seed);
         g.rollback_wanted = g.peer_rollback != 0;
-        g.rollback_delay = g.peer_rollback_delay;
       }
       g.delay = g.lockstep_delay;
       // the side that finished first lets the other finish too; a peer that still misses it gets it again when its
@@ -1175,15 +1195,17 @@ void AdjustDelayForRoundTrip() {
   g.lower_votes = 0;
 }
 
-// The input delay of a fight with rollback, once its intro is over: the host's (mk9_net_rollback_delay, 0-2), raised
-// with a long round trip (mk9_net_auto_delay) so a wrong prediction goes back about kTargetRollbackDepth frames:
+// The input delay of a fight with rollback, once its intro is over: the player's own (mk9_net_rollback_delay 0-7), or,
+// automatic (-1, the default), 1 raised with a long round trip so a wrong prediction goes back about
+// kTargetRollbackDepth frames:
 // 150 ms -> 1, 180 ms -> 2, 220 ms -> 3, 260 ms -> 4, 300 ms -> 6, 7 at most (340 ms and more: with 4, 340 ms went back
 // 9-10 frames, frames of 50-120 ms). Each side picks its own (its inputs carry their frames).
 int FightDelay() {
+  if (g.rollback_delay >= 0) return g.rollback_delay;  // the player's own, fixed (F2 > Online)
   const double rtt = RoundTripTypical();
-  if (!REXCVAR_GET(mk9_net_auto_delay) || rtt <= 0) return g.rollback_delay;
+  if (!REXCVAR_GET(mk9_net_auto_delay) || rtt <= 0) return 1;
   const int one_way = int(std::ceil(rtt / 2.0 / (1000.0 / 60.0)));
-  return std::clamp(one_way + 1 - kTargetRollbackDepth, g.rollback_delay, 7);
+  return std::clamp(one_way + 1 - kTargetRollbackDepth, 1, 7);
 }
 
 // mk9-lauta (2026-11-10): every 2 s of a fight with rollback, its delay for the round trip of now: up at once, down a
@@ -1192,7 +1214,10 @@ int FightDelay() {
 // 184 ms kept 2 frames with 300-350 ms later on; its rollbacks went back 10 frames, its frames took up to 850 ms and
 // it showed 27-40 frames a second.
 void AdjustFightDelay() {
-  if (!REXCVAR_GET(mk9_net_auto_delay) || g.latest < g.delay_check_at || RoundTripTypical() <= 0) return;
+  if (g.rollback_delay >= 0 || !REXCVAR_GET(mk9_net_auto_delay) || g.latest < g.delay_check_at ||
+      RoundTripTypical() <= 0) {
+    return;
+  }
   g.delay_check_at = g.latest + 120;
   const int wanted = FightDelay();
   if (wanted < g.delay && ++g.lower_votes < 3) return;
@@ -1655,6 +1680,25 @@ SessionInfo Info() {
   // two games apart for good: a lone frame that differed (and matched again) says nothing to the players
   info.desynced = g.desync_at >= 0 && g.desync_frames >= 20;
   info.peer_release = g.peer_release;
+  // the connection's indicator
+  const int n = std::min(g.rtt_count, 8);
+  if (n >= 2) {
+    double mean = 0, var = 0;
+    for (int i = 0; i < n; ++i) mean += g.rtt_samples[i];
+    mean /= n;
+    for (int i = 0; i < n; ++i) var += (g.rtt_samples[i] - mean) * (g.rtt_samples[i] - mean);
+    info.jitter_ms = std::sqrt(var / n);
+  }
+  const uint64_t now = NowUs();
+  int sent = 0, lost = 0;
+  for (const auto& ping : g.pings) {
+    // the pings of the last ~14 s that have had 2 s to come back
+    if (!ping.at_us || now - ping.at_us < 2000000 || now - ping.at_us > 14000000) continue;
+    ++sent;
+    if (!ping.answered) ++lost;
+  }
+  info.loss_pct = sent >= 4 ? 100.0 * lost / sent : 0.0;
+  info.relayed = g.relayed.load(std::memory_order_relaxed);
   return info;
 }
 

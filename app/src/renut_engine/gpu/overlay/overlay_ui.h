@@ -63,4 +63,10 @@ using CloseFilter = bool (*)();
 void SetCloseFilter(CloseFilter filter);
 void CloseNow();
 
+// mk9-lauta (2026-11-10): where a point of the game's frame (u, v: 0-1 across and down the whole frame) lands in the
+// window's pixels (the overlay's coordinates), as the last present placed the frame; false before the first one.
+bool FramePointToOutput(float u, float v, float *x, float *y);
+// The frame's height in the window's pixels (the scale of what is drawn over it); 0 before the first present.
+float FrameHeightInOutput();
+
 } // namespace renut::gpu::overlay

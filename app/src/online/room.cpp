@@ -10,8 +10,10 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "online/flags.h"
 #include "online/lobby.h"
 #include "online/netplay.h"
+#include "online/notify.h"
 #include "online/session.h"
 
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
@@ -128,6 +130,7 @@ void OtherGoneLocked(const std::string& why) {
   if (g.s.host && !g.s.in_session) {
     g.s.phase = Phase::kHosting;
     g.s.other.clear();
+    g.s.other_country.clear();
     g.s.my_ready = g.s.other_ready = false;
     g.guest_id.clear();
     g.s.status = "Esperando un rival";
@@ -154,21 +157,35 @@ void OnMessageLocked(const json& d) {
   const std::string kind = d.value("room", "");
   if (kind.empty()) return;
   g.heard = Clock::now();
+  // the other player's country, with its hello and its keepalives (it may have found it after the hello)
+  if (const std::string cc = d.value("cc", ""); cc.size() == 2 && g.s.phase == Phase::kTogether) {
+    if (g.s.other_country != cc) {
+      g.s.other_country = cc;
+      Touch();
+    }
+  }
   if (g.s.host) {
     if (kind == "hi") {
       const std::string id = d.value("id", ""), name = d.value("name", "");
       if (id.empty()) return;
+      // mk9-lauta (2026-11-10): a player this one silenced finds the room full
+      if (session::IsBlocked(name) && !g.s.in_session) {
+        lobby::SigToGuest(g.s.code, id, {{"room", "full"}});
+        return;
+      }
       if (g.s.phase == Phase::kHosting || (g.s.phase == Phase::kTogether && id == g.guest_id)) {
         const bool fresh = g.s.phase == Phase::kHosting;
         g.guest_id = id;
         g.s.other = name;
+        g.s.other_country = d.value("cc", "");
         g.s.phase = Phase::kTogether;
-        lobby::SigToGuest(g.s.code, id, {{"room", "welcome"}, {"name", g.s.me}});
+        lobby::SigToGuest(g.s.code, id, {{"room", "welcome"}, {"name", g.s.me}, {"cc", flags::Mine()}});
         if (fresh) {
           g.s.my_ready = g.s.other_ready = false;
           g.s.status = "Rival en la sala";
           lobby::Host(g.s.code, g.s.title, g.s.open, true);
           AddLine("", name + " entró a la sala", true);
+          if (!g.s.in_session) notify::Attention(true);
         }
       } else {
         lobby::SigToGuest(g.s.code, id, {{"room", "full"}});
@@ -178,9 +195,11 @@ void OnMessageLocked(const json& d) {
   } else {
     if (kind == "welcome" && g.s.phase == Phase::kJoining) {
       g.s.other = d.value("name", "");
+      g.s.other_country = d.value("cc", "");
       g.s.phase = Phase::kTogether;
       g.s.status = "En la sala de " + g.s.other;
       AddLine("", "Entraste a la sala de " + g.s.other, true);
+      if (!g.s.in_session) notify::Attention(true);
       return;
     }
     if (kind == "full" && g.s.phase == Phase::kJoining) {
@@ -201,8 +220,10 @@ void OnMessageLocked(const json& d) {
   if (g.s.phase != Phase::kTogether) return;
   if (kind == "chat") {
     AddLine(g.s.other, d.value("text", ""), false);
+    notify::Attention(false);
   } else if (kind == "ready") {
     g.s.other_ready = d.value("on", false);
+    if (g.s.other_ready) notify::Attention(true);
     Touch();
     MaybeStartLocked();
   } else if (kind == "bye") {
@@ -331,7 +352,7 @@ void Pump() {
     if (g.s.phase == Phase::kJoining) {
       if (now - g.hi_at > kHiEvery) {
         g.hi_at = now;
-        lobby::SigToHost(g.s.code, {{"room", "hi"}, {"name", g.s.me}, {"id", g.guest_id}});
+        lobby::SigToHost(g.s.code, {{"room", "hi"}, {"name", g.s.me}, {"id", g.guest_id}, {"cc", flags::Mine()}});
       }
       if (!g.s.in_session && now - g.joined_at > kJoinFor) {
         const std::string code_was = g.s.code;
@@ -342,7 +363,7 @@ void Pump() {
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {
         g.said = now;
-        SendOther({{"room", "ping"}});
+        SendOther({{"room", "ping"}, {"cc", flags::Mine()}});
       }
       // in a session the fight's own path says whether the other player is there (the lobby may be what is down)
       if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("se desconectó");

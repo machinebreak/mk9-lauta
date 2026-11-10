@@ -118,6 +118,18 @@ class Client {
     send_cv_.notify_one();
   }
 
+  void SetCountry(const std::string& country) {
+    std::string name;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (country_ == country) return;
+      country_ = country;
+      name = wanted_name_;
+      if (!running_ || name.empty()) return;
+    }
+    Send({{"t", "name"}, {"name", name}, {"country", country}});
+  }
+
   bool PollEvent(Event* event) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (events_.empty()) return false;
@@ -174,12 +186,15 @@ class Client {
       if (Connect()) {
         retry_s = 1;
         SetLink(Link::kOnline);
-        std::string name;
+        std::string name, country;
         {
           std::lock_guard<std::mutex> lock(mutex_);
           name = wanted_name_;
+          country = country_;
         }
-        SendNow({{"t", "hello"}, {"v", 2}, {"sub", true}, {"name", name}});
+        json hello = {{"t", "hello"}, {"v", 2}, {"sub", true}, {"name", name}};
+        if (!country.empty()) hello["country"] = country;
+        SendNow(hello);
         ReceiveLoop();
         CloseSocket();
       }
@@ -435,6 +450,7 @@ class Client {
   std::condition_variable send_cv_;
   bool running_ = false, stopping_ = false;
   std::string wanted_name_;
+  std::string country_;  // this player's, two letters (SetCountry)
   State state_;
   std::deque<std::string> outbox_;
   std::deque<Event> events_, ice_;
@@ -466,6 +482,7 @@ void Stop() { TheClient().Stop(); }
 State Snapshot() { return TheClient().Snapshot(); }
 
 void SetName(const std::string& name) { TheClient().Send({{"t", "name"}, {"name", name}}); }
+void SetCountry(const std::string& country) { TheClient().SetCountry(country); }
 void Chat(const std::string& text) { TheClient().Send({{"t", "chat"}, {"text", text}}); }
 void Host(const std::string& room, const std::string& title, bool open, bool playing) {
   TheClient().Send({{"t", "host"}, {"room", room}, {"title", title}, {"open", open}, {"mode", "fight"},

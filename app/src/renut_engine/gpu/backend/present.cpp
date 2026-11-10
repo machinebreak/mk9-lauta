@@ -127,6 +127,14 @@ FrameFit FitFrame(uint32_t out_w, uint32_t out_h, uint32_t src_w, uint32_t src_h
   return fit;
 }
 
+// mk9-lauta (2026-11-10): the last present's placement of the frame in the window (overlay::FramePointToOutput).
+struct Placement {
+  float x = 0, y = 0, w = 0, h = 0, visible_u = 1, visible_v = 1;
+  bool known = false;
+};
+std::mutex g_placement_mutex;
+Placement g_placement;
+
 // sa2-nx (2026-10-20, sa2_renut_gamma_ramp): the game's display gamma ramp (Video::SetGammaRamp), a 256 x 1 float
 // texture in a bindless slot that the present shader reads.
 struct GammaRamp {
@@ -222,6 +230,10 @@ void RecordScanOut(VideoState &s, const PresentImage &image, uint32_t out_w, uin
   const uint32_t src_h = image.source_height ? image.source_height : image.height;
   const FrameFit fit = FitFrame(out_w, out_h, src_w, src_h);
   const plume::RenderViewport &vp = fit.viewport;
+  {
+    std::lock_guard lock(g_placement_mutex);  // mk9-lauta: for overlay::FramePointToOutput
+    g_placement = {vp.x, vp.y, vp.width, vp.height, fit.visible[0], fit.visible[1], true};
+  }
   cmd->setViewports(vp);
   cmd->setScissors(plume::RenderRect(int32_t(vp.x), int32_t(vp.y), int32_t(vp.x + vp.width),
                                      int32_t(vp.y + vp.height)));
@@ -682,5 +694,25 @@ bool WaitFrameCapture(uint64_t ticket, rex::ui::RawImage &out, int timeout_ms) {
   out = c.image;
   return true;
 }
+
+namespace overlay {
+
+bool FramePointToOutput(float u, float v, float *x, float *y) {
+  std::lock_guard lock(g_placement_mutex);
+  const Placement &p = g_placement;
+  if (!p.known || p.visible_u <= 0.0f || p.visible_v <= 0.0f)
+    return false;
+  // the part of the frame shown is centred: (1 - visible) / 2 of it is trimmed from each edge
+  *x = p.x + (u - (1.0f - p.visible_u) * 0.5f) / p.visible_u * p.w;
+  *y = p.y + (v - (1.0f - p.visible_v) * 0.5f) / p.visible_v * p.h;
+  return true;
+}
+
+float FrameHeightInOutput() {
+  std::lock_guard lock(g_placement_mutex);
+  return g_placement.known && g_placement.visible_v > 0.0f ? g_placement.h / g_placement.visible_v : 0.0f;
+}
+
+} // namespace overlay
 
 } // namespace renut::gpu

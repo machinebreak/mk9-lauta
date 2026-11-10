@@ -4,8 +4,8 @@
 // own path is up: hello, the room's chat, ready, and the host's start. Then both games start again already joined
 // (session.h): the session runs from the first frame, the same on both machines.
 //
-// Messages relayed (data.room): "hi" {name, id} the guest to the host, again every second until welcomed; "welcome"
-// {name} or "full"; "chat" {text}; "ready" {on}; "start" the host's; "bye"; "ping" every 3 s (12 s without a word: the
+// Messages relayed (data.room): "hi" {name, id, cc} the guest to the host, again every second until welcomed; "welcome"
+// {name, cc} or "full" (cc: the player's country, flags.h); "chat" {text}; "ready" {on}; "start" the host's; "bye"; "ping" every 3 s (12 s without a word: the
 // other is gone).
 
 #pragma once
@@ -37,6 +37,7 @@ struct State {
   bool host = false;          // this side hosts it
   bool in_session = false;    // this game is the room's session already
   std::string me, other;      // the names
+  std::string other_country;  // the other player's (two letters; "" not said): mk9-lauta, flags.h
   bool my_ready = false, other_ready = false;
   std::vector<Line> chat;
   std::string status;         // a line for the screen

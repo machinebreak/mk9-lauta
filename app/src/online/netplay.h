@@ -91,6 +91,11 @@ struct SessionInfo {
   bool waiting = false;     // the game is waiting for the other player's inputs (for longer than a moment)
   double waiting_s = 0;     // ... this long so far
   std::string peer_release; // the other player's release ("0.2.1"; empty: not said, 0.2.0 and older say nothing)
+  // mk9-lauta (2026-11-10): the connection's indicator: how much the round trip moves (the last pongs' standard
+  // deviation), the share of pings that got no answer (the last ~12 s), and a path through a relay (TURN)
+  double jitter_ms = 0;
+  double loss_pct = 0;
+  bool relayed = false;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

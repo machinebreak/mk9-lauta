@@ -114,6 +114,8 @@ set(MK9_SOURCES
     src/online/room.cpp
     src/online/session.cpp
     src/online/online_ui.cpp
+    src/online/flags.cpp
+    src/online/notify.cpp
     src/online/sound_replay.cpp
     src/online/sound_sync.cpp
     src/online/sound_stream.cpp
@@ -179,7 +181,7 @@ if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
-    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32 bcrypt comctl32 ole32)
+    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32 bcrypt comctl32 ole32 winmm)
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
 endif()
