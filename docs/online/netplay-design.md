@@ -533,3 +533,49 @@ cuadro de 40-70 ms).
    un cambio de volumen o pausa de una categoría hecho en un cuadro que un rollback deshace no se deshace con él.
 7. **Pruebas nuevas**: `mk9_net_lag_steps` ("s:ms,s:ms": el lag cambia en la sesión) y las grabaciones analizadas
    con un detector de cuadros negros y de colores basura.
+
+### 0.3.0: espectadores, nombres, banderas y lo que se aprendió (2026-11-10)
+
+La 0.2.1 no salió: sus arreglos van con la 0.3.0, que suma lo que pidieron los jugadores (los nombres en la pelea y en
+la selección, banderas, ping por sala, silenciar, avisos, el indicador de conexión, el retraso de cada uno, el perfil,
+las pantallas online en inglés y portugués, Discord) y los **espectadores**. El protocolo es el 9.
+
+**Mirar una sala (`feed.h`).** El host de una sesión ya graba la partida para `session_report.py` (semilla, épocas,
+las entradas finales de cada cuadro y su hash de sincronía). Esa grabación, tal cual, es lo que necesita un tercero
+para jugar la misma partida: el host se la pasa a cada espectador por el relay del lobby (los mismos mensajes `sig` de
+la sala, a la id del espectador; ningún cambio en el servidor), y el espectador arranca el juego con un perfil nuevo y
+la reproduce desde el primer cuadro con las dos entradas grabadas, comparando su hash con el de los jugadores en cada
+cuadro. Lo que el juego pregunta y depende del reloj de cada máquina (si terminó un video, si está lista una carga, los
+avisos de los sonidos) se contesta como lo grabaron los jugadores; donde la grabación dice que una escena estaba lista,
+el espectador primero espera sus propias cargas, y en los menús los callbacks de sonido llegan en los cuadros que los
+jugadores acordaron, una vez que su FMOD también los tiene.
+
+- **El cuadro de la barrera no se grababa**: cada cuadro sale a la grabación al empezar el siguiente (su hash recién
+  se conoce cuando termina), y el último de una época, el de la barrera, tiene su siguiente en la otra época. El
+  espectador nunca jugaba ese cuadro, así que nunca llegaba a la barrera de la pelea ("la partida pasó a la época 1 y
+  esta reproducción no"). Ahora ese cuadro tiene hash propio (antes iba al primero de la época siguiente: por eso el
+  protocolo 9) y se graba antes de la barrera.
+- **El "desvío en el cuadro 1" era otro proceso**: al terminar la sesión del espectador el juego se vuelve a abrir, y
+  con las mismas opciones de prueba pisaba los registros (`mk9_check_log` y demás). Al volver a empezar ya no se pasan
+  esas opciones. Y no se repite `--user_data_root`: CLI11 rechaza una opción dada dos veces y entonces no toma ninguna
+  (el espectador arrancaba sin sesión y con el lobby por defecto).
+- **Ponerse al día**: más de 5 s atrás, en los menús corre los cuadros ocultos, sin pacing y sin sonido hasta quedar a
+  1,5 s (~190 cuadros por segundo). En las peleas no: probado (`mk9_watch_catch_up_fights`), la reproducción se separa
+  en la intro de la pelea, con otros scripts corriendo ya antes de que difieran los aleatorios: los callbacks de los
+  sonidos llegan con el reloj de FMOD y algunos scripts los esperan, así que adelantar la pelea los mueve de cuadro. Es
+  el mismo problema que impide sincronizar el sonido de las peleas (las respuestas "ocupado" del pool de instancias de
+  FMOD, `sub_825CA9B8`): las peleas se miran a velocidad normal.
+- **La sala sigue en la lista mientras juega** (si era pública, con su título: `mk9_net_room_listed`): antes la sesión
+  la anunciaba privada y desaparecía, así que no había a quién mirar.
+- **Ancho de banda**: ~34 KB/s de grabación repartidos entre los espectadores (11 veces el ritmo de la partida para
+  uno, 3 para cuatro), máximo 4 por sala; el que deja de pedir se quita a los 20 s, y una pieza perdida (un enlace al
+  lobby que se cayó) se reenvía desde lo que el espectador dice tener. La grabación que llega se lee en orden o se
+  corta (un número fuera de orden dimensionaría los vectores).
+- **Probado** en una PC con el lobby local: en vivo desde el primer cuadro, entrando 50 s tarde (3538 cuadros
+  alcanzados en 18 s) y entrando por el botón Mirar de la lista; con peleas reales de 277 y 566 rollbacks (40 ms + 10
+  de variación emulados), cero cuadros con hash distinto al de los jugadores.
+
+**El estado del juego** está en el objeto del juego (`0x833848D4`, +4; los nombres `GS_` los da `sub_829B01D8`):
+GS_INIT 0, GS_LOADING_FIGHT 1, GS_ATTRACT 2, GS_MAINMENU 3, GS_ONLINE 4, GS_KOTH 5, GS_PROFILES 6, GS_PSELECT 7 (la
+selección de personajes), GS_PLAY 8, GS_GAME_OVER 9, GS_MOVIE 10, GS_FATALITY 11, GS_LADDER 12. Con él se dibujan los
+nombres en la selección; el log de la sesión dice cada cambio.

@@ -14,30 +14,50 @@
 
 En la pestaña **Salas**:
 
-- **Partida rápida**: te une a la sala que más tiempo lleva esperando. Si no hay ninguna, abre una tuya para el
-  próximo que busque.
+- **Partida rápida**: te une a la sala con el rival más cercano (el menor ping estimado) y, entre las parecidas, a la
+  que más tiempo lleva esperando. Si no hay ninguna, abre una tuya para el próximo que busque.
 - **Crear sala pública**: aparece en la lista para que cualquiera entre.
 - **Crear sala privada**: no aparece en la lista. Pasale el código de 6 letras a tu rival ("Copiar código").
 - **Unirse con código**: escribí el código que te pasaron y tocá "Unirse".
-- La lista de **salas abiertas** muestra quién espera; tocá "Entrar" en la que quieras.
+- La lista de **salas abiertas** muestra quién espera, de qué país y un **ping aproximado** (calculado por la
+  distancia entre los países); tocá "Entrar" en la que quieras. Las salas públicas que están jugando aparecen como
+  "jugando", con el botón **Mirar** (ver "Mirar una partida").
 
-Adentro de la sala tenés el **chat de la sala**. Cuando los dos tocan **"Estoy listo"**, el juego se vuelve a abrir solo,
+Adentro de la sala tenés el **chat de la sala** y la bandera y el récord (victorias - derrotas) de tu rival. Si el juego
+está minimizado, la barra de tareas parpadea con un sonido cuando alguien entra a tu sala o se encuentra partida. Cuando los dos tocan **"Estoy listo"**, el juego se vuelve a abrir solo,
 ya conectado con tu rival. No toques nada mientras se vuelve a abrir.
 
 Los dos tienen que tener **la misma versión** de mk9-lauta (F2 > Acerca de). Si no, el juego lo avisa al conectar ("tiene
 otra versión de mk9-lauta") y vuelve al lobby: actualicen los dos a la última.
 
-En la pestaña **Chat global** se habla con todos los que están en línea.
+En la pestaña **Chat global** se habla con todos los que están en línea; cada uno con la bandera de su país. Tocando un
+nombre podés **silenciar** a esa persona: no ves más sus mensajes ni sus salas, y no puede entrar a tu sala ni mirar
+tus partidas. Es sólo en tu juego; la lista de silenciados está arriba del chat global, para sacar a alguien de ahí.
+
+En la pestaña **Perfil** está tu récord online: partidas, ganadas, perdidas, tus luchadores más usados y las últimas
+30 partidas (con quién, de dónde y con qué luchadores).
 
 ## La pelea
 
 - Los menús son los del juego: cualquiera de los dos puede elegir VERSUS, ONE VS ONE o TWO VS TWO. El otro se suma con
   START en la pantalla de 2 jugadores, y cada uno elige su luchador.
-- Arriba a la derecha ves contra quién jugás, el ping y, en la pelea, el retraso ("vs Rival - 180 ms - retraso 2").
+- En la selección de personajes y debajo de las barras de vida aparece el nombre y la bandera de cada jugador.
+- Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
+  el ping y, en la pelea, el retraso ("vs Rival - 180 ms - retraso 2"). Si la conexión pierde paquetes o varía mucho
+  lo dice, y también si va directa o por el relay. Si alguien mira tu partida, dice cuántos ("1 mirando").
 - Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los menús y la
   intro de cada pelea van sincronizados con un retraso según el ping, así no se traban.
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
+
+## Mirar una partida
+
+En la lista de salas, las públicas que están jugando tienen el botón **Mirar**. El juego se vuelve a abrir mirando esa
+partida desde el principio: la juega igual que los jugadores, con sus botones. Si llegás tarde se pone al día rápido en
+los menús (sin imagen ni sonido un momento) y después la seguís unos dos segundos detrás; las peleas siempre se ven a
+velocidad normal, así que si entraste en medio de una pelea vas a ver esa pelea un poco atrasado. Arriba a la derecha
+dice a quién mirás y cuánto vas detrás del vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4
+espectadores.
 
 ## Salir
 
@@ -92,10 +112,11 @@ al volver a abrir el juego.
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K).
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
-- **Online / Retraso de entrada**: 0, 1 (recomendado) o 2 cuadros. Vale el que elige el host de la sala. Con ping
-  alto el juego lo sube solo en la pelea (unos 2 cuadros con 180 ms, 3 con 220 ms, 4 con 260 ms, hasta 7 con más de
-  340 ms) para que los personajes no "salten" cuando llegan los botones del otro, y lo sigue ajustando toda la pelea
-  si el ping cambia.
+- **Online / Retraso de entrada en las peleas**: **Automático** (recomendado) o de 0 a 7 cuadros. Cada jugador elige
+  el suyo. En Automático es 1 cuadro con ping bajo y el juego lo sube solo con ping alto (unos 2 cuadros con 180 ms, 3
+  con 220 ms, 4 con 260 ms, hasta 7 con más de 340 ms) para que los personajes no "salten" cuando llegan los botones
+  del otro, y lo sigue ajustando toda la pelea si el ping cambia. Con un número fijo tus golpes salen siempre con ese
+  retraso.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 
 ## Actualizaciones
