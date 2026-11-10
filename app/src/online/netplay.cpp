@@ -134,6 +134,10 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
+                    "A frame a rollback runs again with both players' inputs already known starts without a snapshot or "
+                    "a rest (no rollback can come back to it): rollbacks cost about half (tests: false = every frame "
+                    "rests)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay grows with a long round trip (from the host's mk9_net_rollback_delay up to "
                     "4 frames) so rollbacks stay about 5 frames deep: steadier characters with 150-300 ms of ping");
@@ -242,6 +246,7 @@ struct Session {
   bool rollback = false;             // this epoch runs with rollback
   bool frames_sound = false;         // this epoch started with rollback: its sounds' callbacks by frame (sound_sync.h)
   bool speculating = false;          // past the learning frames: frames may run on predicted inputs
+  uint64_t light_boundaries = 0;     // frames run again that started with no snapshot (mk9_net_light_resim)
   snapshot::Timeline timeline;
   int64_t latest = 0;                // the live edge: the newest frame started + 1 (frame < latest while replaying)
   int64_t rollback_to = -1;          // the earliest frame that ran on a prediction that turned out wrong
@@ -994,7 +999,8 @@ void LogStats() {
       rb = fmt::format("; rollback{}: {} rollbacks ({} frames run again, deepest {}), {} frames predicted, {} wrong; "
                        "keeping a frame {:.2f} ms, a rollback's restore {:.2f} ms; at rest {:.2f} ms a boundary "
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
-                       "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps",
+                       "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; {} frames "
+                       "run again with no snapshot",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
                        g.rollbacks ? g.ms_restore / double(g.rollbacks) : 0.0,
@@ -1002,7 +1008,7 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept);
+                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries);
     }
     const sound::HeapStats sound = sound::Stats();
     const sound_replay::Stats sounds = sound_replay::GetStats();
@@ -1186,14 +1192,30 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     return g.frame - g.remote_upto <= kMaxPrediction;
   });
   if (g.ended) return;
-  // the boundary at rest (quiesce.h): the frame that just ran into the timeline with its sync hash, and a wrong
-  // prediction undone, with no other thread halfway through anything
-  quiesce::Settle(ctx, base);
-  if (g.frame > 0) {
+  // mk9-lauta (2026-11-10): a frame a rollback runs again with both players' inputs already known cannot be predicted
+  // wrong, so no rollback will ever come back to its start: its boundary takes no snapshot (the next snapshot's undo
+  // record covers the frames in between, tagged with the last frame kept: a rollback to that one or earlier still
+  // finds every page) and so needs no rest either. It runs on as a lockstep frame does, UE3's render thread alongside,
+  // only its sync hash taken. The boundary before the shown frame (the hidden frames' drawing done first) and one that
+  // undoes a prediction rest as before. A rollback whose frames' inputs had arrived costs about half.
+  bool light = REXCVAR_GET(mk9_net_light_resim) && g.speculating && g.frame > 0 && g.frame < g.latest &&
+               g.frame <= g.remote_upto && g.rollback_to < 0 && g.mode_change_at < 0 && !loads;
+  auto rest_and_keep = [&] {
+    // the boundary at rest (quiesce.h): the frame that just ran into the timeline with its sync hash, and a wrong
+    // prediction undone, with no other thread halfway through anything
+    quiesce::Settle(ctx, base);
     const uint64_t t0 = NowUs();
     g.timeline.Advance(base, uint64_t(g.frame));
     g.ms_keep += (NowUs() - t0) / 1000.0;
     ++g.keeps;
+  };
+  if (light) {
+    FinishFrameHash();
+    ++g.light_boundaries;
+  } else if (g.frame == 0) {
+    quiesce::Settle(ctx, base);
+  } else {
+    rest_and_keep();
     FinishFrameHash();
     if (!g.speculating) {
       g.timeline.Verify(base);  // learning the pages written with no card (the fight's intro)
@@ -1212,6 +1234,10 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   Receive();  // the newest inputs: a prediction they contradict is undone now
   // a prediction that turned out wrong: back to that frame
   if (g.rollback_to >= 0 && g.rollback_to < g.frame) {
+    if (light) {  // (the frames before a light boundary are final: not expected) the timeline brought up to here first
+      rest_and_keep();
+      light = false;
+    }
     const int64_t to = g.rollback_to;
     const uint64_t t0 = NowUs();
     heap_undo::RollBack(to);  // the allocations of the frames undone go, the frees held for them are forgotten
