@@ -24,6 +24,11 @@ bool Known(const std::string& code);
 // The country's name ("Argentina"), or the code itself when unknown.
 std::string Name(const std::string& code);
 
+// An estimate of the round trip between players in two countries (the distance between their centres, at the
+// network's usual detours: 30 ms + 2.2 ms per 100 km), ms; 0 when either is unknown. Only a guide: the real one shows
+// once the two are connected.
+double EstimatedRoundTripMs(const std::string& a, const std::string& b);
+
 // This player's country, two capital letters ("" until known): Detect finds it once, on a thread of its own.
 std::string Mine();
 void Detect();

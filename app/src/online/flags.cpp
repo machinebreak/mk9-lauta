@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -43,6 +44,25 @@ constexpr int kCount = int(sizeof(kCodes) / sizeof(kCodes[0]));
 const unsigned char kAtlasPng[] = {
 #embed "flags_atlas.png"
 };
+
+// The countries' centres (tools/online/make_country_points.py: Google's DSPL, app/thirdparty/country_data).
+struct Point {
+  const char* code;
+  float lat, lon;
+};
+const Point kPoints[] = {
+#include "online/country_points.inc"
+};
+
+const Point* PointOf(const std::string& code) {
+  if (code.size() != 2) return nullptr;
+  const char upper[3] = {char(std::toupper(static_cast<unsigned char>(code[0]))),
+                         char(std::toupper(static_cast<unsigned char>(code[1]))), 0};
+  const auto end = kPoints + sizeof(kPoints) / sizeof(kPoints[0]);
+  const auto it = std::lower_bound(kPoints, end, upper,
+                                   [](const Point& a, const char* b) { return std::strcmp(a.code, b) < 0; });
+  return it != end && std::strcmp(it->code, upper) == 0 ? it : nullptr;
+}
 
 int IndexOf(const std::string& code) {
   if (code.size() != 2) return -1;
@@ -157,6 +177,18 @@ bool DrawAt(ImDrawList* list, const std::string& code, const ImVec2& pos, float 
 }
 
 bool Known(const std::string& code) { return IndexOf(code) >= 0; }
+
+double EstimatedRoundTripMs(const std::string& a, const std::string& b) {
+  const Point* p = PointOf(a);
+  const Point* q = PointOf(b);
+  if (!p || !q) return 0;
+  constexpr double kRad = 3.14159265358979323846 / 180.0;
+  const double dlat = (q->lat - p->lat) * kRad, dlon = (q->lon - p->lon) * kRad;
+  const double h = std::sin(dlat / 2) * std::sin(dlat / 2) +
+                   std::cos(p->lat * kRad) * std::cos(q->lat * kRad) * std::sin(dlon / 2) * std::sin(dlon / 2);
+  const double km = 2 * 6371.0 * std::asin(std::min(1.0, std::sqrt(h)));
+  return 30.0 + km * 0.022;
+}
 
 std::string Name(const std::string& code) {
   // Windows' own name of the country, in its language (Windows 10 and later)

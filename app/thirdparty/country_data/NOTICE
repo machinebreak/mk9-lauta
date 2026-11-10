@@ -1,0 +1,8 @@
+Country data in mk9-lauta's online screens (app/src/online/flags.cpp)
+
+- The flags (app/src/online/flags_atlas.png, tools/online/make_flags.py): the images of Flagpedia
+  (https://flagpedia.net, served by https://flagcdn.com), which its authors place in the public domain.
+
+- The countries' centre points (app/src/online/country_points.inc, tools/online/make_country_points.py), used to
+  estimate the round trip to a room before joining it: Google's DSPL canonical countries
+  (https://github.com/google/dspl), under the BSD 3-clause licence in LICENSE beside this file.

@@ -303,7 +303,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   void DrawRooms(const lobby::State& lobby, const room::State& room) {
     const bool online = lobby.link == lobby::Link::kOnline;
     ImGui::BeginDisabled(!online || room.phase != room::Phase::kNone);
-    if (ImGui::Button("Partida rápida")) room::QuickMatch();
+    if (ImGui::Button("Partida rápida")) QuickMatch(lobby);
     ImGui::SameLine();
     if (ImGui::Button("Crear sala pública")) room::CreateRoom(true);
     ImGui::SameLine();
@@ -319,10 +319,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (!room.status.empty()) ImGui::TextColored(kGold, "%s", room.status.c_str());
     ImGui::Spacing();
     ImGui::Text("Salas abiertas (%d)", int(lobby.rooms.size()));
-    if (ImGui::BeginTable("rooms", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
+    if (ImGui::BeginTable("rooms", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0, 0))) {
       ImGui::TableSetupColumn("Sala", ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthFixed, 150);
+      ImGui::TableSetupColumn("Ping aprox.", ImGuiTableColumnFlags_WidthFixed, 90);
       ImGui::TableSetupColumn("Estado", ImGuiTableColumnFlags_WidthFixed, 90);
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70);
       ImGui::TableHeadersRow();
@@ -334,6 +335,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::TableNextColumn();
         FlagInline(r.country);
         ImGui::Text("%s", r.host.c_str());
+        ImGui::TableNextColumn();
+        // mk9-lauta (2026-11-10): the round trip to expect, from the two countries (the real one shows in the room)
+        if (const double ms = flags::EstimatedRoundTripMs(flags::Mine(), r.country); ms > 0) {
+          ImGui::TextColored(ms < 100 ? kGreen : ms < 180 ? kGold : kRed, "~%.0f ms", ms);
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Estimado por la distancia entre los dos países; el real se ve al entrar.");
+          }
+        } else {
+          ImGui::TextColored(kGrey, "-");
+        }
         ImGui::TableNextColumn();
         ImGui::TextColored(r.playing ? kGrey : kGreen, "%s", r.playing ? "jugando" : "esperando");
         ImGui::TableNextColumn();
@@ -500,6 +511,28 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
 
   static std::string Other(const room::State& room) { return room.other.empty() ? "el rival" : room.other; }
+
+  // mk9-lauta (2026-11-10): quick match picks, of the rooms waiting, the one with the shortest round trip to expect
+  // (then the one waiting longest), leaving out the silenced players'; with none, the lobby's own quick match (it opens
+  // a room for the next one who looks).
+  void QuickMatch(const lobby::State& lobby) {
+    const lobby::Room* best = nullptr;
+    double best_ms = 0;
+    for (const lobby::Room& r : lobby.rooms) {
+      if (r.playing || session::IsBlocked(r.host)) continue;
+      double ms = flags::EstimatedRoundTripMs(flags::Mine(), r.country);
+      if (ms <= 0) ms = 200;  // a country not said: as a far one
+      if (!best || ms < best_ms - 15 || (std::abs(ms - best_ms) <= 15 && r.since < best->since)) {
+        best = &r;
+        best_ms = ms;
+      }
+    }
+    if (best) {
+      room::JoinRoom(best->code);
+    } else {
+      room::QuickMatch();
+    }
+  }
 
   // In a session, a corner of the screen says who the rival is and the ping (and when the game waits for the rival).
   void DrawSessionBadge(const room::State& room) {
