@@ -28,6 +28,9 @@ namespace renut::gpu::overlay {
 // Start (ImGui::PushFont(nullptr, size) keeps the current font).
 ImFont *TitleFont();
 ImFont *StrongFont();
+// mk9-lauta (2026-11-11, E6): the game window's scale in Windows' display settings (its DPI / 96: 1.25 at 125 %, 1.5
+// at 150 %); 1 before Start or where Windows does not say.
+float DpiScale();
 
 // An overlay window. Draw builds its widgets, on the UI thread with the
 // overlay's context current, once per overlay frame.

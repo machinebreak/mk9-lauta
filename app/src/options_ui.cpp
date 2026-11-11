@@ -147,7 +147,8 @@ const std::vector<Option>& DisplayOptions() {
       {"mk9_ui_scale", "Tamaño de los menús F1 y F2",
        {{"auto", "Automático (según la pantalla)"}, {"1", "100 %"}, {"1.25", "125 %"}, {"1.5", "150 %"},
         {"2", "200 %"}},
-       "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K)."},
+       "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K) y "
+       "sigue la escala de Windows (125 %, 150 %)."},
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},
@@ -270,8 +271,10 @@ std::string TomlLine(const std::string& key, const std::string& value) {
 float UiScale() {
   const std::string value = REXCVAR_GET(mk9_ui_scale);
   if (value.empty() || value == "auto") {
+    // the screen's lines past 1080, or Windows' scale (E6, 2026-11-11: a 1080p notebook at 150 % had menus two thirds
+    // the size of its own), whichever is larger
     const float height = ImGui::GetIO().DisplaySize.y;
-    return std::clamp(height / 1080.0f, 1.0f, 2.5f);
+    return std::clamp(std::max(height / 1080.0f, renut::gpu::overlay::DpiScale()), 1.0f, 2.5f);
   }
   const float factor = std::strtof(value.c_str(), nullptr);
   return factor >= 0.5f && factor <= 3.0f ? factor : 1.0f;

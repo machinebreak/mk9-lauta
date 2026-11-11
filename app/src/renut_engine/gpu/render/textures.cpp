@@ -37,6 +37,11 @@
 #include "renut_engine/gpu/backend/video.h"
 
 // mk9-nx (2026-10-26, from usf4-nx): finding the game's button icons (and any other texture) as uploaded.
+REXCVAR_DEFINE_INT32(mk9_textures_cap_mb, 512, "MK9",
+                     "The host textures kept past this many MB: the idle ones (not bound in the last 10 s) go, the "
+                     "longest idle first (made again from guest memory if bound later). An integrated GPU's textures "
+                     "are the PC's RAM, and nothing else limited them (PLAN-0.4 E4). 0: no cap")
+    .range(0, 16384);
 REXCVAR_DEFINE_STRING(mk9_dump_textures_dir, "", "MK9",
                       "Diagnostic: each 2D texture's first level as uploaded (host format, untiled), once per content, "
                       "into this folder: <hash>_<w>x<h>_f<guest format>_h<host format>_b<host block bytes>_p<row pitch>"
@@ -1032,6 +1037,59 @@ void EvictColdTexturesLocked(uint64_t reserve) {
   }
 }
 
+// mk9-lauta (2026-11-11, PLAN-0.4 E4): a cap on the host textures. Renut's backstop above waits for 85 % of the budget
+// the OS gives the process, which with an integrated GPU (most notebooks) is half the RAM: 15.6 GB on a Radeon 760M
+// with 31 GB, never reached, and those textures are the PC's own RAM. 20 minutes of the attract mode's fights took the
+// process from 1.15 to 2.1 GB (GPU local 229 -> 1033 MB, in steps of 70-90 MB a fight): every fighter and stage ever
+// seen stayed. Past mk9_textures_cap_mb of host textures, the ones idle for kCapIdleFrames go, the longest idle first,
+// down to 85 % of the cap; a texture released is made again from guest memory if bound later (as the first time). Never
+// one the GPU wrote (banjo_renut_keep_gpu_written), and never one bound in the last 10 s (no command list in flight
+// reads it; the current fight's own textures stay).
+constexpr uint64_t kCapIdleFrames = 600;
+
+uint64_t HostTextureBytes(const HostTexture &t);
+
+void EvictOverCapLocked() {
+  const uint64_t cap = uint64_t(std::max(0, REXCVAR_GET(mk9_textures_cap_mb))) << 20;
+  if (!cap)
+    return;
+  const bool keep_gpu_written = banjo::renut_gpu::KeepGpuWritten();
+  uint64_t total = 0;
+  std::vector<std::pair<uint64_t, u32>> idle;  // (the frame it was last used, its address)
+  for (const auto &[va, t] : g_textures) {
+    if (!t || !t->texture)
+      continue;
+    total += HostTextureBytes(*t);
+    if (t->gpu_written && keep_gpu_written)
+      continue;
+    const uint64_t limit = t->gpu_written ? kEvictIdleGpuFrames : kCapIdleFrames;
+    if (g_frame - t->used_frame >= limit)
+      idle.emplace_back(t->used_frame, va);
+  }
+  if (total <= cap)
+    return;
+  std::sort(idle.begin(), idle.end());
+  const uint64_t target = cap / 100 * 85;
+  uint64_t freed = 0;
+  size_t released = 0;
+  for (const auto &[frame, va] : idle) {
+    if (total - freed <= target)
+      break;
+    const auto it = g_textures.find(va);
+    if (it == g_textures.end() || !it->second)
+      continue;
+    freed += HostTextureBytes(*it->second);
+    ReleaseHostTextureLocked(va);
+    ++released;
+  }
+  static uint32_t logged = 0;
+  if (released && logged++ < 64) {
+    RGPU_INFO("Textures: {} MB of host textures past the {} MB cap (mk9_textures_cap_mb); {} idle ones released "
+              "({} MB)",
+              total >> 20, cap >> 20, released, freed >> 20);
+  }
+}
+
 } // namespace
 
 uint64_t g_texture_frame = 1;  // banjo-nx (2026-10-19): g_frame, read inline by TextureFrameLocked
@@ -1043,8 +1101,10 @@ void AdvanceTextureFrameLocked() {
   ++g_frame;
   g_texture_frame = g_frame;
   ApplyUnlocksLocked();
-  if (g_frame % kEvictCheckFrames == 0)
+  if (g_frame % kEvictCheckFrames == 0) {
     EvictIdleTexturesLocked();
+    EvictOverCapLocked();  // mk9-lauta (E4)
+  }
   // banjo-nx: banjo_renut_memory_policy.
   if (const uint64_t reserve = banjo::renut_gpu::TextureReserveBytes(); reserve && g_frame % kColdCheckFrames == 0)
     EvictColdTexturesLocked(reserve);

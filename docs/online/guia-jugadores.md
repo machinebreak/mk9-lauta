@@ -125,7 +125,8 @@ al volver a abrir el juego.
   con una, probá la otra; se aplica al volver a abrir el juego) y el idioma del juego: español (con el Modo Historia
   doblado), inglés, portugués, francés, alemán o italiano. El idioma se aplica al volver a abrir el juego. También:
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
-  F2** (Automático los agranda en pantallas 1440p o 4K).
+  F2** (Automático los agranda en pantallas 1440p o 4K y sigue la escala de Windows, por ejemplo 150 % en una
+  notebook). En un monitor ultrapanorámico (21:9) el juego se ve en 16:9 con barras a los costados, como en la consola.
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
 - **Online / Retraso de entrada en las peleas**: **Automático** (recomendado) o de 0 a 7 cuadros. Cada jugador elige
   el suyo. En Automático es 1 cuadro con ping bajo y el juego lo sube solo con ping alto (unos 2 cuadros con 180 ms, 3

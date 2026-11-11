@@ -129,6 +129,26 @@ Latencia medida por el propio renderer: mando -> pantalla ~24 ms. Tirones: algun
 en el primer uso de pipelines nuevos. Dos shaders que faltaban quedaron en `out\pc\shader_capture` y el próximo
 build los suma solo.
 
+### La memoria en sesiones largas (2026-11-11, tarea E4 del plan 0.4)
+
+Medido con un solo juego (`tools/online/run_game.ps1`) y la línea `Memory: process ... private` del log, en esta PC
+(Radeon 760M integrada: la memoria "local" de la GPU es la RAM):
+
+- **Una pelea recién empezada**: 1236 MB privados en D3D12, 1446 MB en Vulkan (dos reservas de 128 MB propias de
+  Vulkan). Los 740 pipelines precompilados de la lista casi no pesan (1473 MB sin precompilar ninguno).
+- **El crecimiento**: el juego de un jugador (0.2.0, D3D12) pasó de 1,2 GB al arrancar a 2,4 GB en la primera hora, y
+  20 minutos del modo demostración (peleas con luchadores y escenarios que cambian) lo reproducen: de 1154 a 2108 MB,
+  de a 70-90 MB por pelea, sin estabilizarse. Lo que crece es la memoria de la GPU (de 229 a 1033 MB): Renut no suelta
+  una textura hasta el 85 % del presupuesto que da el sistema, y con una GPU integrada ese presupuesto es la mitad de
+  la RAM (15,6 GB acá): cada luchador y escenario que se vio quedaba. La caché de streams (6-15 MB) y los anillos de
+  subida (64 MB) no crecían.
+- **El tope** (`mk9_textures_cap_mb`, 512 por defecto; `textures.cpp` `EvictOverCapLocked`): pasadas esas texturas,
+  se van las que no se usaron en los últimos 10 s, las más viejas primero, hasta el 85 % del tope; una textura que se
+  vuelve a usar se hace de nuevo desde la memoria del juego, como la primera vez (nunca una que escribió la GPU). Los
+  mismos 20 minutos: la memoria de la GPU se queda en ~830 MB desde el minuto 12 (435 MB de texturas al final, contra
+  713) y el proceso en ~1,95 GB, quieto; las capturas de una pelea y del título después de liberar texturas, bien; sin
+  más tirones.
+
 ### PCs con menos núcleos (2026-11-09)
 
 Con el proceso limitado a pocos núcleos (`run_game.ps1 -Affinity`, `pair_test.ps1 -HostAffinity/-GuestAffinity`; el

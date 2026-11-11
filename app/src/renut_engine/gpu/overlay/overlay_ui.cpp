@@ -555,6 +555,16 @@ ImFont *TitleFont() { return g_title_font; }
 
 ImFont *StrongFont() { return g_strong_font; }
 
+float DpiScale() {
+#if defined(_WIN32)
+  if (g_window) {
+    if (const UINT dpi = GetDpiForWindow(g_window); dpi >= 96)
+      return float(dpi) / 96.0f;
+  }
+#endif
+  return 1.0f;
+}
+
 void SetPadReader(PadReader reader) { g_pad_reader.store(reader, std::memory_order_release); }
 
 void SetCloseFilter(CloseFilter filter) { g_close_filter.store(filter, std::memory_order_release); }
