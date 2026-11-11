@@ -164,10 +164,14 @@ uint64_t g_display_previous_ns = 0;
 
 namespace {
 std::atomic<bool> g_frame_hidden{false};
+std::atomic<bool> g_unpaced{false};
+std::atomic<bool> g_pace_hidden{false};
 }  // namespace
 
 void SetFrameHidden(bool hidden) { g_frame_hidden.store(hidden, std::memory_order_release); }
 bool FrameHidden() { return g_frame_hidden.load(std::memory_order_acquire); }
+void SetUnpaced(bool unpaced) { g_unpaced.store(unpaced, std::memory_order_release); }
+void SetPaceHidden(bool paced) { g_pace_hidden.store(paced, std::memory_order_release); }
 
 namespace {
 
@@ -373,7 +377,12 @@ void AfterSwap(bool rollback_hidden) {
 void PaceSwap(uint32_t device_va) {
   static const bool on = REXCVAR_GET(sa2_renut_vblank_pacing);
   if (!on || !device_va) return;
-  if (FrameHidden()) return;  // a frame run again by a rollback: no wait, and the grid stays as it was
+  // a frame run again by a rollback: no wait, and the grid stays as it was (SetPaceHidden, tests: paced all the same)
+  if (FrameHidden() && !g_pace_hidden.load(std::memory_order_acquire)) return;
+  if (g_unpaced.load(std::memory_order_acquire)) {
+    g_started = false;  // drawn at once (SetUnpaced); the grid starts again after
+    return;
+  }
   if (g_stats.released != Clock::time_point{}) NoteWork(Ms(Clock::now() - g_stats.released), !g_skip_this);
   const auto *interval_word = ::renut::gpu::GuestPtr<const be_u32>(device_va + kDeviceOffsetPresentationInterval);
   const uint32_t refreshes = RefreshesPerFrame(interval_word ? uint32_t(*interval_word) : 1);

@@ -35,6 +35,8 @@ bool Active();
 // mk9-lauta (2026-11-10): this game is a session's (a player's or a spectator's), from its first frame to its last,
 // whether the session has started, runs or ended.
 bool SessionGame();
+// This machine's player in a session (0 the host, 1 the guest); -1 with no session and for a spectator.
+int LocalPlayer();
 // Test logs: the epoch and the epoch's frame running, and whether it runs again (a rollback's hidden frames); -1 when no
 // session runs.
 int64_t FrameRunning(uint32_t* epoch = nullptr, bool* again = nullptr);
@@ -111,6 +113,8 @@ struct SessionInfo {
   int game_state = -1;
   bool catching_up = false;
   uint64_t watch_diffs = 0;
+  // mk9-lauta (2026-11-11, A3): the folder of this session's desync report (logs\desync_<date>_p<N>; empty: none)
+  std::string desync_report;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

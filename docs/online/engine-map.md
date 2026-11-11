@@ -198,6 +198,31 @@ espera `IsAsyncLoading` -> pantalla VS -> espera la máquina de estados `824730b
 -> espera `824a5268` (~20 cuadros, con la nativa de captura cada cuadro) -> `IsAsyncLoading` -> `82495660`
 (`toasty_init`, `entry`, `level1_activate`): empieza la pelea (~150 cuadros después del inicio del modo).
 
+## El tiempo y lo que lo lee (2026-11-11, `virtual_time.h`)
+
+| Qué | Dónde | Evidencia |
+|---|---|---|
+| El reloj del invitado (`mftb`) | `REX_QUERY_TIMEBASE()` = `Clock::QueryGuestTickCount()` | `mk9_pch.h`; 50.000.000 ticks por segundo |
+| `appCycles` del motor (hilo del juego; muchas veces en línea) | `sub_82366BF8` | `GSecondsPerCycle` en `0x833DD0A0` |
+| Espera del tick a la cerca de comandos del render | `sub_82741630` | lee el reloj sólo si espera |
+| Espera del tick al render con carga asíncrona en tajadas de 0,01 s | `sub_82360480` | llama a `sub_827413C0`, `appSleep(0)` `sub_8255D030` y `ProcessAsyncLoading(1, 0.01)`; suma la espera en `0x833DD558` |
+| `IncrementalPurgeGarbage(bUseTimeLimit, TimeLimit)` | `sub_826D3CD8` | lee la hora de inicio y le pasa el presupuesto a la primera pasada |
+| Primera pasada de la purga: objetos que esperan que el render los suelte | `sub_82568540` | objeto en `[0x833914C8]`, pregunta vtable `+44` al mismo objeto hasta que dice que sí, lee el reloj cada 10 preguntas |
+| Nativa "cuadros que le faltan a un sonido" | `824a5610` -> `sub_82A33C00` | (vtable `+336` − vtable `+300`) × `sub_826CC678` (60) |
+| Busca un componente de audio por id | `sub_82A31410` | entre los del dispositivo de audio (`sub_82602A98`, lista en `+640` vía `sub_825AD718`), el que tiene el id en `+168` |
+| Componente de audio de MK9 | vtable `0x820D6A30` | evento de FMOD en `+264`; posición guardada en `+156` |
+| Largo de su evento (s) | vtable `+336` = `sub_82604DD8` | `lengthms` de `getInfo` × 0,001 (−1: sin largo) |
+| Posición de su evento (s) | vtable `+300` = `sub_82589898` | `positionms` de `getInfo` × 0,001: el reloj del mezclador de FMOD |
+| `FMOD::Event::getInfo(index, name, FMOD_EVENT_INFO*)` | `sub_82E46D40` | la info: `+4` `positionms`, `+8` `lengthms`, `+40`/`+44` instancias |
+| `FMOD::Event::start` | `sub_82E46DE8` | hook en `sound_replay.cpp` |
+
+## El luchador en memoria (2026-11-11, `mk9_fighter_dump`)
+
+Vida: objeto `+0x78C0` (float, 1 llena). Posición del actor (`[objeto+8]`): `+0xDC` FVector, `+0xE0` el eje de la
+pelea, `+0xE4` la altura. Lo que es igual en las dos máquinas y cambia en una pelea está en
+`app/src/online/fight_hash_ranges.inc` (lo genera `tools/online/dev/fighter_diff.py`). Palabras con ids `0x1000xxxx`
+(contador global, no punteros) aparecen en el objeto y en la info y pueden diferir entre máquinas.
+
 ## Pendiente (F1)
 
 1. Dentro de `FEngineLoop::Tick`: dónde avanza la pelea (un tick por cuadro) y qué hace el hilo de render.

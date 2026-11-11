@@ -26,9 +26,13 @@ function First-Match([string]$path, [string]$pattern) {
     if ($m) { return $m.Matches[0].Groups[1].Value } else { return '' }
 }
 
+# The game frames (its own counter, the checks' tag 9) where a mode starts. Not the log's first column: that counts the
+# boundaries, frames a rollback ran again among them, so after a fight the two machines' counts differ (2026-11-11).
 function Mode-Starts([string]$path) {
     if (-not (Test-Path $path)) { return '' }
-    return ((Select-String -Path $path -Pattern '^(\d+) 9=\S+ 8=00000000' | ForEach-Object { $_.Matches[0].Groups[1].Value }) -join ',')
+    $frames = Select-String -Path $path -Pattern '^\d+ 9=(\S+) 8=00000000' |
+        ForEach-Object { [Convert]::ToInt64($_.Matches[0].Groups[1].Value, 16) } | Select-Object -Unique
+    return ($frames -join ',')
 }
 
 for ($i = 1; $i -le $Runs; $i++) {

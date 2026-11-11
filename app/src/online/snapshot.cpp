@@ -29,6 +29,7 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "online/fight_state.h"
 #include "online/guest_memory.h"
 #include "online/quiesce.h"
 #include "online/sound_memory.h"
@@ -626,7 +627,10 @@ SyncTest g_sync;
 std::atomic<int64_t> g_sync_script_frame{-1};  // SyncTestScriptFrame
 uint64_t g_sync_script_base = 0;
 
+uint32_t g_sync_last_key = 0;  // the game frame whose checks FinishCheckFrame took last (SyncTestFighters)
+
 void FinishCheckFrame() {
+  g_sync_last_key = g_sync.key;
   if (!g_sync.key) return;
   auto [it, inserted] = g_sync.first.emplace(g_sync.key, g_sync.hash);
   if (!inserted) {
@@ -711,6 +715,8 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   struct Released {
     ~Released() { quiesce::Release(); }
   } released;
+  // the fighters after the frame that just ran, against that frame's first run (fight_state.h)
+  if (g_sync.timeline.started() && g_sync.sim > 120) fight_state::SyncTestFighters(base, g_sync_last_key);
   if (!g_sync.timeline.started()) {
     g_sync.timeline.Start(base, 0, int(g_sync.back) + 2, false);  // as a session keeps it: every page in
     g_sync.sim = 0;
@@ -756,6 +762,7 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
                     double(g_sync.pages) / double(advances), g_sync.ms_advance / double(advances),
                     g_sync.timeline.refreshes(), g_sync.timeline.ms_refresh(), g_sync.timeline.last_restored(),
                     g_sync.ms_rollback / double(g_sync.rollbacks), g_sync.timeline.kernel_holes());
+        REXLOG_INFO("[synctest] {}", fight_state::SyncTestFighterSummary());
       }
     }
     g_sync.next_rollback += g_sync.period;  // the frames run again, then the next rollback
@@ -779,6 +786,7 @@ void SyncTestStop(const char* why) {
   REXLOG_INFO("[synctest] {} at simulation frame {}: the test stops ({} rollbacks of {} frames: {} frames compared, "
               "{} differed)",
               why, g_sync.sim, g_sync.rollbacks, g_sync.back, g_sync.compared, g_sync.differed);
+  REXLOG_INFO("[synctest] {}", fight_state::SyncTestFighterSummary());
 }
 
 }  // namespace mk9::snapshot

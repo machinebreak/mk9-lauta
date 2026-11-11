@@ -7,8 +7,10 @@
 #include <cstdio>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include <fmt/format.h>
 #include <rex/chrono/clock.h>
 #include <rex/chrono/guest_tick_filter.h>
 #include <rex/cvar.h>
@@ -29,6 +31,7 @@ REXCVAR_DEFINE_STRING(mk9_clock_audit, "", "MK9 Online",
 REXCVAR_DECLARE(std::string, mk9_net_room);
 REXCVAR_DECLARE(int32_t, mk9_net_host);
 REXCVAR_DECLARE(std::string, mk9_net_join);
+REXCVAR_DECLARE(std::string, mk9_synctest);
 
 namespace mk9::virtual_time {
 namespace {
@@ -52,6 +55,14 @@ int g_wait_depth = 0;             // in a wait for another thread (WaitZone)
 uint64_t g_wait_count = 0;        // the wait's reads so far
 uint64_t g_frame_ticks = 0, g_read_ticks = 0, g_base_ticks = 0;
 uint64_t g_valve_frames = 0;      // frames whose reads opened the valve
+
+// FMOD's event positions (SoundStarted): an event -> the frame its start was called at (the game thread's only).
+std::unordered_map<uint32_t, uint32_t> g_sound_start;
+uint64_t g_positions = 0;  // getInfo answers made of frames
+
+// A4 (2026-11-11): the game's callers of KeQuerySystemTime (the host's wall clock, not made of frames), counted when
+// the game thread calls them in a session's game: the [time] line says which, the first time each one shows.
+std::map<std::string, uint64_t> g_system_time;
 
 // mk9_clock_audit.
 FILE* g_audit = nullptr;
@@ -114,8 +125,11 @@ uint64_t Filter(uint64_t real_ticks) {
   return FrameTime();
 }
 
+// A session's game (a player's or a spectator's), or the rollback SyncTest (it stands for one: its frames run again
+// must read what an online game's would).
 bool SessionGame() {
-  return !REXCVAR_GET(mk9_net_room).empty() || REXCVAR_GET(mk9_net_host) > 0 || !REXCVAR_GET(mk9_net_join).empty();
+  return !REXCVAR_GET(mk9_net_room).empty() || REXCVAR_GET(mk9_net_host) > 0 || !REXCVAR_GET(mk9_net_join).empty() ||
+         !REXCVAR_GET(mk9_synctest).empty();
 }
 
 }  // namespace
@@ -123,6 +137,44 @@ bool SessionGame() {
 bool On() { return g_virtual && t_game; }
 
 bool Enabled() { return g_virtual; }
+
+void NoteSystemTime(const char* caller) {
+  if (!t_game) return;
+  if (++g_system_time[caller] == 1) {
+    uint64_t stack[8];
+    const int n = host_stack::Capture(stack, 8, 1);
+    std::string where;
+    for (int i = 0; i < n; ++i) {
+      if (stack[i] != ~0ull) where += fmt::format(" {:x}", stack[i]);
+    }
+    REXLOG_WARN("[time] the game thread read the host's wall clock (KeQuerySystemTime) through {} at frame {}; host "
+                "stack:{}",
+                caller, FrameCounter(), where);
+  }
+}
+
+void SoundStarted(uint32_t event) {
+  if (!On() || !event) return;
+  g_sound_start[event] = FrameCounter();
+}
+
+// FMOD::Event::getInfo's answer (info: FMOD_EVENT_INFO in guest memory, big-endian: +4 positionms, +8 lengthms) for an
+// event the game thread started: its position made of the frames since.
+void SoundPosition(uint8_t* base, uint32_t event, uint32_t info) {
+  auto it = g_sound_start.find(event);
+  if (it == g_sound_start.end()) return;
+  const int64_t frames = std::max<int64_t>(0, int64_t(FrameCounter()) - int64_t(it->second));
+  int64_t ms = frames * 1000 / 60;
+  uint8_t* p = base + info;
+  const int32_t length = int32_t(uint32_t(p[8]) << 24 | uint32_t(p[9]) << 16 | uint32_t(p[10]) << 8 | p[11]);
+  if (length >= 0 && ms > length) ms = length;
+  const uint32_t v = uint32_t(ms);
+  p[4] = uint8_t(v >> 24);
+  p[5] = uint8_t(v >> 16);
+  p[6] = uint8_t(v >> 8);
+  p[7] = uint8_t(v);
+  ++g_positions;
+}
 
 WaitZone::WaitZone() {
   if (t_game && g_wait_depth++ == 0) g_wait_count = 0;
@@ -189,10 +241,13 @@ void FrameStart(const uint8_t* base) {
   waits += g_wait_reads;
   most_waits = std::max(most_waits, g_wait_reads);
   if (frames == 600) {
+    uint64_t wall = 0;
+    for (const auto& [caller, count] : g_system_time) wall += count;
     REXLOG_INFO("[time] the game thread's clock{}, 600 frames: {:.1f} reads a frame (most {}), {:.0f} a frame in waits "
-                "for other threads (most {}); {} frames past the valve so far",
+                "for other threads (most {}); {} frames past the valve so far; {} FMOD event positions made of frames; "
+                "the host's wall clock read {} times",
                 g_virtual ? " (its frames)" : "", double(reads) / 600.0, most, double(waits) / 600.0, most_waits,
-                g_valve_frames);
+                g_valve_frames, g_positions, wall);
     frames = reads = most = waits = most_waits = 0;
   }
   g_reads = 0;
@@ -214,6 +269,32 @@ extern "C" REX_FUNC(__imp__sub_82360480);
 REX_HOOK_RAW(sub_82360480) {
   mk9::virtual_time::WaitZone wait;
   __imp__sub_82360480(ctx, base);
+}
+
+// The game's 7 callers of KeQuerySystemTime (tools/online/import_callers.py): UE3's platform layer (0x8237xxxx) and the
+// CRT's time functions (0x82BDxxxx). Counted on the game thread of a session's game (A4).
+#define MK9_SYSTEM_TIME_CALLER(name)                \
+  extern "C" REX_FUNC(__imp__##name);               \
+  REX_HOOK_RAW(name) {                              \
+    mk9::virtual_time::NoteSystemTime(#name);       \
+    __imp__##name(ctx, base);                       \
+  }
+MK9_SYSTEM_TIME_CALLER(sub_82373E60)
+MK9_SYSTEM_TIME_CALLER(sub_82374208)
+MK9_SYSTEM_TIME_CALLER(sub_82374378)
+MK9_SYSTEM_TIME_CALLER(sub_82376E98)
+MK9_SYSTEM_TIME_CALLER(sub_8237AD50)
+MK9_SYSTEM_TIME_CALLER(sub_82BDAE88)
+MK9_SYSTEM_TIME_CALLER(sub_82BDD918)
+#undef MK9_SYSTEM_TIME_CALLER
+
+// FMOD::Event::getInfo (r3 the event, r4 index, r5 name, r6 the FMOD_EVENT_INFO to fill; r3 back: FMOD_OK = 0): on the
+// game thread with the clock made of frames, the event's position made of frames (virtual_time.h, SoundStarted).
+extern "C" REX_FUNC(__imp__sub_82E46D40);
+REX_HOOK_RAW(sub_82E46D40) {
+  const uint32_t event = ctx.r3.u32, info = ctx.r6.u32;
+  __imp__sub_82E46D40(ctx, base);
+  if (ctx.r3.u32 == 0 && info && mk9::virtual_time::On()) mk9::virtual_time::SoundPosition(base, event, info);
 }
 
 // The incremental purge's first pass (sub_82568540, called by IncrementalPurgeGarbage sub_826D3CD8 with its time

@@ -3,6 +3,7 @@
 #include "online/online_ui.h"
 
 #include "mk9_overlay_input.h"
+#include "mk9_updater.h"
 #include "options_ui.h"
 
 #include <algorithm>
@@ -857,6 +858,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (info.watching) {
       if (room.watch_full) why = T("La sala ya tiene el máximo de espectadores.");
       else if (info.end_reason == netplay::EndReason::kFailed) why = T("No se pudo traer la partida.");
+      else if (info.end_reason == netplay::EndReason::kOtherVersion)
+        why = T("La partida se juega con otra versión de mk9-lauta: para mirarla hay que tener la misma (F2 > Acerca "
+                "de).");
       else why = T("La partida que mirabas terminó.");
     } else switch (info.end_reason) {
       case netplay::EndReason::kLeft: why = T("Saliste de la sesión."); break;
@@ -872,6 +876,8 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         break;
       default: why = T("La sesión terminó."); break;
     }
+    // mk9-lauta (2026-11-11, A3): a desync during the session left a report (netplay.cpp WriteDesyncReport)
+    if (!info.desync_report.empty()) why += std::string("\n") + T("Hubo un desync: el reporte quedó en la carpeta logs.");
     const ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always,
                             ImVec2(0.5f, 0.5f));
@@ -889,6 +895,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::TextColored(kGrey, T("Volvés al lobby en %d s."), left);
       ImGui::Spacing();
       if (ImGui::Button(T("Volver al lobby ahora"), ImVec2(260, 0))) LeaveSession();
+      if (!info.desync_report.empty()) {
+        ImGui::SameLine();
+        if (ImGui::Button(T("Abrir el reporte del desync"), ImVec2(260, 0))) updater::Open(info.desync_report);
+      }
     }
     ImGui::End();
   }

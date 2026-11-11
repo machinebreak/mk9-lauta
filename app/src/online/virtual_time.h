@@ -49,6 +49,15 @@ struct WaitZone {
   WaitZone(const WaitZone&) = delete;
   WaitZone& operator=(const WaitZone&) = delete;
 };
+// FMOD's event positions, the other clock the game thread reads (2026-11-11): FMOD::Event::getInfo's positionms
+// (sub_82E46D40) is where the event plays on the mixer's own clock, and a stage's script asks a sound's frames left
+// from it (native 824a5610: lengthms minus positionms, through the audio component's virtuals +336 sub_82604DD8 and
+// +300 sub_82589898). A frame a machine's mixer runs late (or a spectator catching up, its frames faster than the
+// mixer) gets another answer, and the script goes another way: a spectator catching up in a fight went apart at its
+// ~430th frame. With the clock made of frames, the game thread's getInfo answers the time since the game started the
+// event, in frames (its start's frame: SoundStarted, from FMOD::Event::start's hook in sound_replay.cpp), at most the
+// event's length. Events started before the clock or by other threads keep FMOD's.
+void SoundStarted(uint32_t event);
 // The start of a frame's boundary (game thread; the pad read's hook): the frame before's logic is over.
 void BoundaryStart(const uint8_t* base);
 // The end of a frame's boundary (game thread), right before the game's pad read: the frame's reads count from here.

@@ -57,7 +57,8 @@
 //
 // Packets (little-endian): u16 'M9', u8 version, u8 type, then
 //   HELLO    u8 player, u8 delay, u32 build, u32 seed (the host's: the generators start from it, seed.h),
-//            u8 rollback (the host's mk9_net_rollback), u8 rollback delay
+//            u8 rollback (the host's mk9_net_rollback), u8 rollback delay, u8 release length + the release (8 and
+//            up), u8 settings (10 and up: bit 0, the game thread's clock made of frames, virtual_time.h)
 //   INPUT    u32 epoch, u32 ack (the peer's last frame received in order, +1), u32 first, u8 count, count x 18 bytes
 //            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags, then u32 a sound callback's
 //            announcement, sound_sync.h), u32 hash frame (~0: none),
@@ -66,7 +67,8 @@
 //   PING / PONG  u64 microseconds (the sender's clock, echoed)
 //   BYE      u8 why (netplay.h, EndReason: the sender's player left, or its game found the two out of sync)
 // The sync hash of a frame: the game's own checks during it (OnCheck: what its online compared, a draw of its random
-// number generator among them) and the mk9_net_sync_ranges after it. A frame whose hashes differ is reported.
+// number generator among them), in a fight the fighters' state after it (fight_state.h HashFighters; protocol 10) and
+// the mk9_net_sync_ranges. A frame whose hashes differ is reported.
 
 #include "online/netplay.h"
 
@@ -87,6 +89,7 @@
 #include <cstring>
 #include <filesystem>
 #include <ctime>
+#include <mutex>
 #include <random>
 #include <string>
 #include <thread>
@@ -115,6 +118,7 @@
 #include "online/sound_sync.h"
 #include "online/snapshot.h"
 #include "online/transport.h"
+#include "online/virtual_time.h"
 #include "profiler/sa2_cpu_profile_pc.h"
 #include "renut_engine/gpu/backend/render_thread.h"
 #include "renut_engine/gpu/sa2_renut_pacing.h"
@@ -159,9 +163,13 @@ REXCVAR_DEFINE_STRING(mk9_net_input_replay, "", "MK9 Online",
                       "that parted run again on the same path");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up, true, "MK9 Online",
                     "A spectator far behind the match catches up in the menus (frames hidden, fast and muted)");
-REXCVAR_DEFINE_BOOL(mk9_watch_catch_up_fights, false, "MK9 Online",
-                    "Tests: a spectator far behind the match catches up in the fights too (2026-11-10: even with the "
-                    "sounds' callbacks by frame numbers the playback parted from the match ~550 frames into the fight)");
+REXCVAR_DEFINE_STRING(mk9_watch_catch_up_mode, "", "MK9 Online",
+                      "Tests: how a spectator catches up: \"\" hidden and unpaced; \"drawn\" drawn and shown but unpaced "
+                      "(with renut_vsync=false); \"paced\" hidden at the players' speed (it never catches up)");
+REXCVAR_DEFINE_BOOL(mk9_watch_catch_up_fights, true, "MK9 Online",
+                    "A spectator far behind the match catches up in the fights too (until 2026-11-11 a fight's playback "
+                    "parted from the match ~430 frames in: a stage's script read FMOD's position of a sound, now made "
+                    "of frames, virtual_time.h)");
 REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay follows the round trip all fight long (from the host's "
                     "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
@@ -200,7 +208,7 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // (EndReason::kOtherVersion), and the other side gets a goodbye in its own version's words. From 8 on a HELLO also
 // says the release ("0.2.1"). 9 from 0.3.0 on: an epoch's last frame (its barrier's) has a sync hash of its own (it
 // went into the next epoch's first frame's), and it is recorded (spectators: feed.h).
-constexpr uint8_t kVersion = 9;
+constexpr uint8_t kVersion = 10;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -304,6 +312,7 @@ struct Session {
   std::vector<WatchedEpoch> watched;  // by epoch
   uint64_t watch_read = 0;            // the recording's bytes parsed
   bool watch_header = false;
+  bool watch_other_release = false;  // the recording is of another release's match (its header's protocol)
   bool watch_hidden = false;          // catching up: frames hidden, unpaced and muted
   std::atomic<int64_t> watch_behind{0};  // frames of the match beyond this one's (the game thread's count, for Info)
   std::atomic<bool> watch_in_fight{false};  // it plays a fight back (for Info)
@@ -346,7 +355,8 @@ struct Session {
 Session g;
 
 // mk9_net_record: the session's final frames, to a file in logs. Records (little-endian):
-//   header   "MK9NET1\0", u32 version 1, u8 player, u32 seed, u8 rollback, u8 lockstep delay, u8 rollback delay
+//   header   "MK9NET1\0", u32 version (1; from protocol 10 on, + the protocol x 256: a spectator of another release
+//            leaves), u8 player, u32 seed, u8 rollback, u8 lockstep delay, u8 rollback delay
 //   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
 //   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
 //   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
@@ -369,9 +379,11 @@ void RecordValue(T v) {
   RecordPut(&v, sizeof(v));
 }
 
+uint8_t Protocol();
+
 void RecordHeader() {
   RecordPut("MK9NET1", 8);
-  RecordValue<uint32_t>(1);
+  RecordValue<uint32_t>(1u | uint32_t(Protocol()) << 8);
   RecordValue<uint8_t>(uint8_t(g.player));
   RecordValue<uint32_t>(g.seed);
   RecordValue<uint8_t>(g.rollback_wanted ? 1 : 0);
@@ -564,6 +576,51 @@ int64_t FinalUpto() {
 }
 
 // Both sides' sync hashes of the final frames not compared yet.
+// mk9-lauta (2026-11-11, A3): the first frame whose hashes differ leaves a report in logs\desync_<date>_p<N>: the
+// fighters' hashed bytes of the frames up to it (fight_state.h WriteFighters) and what the session was then
+// (summary.txt); tools/online/desync_report.py with the two players' folders says the first field that differs. The
+// session's inputs are in its .mk9net (named in the summary).
+std::string g_desync_report;  // the report's folder (the online screens offer it)
+std::mutex g_desync_report_mutex;
+double RoundTripTypical();
+
+void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote) {
+  wchar_t exe[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  const std::time_t now = std::time(nullptr);
+  std::tm when{};
+  localtime_s(&when, &now);
+  char name[64];
+  std::strftime(name, sizeof(name), "desync_%Y%m%d_%H%M%S", &when);
+  const std::filesystem::path dir = std::filesystem::path(exe).parent_path() / L"logs" /
+                                    (std::string(name) + (g.player == 0 ? "_p1" : "_p2"));
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  const bool fighters =
+      fight_state::WriteFighters(dir / L"fighters.bin", uint64_t(g.epoch) << 32 | uint64_t(frame));
+  if (FILE* f = _wfopen((dir / L"summary.txt").c_str(), L"w")) {
+    std::fprintf(f, "mk9-lauta %s, session protocol %u, player %d\n", MK9_LAUTA_VERSION, unsigned(Protocol()),
+                 g.player + 1);
+    std::fprintf(f, "first frame whose hashes differ: epoch %u frame %lld (game frame %llu)\n", g.epoch,
+                 static_cast<long long>(frame), static_cast<unsigned long long>(g.start_game_frame + frame));
+    std::fprintf(f, "hash here %016llx, the other's %016llx\n", static_cast<unsigned long long>(local),
+                 static_cast<unsigned long long>(remote));
+    std::fprintf(f, "epoch %s, input delay %d, round trip %.0f ms typical, %llu rollbacks so far\n",
+                 g.rollback ? "with rollback (a fight)" : "lockstep", g.delay, RoundTripTypical(),
+                 static_cast<unsigned long long>(g.rollbacks));
+    std::fprintf(f, "the fighters' bytes: %s\n", fighters ? "fighters.bin" : "(not written)");
+    std::fprintf(f, "the session's inputs: %s\n", g_rec.path.empty() ? "(not recorded)" : g_rec.path.c_str());
+    std::fclose(f);
+  }
+  const std::u8string utf8 = dir.u8string();
+  const std::string path(reinterpret_cast<const char*>(utf8.c_str()), utf8.size());
+  {
+    std::lock_guard lock(g_desync_report_mutex);
+    g_desync_report = path;
+  }
+  REXLOG_WARN("[net] the desync's report is in {} (tools/online/desync_report.py with the other player's)", path);
+}
+
 void CompareFinalHashes() {
   const int64_t upto = FinalUpto();
   while (g.compared_upto < upto) {
@@ -586,6 +643,7 @@ void CompareFinalHashes() {
         REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
                     "says where the two games parted", g_rec.path);
       }
+      WriteDesyncReport(frame, local, remote);
     }
     if (++g.desync_frames <= 10) {
       REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, peer {:016x}", g.epoch,
@@ -657,6 +715,7 @@ bool SendHello() {
   const std::string_view release = MK9_LAUTA_VERSION;
   p.push_back(uint8_t(std::min<size_t>(release.size(), 15)));
   p.insert(p.end(), release.begin(), release.begin() + std::min<size_t>(release.size(), 15));
+  p.push_back(uint8_t(virtual_time::Enabled() ? 1 : 0));  // the settings both games must share
   const bool sent = g.link->Send(p.data(), p.size());
   g.last_sent_us = NowUs();
   return sent;
@@ -751,6 +810,12 @@ void Receive() {
       if (left >= 13 && left >= 13 + p[12] && g.peer_release.empty()) {
         g.peer_release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
         REXLOG_INFO("[net] the other player has mk9-lauta {}", g.peer_release);
+        // the settings both games must share (a test switch changed on one side)
+        if (left >= 14 + p[12] && (p[13 + p[12]] & 1) != (virtual_time::Enabled() ? 1 : 0)) {
+          REXLOG_ERROR("[net] the other player's game {} the game thread's clock made of frames and this one {} "
+                       "(mk9_virtual_time): their clocks differ, the games may go apart",
+                       (p[13 + p[12]] & 1) ? "has" : "does not have", virtual_time::Enabled() ? "has" : "does not");
+        }
       }
       if (g.started) AnswerHello();
     } else if (type == kInput && left >= 13) {
@@ -1220,6 +1285,10 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
 void FinishFrameHash() {
   if (g.frame <= 0) return;
   uint64_t h = XXH3_64bits_withSeed(&g.checks, sizeof(g.checks), g.check_hash);
+  // mk9-lauta (2026-11-11, A2): in a fight, the fighters' state too (fight_state.h HashFighters: what both machines
+  // always had the same), so a desync shows at its frame, not once it reaches the random number generator
+  h = fight_state::HashFighters(rex::system::kernel_memory()->TranslateVirtual<uint8_t*>(0), h,
+                                uint64_t(g.epoch) << 32 | uint64_t(g.frame - 1));
   if (!g.sync_ranges.empty() && g.frame % std::max(1, REXCVAR_GET(mk9_net_sync_every)) == 0) {
     auto* memory = rex::system::kernel_memory();
     for (const auto& [lo, hi] : g.sync_ranges) {
@@ -1680,6 +1749,16 @@ void WatchParse() {
       g.failed = true;
       return;
     }
+    // a match of another release (its protocol: 0 before 10) plays back otherwise and hashes otherwise
+    uint32_t version;
+    std::memcpy(&version, h + 8, 4);
+    if ((version >> 8) != Protocol()) {
+      REXLOG_ERROR("[watch] the match is played with another release of mk9-lauta (session protocol {}, this one {})",
+                   version >> 8, Protocol());
+      g.watch_other_release = true;
+      g.failed = true;
+      return;
+    }
     std::memcpy(&g.seed, h + 13, 4);
     g.rollback_wanted = h[17] != 0;
     g.watch_header = true;
@@ -1797,7 +1876,7 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   if (!g.started) {
     g_frame_started_us = 0;
     if (!WatchWait([] { return g.watch_header && !g.watched.empty(); })) {
-      EndSession(EndReason::kFailed, false);
+      EndSession(g.watch_other_release ? EndReason::kOtherVersion : EndReason::kFailed, false);
       return;
     }
     g.started = true;
@@ -1848,12 +1927,13 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
                       : fight      ? sound_sync::Mode::kOff
                                    : sound_sync::Mode::kLockstep,
                       g.epoch);
-  // catching up, in the menus: hidden (no drawing, no pacing) and muted; the switch with UE3's render thread drained
-  // first. Not while a fight loads (GS_LOADING_FIGHT): what the engine streams in (textures, sounds) takes the
-  // players' frames of wall-clock time, and fast frames reached the fight's start later than the players' (a missed
-  // barrier). Not in a fight (mk9_watch_catch_up_fights, tests): with its sounds' callbacks by frame numbers it went
-  // on to ~550 frames, its fighters then elsewhere than the players' (2026-11-10: a long run of frames not drawn; the
-  // cause is not found yet)
+  // catching up: hidden (no drawing, no pacing) and muted; the switch with UE3's render thread drained first. Not while
+  // a fight loads (GS_LOADING_FIGHT): what the engine streams in (textures, sounds) takes the players' frames of
+  // wall-clock time, and fast frames reached the fight's start later than the players' (a missed barrier). In a fight
+  // too (mk9_watch_catch_up_fights) since 2026-11-11: it parted from the match ~430 frames in because a stage's script
+  // asked a sound's frames left from FMOD's position, on the mixer's clock (behind fast frames); the game thread's
+  // FMOD positions are made of frames now (virtual_time.h, SoundStarted). Found with mk9_watch_catch_up_mode=paced:
+  // hidden at the players' speed it did not part, so not the drawing and not the muting
   const int64_t behind = WatchBehind();
   g.watch_behind.store(behind, std::memory_order_relaxed);
   const bool loading = g.game_state.load(std::memory_order_relaxed) == fight_state::kStateLoadingFight;
@@ -1861,7 +1941,15 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
                     REXCVAR_GET(mk9_watch_catch_up) && (g.watch_hidden ? behind > 90 : behind > 300);
   if (hide != g.watch_hidden) {
     snapshot::FlushRendering(ctx, base);
-    sa2::renut::SetFrameHidden(hide);
+    // (tests, mk9_watch_catch_up_mode: "drawn", the frames drawn and shown but not paced, run with renut_vsync off;
+    // "paced", hidden at the players' speed: which of the two a fight's catching up goes apart by)
+    static const std::string mode = REXCVAR_GET(mk9_watch_catch_up_mode);
+    if (mode == "drawn") {
+      sa2::renut::SetUnpaced(hide);
+    } else {
+      sa2::renut::SetFrameHidden(hide);
+      if (mode == "paced") sa2::renut::SetPaceHidden(hide);
+    }
     rex::cvar::SetFlagByName("audio_mute", hide ? "true" : "false");
     g.watch_hidden = hide;
     REXLOG_INFO("[watch] {} at frame {} of epoch {} ({} frames behind the match)", hide ? "catching up" : "caught up",
@@ -1915,6 +2003,11 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
 bool SessionGame() {
   if (!g.configured) Configure();
   return g.watching || g.link != nullptr;
+}
+
+int LocalPlayer() {
+  if (!g.configured) Configure();
+  return g.link != nullptr && !g.watching ? g.player : -1;
 }
 
 bool Active() {
@@ -2156,6 +2249,10 @@ SessionInfo Info() {
     info.behind_s = double(std::max<int64_t>(0, g.watch_behind.load(std::memory_order_relaxed))) / 60.0;
     info.catching_up = g.watch_hidden;
     info.watch_diffs = g.watch_diffs;
+  }
+  {
+    std::lock_guard lock(g_desync_report_mutex);
+    info.desync_report = g_desync_report;
   }
   return info;
 }

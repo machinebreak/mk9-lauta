@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace mk9::fight_state {
@@ -32,5 +33,25 @@ bool Take(Result* out);
 
 // mk9_diag_fighters: each fighter's character and health in the log.
 void Diagnose(uint8_t* base);
+// The fighters' state for a fight's sync hash (A2): seed and the fight's state hashed (seed as it is out of a fight).
+// The ranges are the ones the two machines always had the same (fighter_diff.py). Game thread, at a frame's boundary;
+// key: the frame's (epoch << 32 | frame), whose hashed bytes are kept (the latest 64 frames) for a desync's report.
+uint64_t HashFighters(uint8_t* base, uint64_t seed, uint64_t key);
+// A desync's report (A3): the kept frames of upto's epoch up to it, with the ranges they come from, to a file
+// (tools/online/desync_report.py compares the two players'). Game thread.
+bool WriteFighters(const std::filesystem::path& file, uint64_t upto);
+// The rollback SyncTest (snapshot.cpp, mk9_synctest): at a frame's boundary at rest, the fighters' whole state (each
+// player's block of the match's info, fighter object and actor) after the frame `key` (the game's frame counter): its
+// first run kept, a run again compared word by word; the words that came out otherwise are logged ("[synctest]
+// fighters") and counted (SyncTestFighterSummary). What a rollback does not bring back the same in the fighters.
+void SyncTestFighters(uint8_t* base, uint32_t key);
+std::string SyncTestFighterSummary();
+// mk9_net_test_desync_frame (tests): right before that game frame runs (each run of it), the guest (player 1) takes
+// 5 % of player 1's fighter's health. Host-side write: the timeline does not see its page change (a rollback past it
+// does not undo it, a run again takes 5 % more). player: netplay::LocalPlayer().
+void TestDesync(uint8_t* base, int player);
+// mk9_fighter_dump (tests): at a frame's boundary in a fight, every mk9_fighter_dump_every frames of the game's frame
+// counter, each player's block of the match's info and the start of their fighter's object, to a file. Game thread.
+void DumpFighters(uint8_t* base);
 
 }  // namespace mk9::fight_state

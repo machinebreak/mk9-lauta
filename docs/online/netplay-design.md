@@ -683,3 +683,128 @@ esperas, 128 lecturas en un cuadro, y hasta 212.744 dentro de ellas. Antes de me
 llegaba a 17.162 en una sola máquina (la otra, 2): la válvula se habría abierto de un solo lado. Los dos juegos de una
 sesión tienen que tener el mismo valor de `mk9_virtual_time`; desde el protocolo 10 el HELLO lo dice y el log avisa si
 difiere.
+
+### El espectador que adelanta una pelea: la posición de los sonidos (tarea A5, 2026-11-11)
+
+Un espectador que entraba tarde se desviaba de la partida a los ~430-560 cuadros de una pelea adelantada (sus cuadros
+ocultos, rápidos y en silencio), así que las peleas se miraban a velocidad normal. Los experimentos del plan, con
+`two_watchers.ps1` (uno en vivo, otro 95 s tarde) y `fight_watch.ps1`:
+
+1. **Con el reloj de cuadros prendido** (A1) se desviaba igual (cuadro 557): no era el reloj del hilo del juego.
+2. **Oculto pero al ritmo de los jugadores** (`mk9_watch_catch_up_mode=paced`): 5461 cuadros de pelea ocultos y en
+   silencio sin ninguna diferencia. No era no dibujar ni el silencio: era ir **más rápido que el tiempo real**.
+3. **La causa** (comparando las nativas de los dos espectadores, `mk9_native_log_frames`): la nativa `824a5610` le
+   contesta a un script del escenario cuántos cuadros le faltan a un sonido: `sub_82A31410` busca entre los componentes
+   de audio del dispositivo (`+640`) el que tiene el id del script (`+168`) y `sub_82A33C00` hace (largo − posición) ×
+   60 con sus virtuales `+336` (`sub_82604DD8`: `lengthms` de `FMOD::Event::getInfo`) y `+300` (`sub_82589898`:
+   `positionms`, guardada también en el componente `+156`). `positionms` es dónde va el evento en el mezclador de FMOD,
+   con su reloj: con los cuadros más rápidos que el mezclador le faltaban 140 cuadros donde a los jugadores 77, y el
+   script siguió por otro lado (un sorteo de más, `UtilsCore.cpp:2497`, unos cuadros después).
+4. **El arreglo**: con el reloj de cuadros, el `getInfo` del hilo del juego (`sub_82E46D40`) contesta como posición
+   el tiempo desde que el juego empezó ese evento, en cuadros (el cuadro de su `FMOD::Event::start`, `sub_82E46DE8`,
+   anotado en el hook de `sound_replay.cpp`), como mucho su largo. También saca a los jugadores de una dependencia del
+   reloj de cada mezclador (un cuadro de diferencia al cruzar el umbral del script). El log `[time]` cuenta cuántas
+   posiciones contestó así.
+5. **Resultado**: el espectador tarde adelanta la pelea entera (4866 cuadros en ~15 s, ~475 cuadros por segundo) sin
+   ninguna diferencia con la partida y llega a las barreras siguientes en los mismos cuadros que el que mira en vivo
+   (dos corridas). `mk9_watch_catch_up_fights` queda prendido: un espectador se pone al día también en las peleas (no
+   mientras la pelea carga: lo que el motor trae del disco tarda el tiempo real de los cuadros de los jugadores).
+
+Quedan como herramientas `mk9_watch_catch_up_mode` (`drawn`: dibujados y presentados sin ritmo, con
+`renut_vsync=false`; `paced`: ocultos al ritmo de los jugadores) y el log de sonido de cada espectador
+(`out\f3\<nombre>_sound.txt`).
+
+**Visto de paso (a revisar):** cuando dos sonidos empiezan en el mismo cuadro, las dos instancias pueden dárselos a FMOD
+en distinto orden (el cuadro 35 de la pelea: los eventos `05C0` y `05C8` con números `2301`/`2302` cruzados), así que
+la clave de un aviso (cuadro + lugar en el cuadro, `sound_sync.h`) puede nombrar sonidos distintos en dos máquinas.
+Ahí no tuvo efecto (los dos terminaron el mismo sonido), pero es un riesgo entre jugadores: numerar por algo que no
+dependa del orden (el evento de FMOD, el componente de audio) en vez del lugar.
+
+### El hash de la pelea con el estado de los luchadores (tarea A2, 2026-11-11, protocolo 10)
+
+El hash de cada cuadro eran los chequeos del propio juego (sus contadores y un sorteo de su generador): un desync se
+veía recién cuando llegaba al generador de azar. Ahora, en `GS_PLAY`, entra también el estado de los luchadores
+(`fight_state.h` `HashFighters`): de cada jugador, tramos del bloque de la info de la partida (`0x833C6C54`, `0xC8C`
+por jugador), del objeto del luchador (`[+0xDF4]`) y de su actor (`[objeto+8]`), leídos una vez por cuadro y
+hasheados desde la copia.
+
+**Qué tramos** (`app/src/online/fight_hash_ranges.inc`, generado): las palabras que en dos sesiones enteras (40 ± 10 y
+80 ± 30 ms, dos peleas cada una, una muestra cada 10 cuadros en las dos máquinas: `mk9_fighter_dump` +
+`tools/online/dev/fighter_diff.py`) fueron **iguales en las dos máquinas en todas las muestras y cambiaron** durante la
+pelea: 357 palabras de la info, 214 del objeto (la vida en `+0x78C0` entre ellas) y 13 del actor (la posición en
+`+0xDC`: `+0xE0` el eje de la pelea, `+0xE4` la altura): 345 tramos, ~2,3 KB por jugador. Afuera: lo que difiere entre
+las máquinas (punteros: los heaps no coinciden; en la segunda sesión, decenas de palabras con ids `0x1000xxxx` donde el
+invitado iba **2 adelante** del host en la segunda pelea: algún contador global de ids corrió dos veces más en una
+máquina entre las peleas, sin que los chequeos del juego lo vieran: una pista para el desync raro de los menús) y lo
+que nunca cambió (no detecta nada y una palabra quieta en estas peleas puede no estarlo en otras).
+
+**Probado**: `mk9_net_test_desync_frame=4700` (el invitado le saca un 5 % de vida a su luchador justo antes de ese
+cuadro, en cada corrida): las dos máquinas dicen `DESYNC in epoch 1 at frame 321 (game frame 4700)`, ese mismo cuadro.
+Antes de A2 ese desync no lo veía nadie hasta que tocara el generador.
+
+**Falsos positivos encontrados con el reporte de A3** (los primeros dos días de uso): en los primeros cuadros de una
+pelea, dos floats que todas las muestras tenían iguales difirieron en el momento del hash en 2 de ~10 sesiones: la info
+de la partida `+0x118` (`7.20164` contra `7.01414`; `+0x114` es una vtable, `0x82003cb0`) y el objeto del luchador
+`+0x240` (`7.3794` contra `7.37928`), ~7 s, lo que tardó la carga de la pelea, escritos una vez cuando una carga
+termina y con el reloj real (el flush del borde puede terminar una). Los chequeos del propio juego siguieron iguales en
+los 5279 cuadros de esa sesión: no son el estado de la pelea. Quedan afuera con su motivo (`fighter_diff.py`
+`EXCLUDED`), igual que el actor `+0x1b4` (un entero que difirió en un cuadro de otra sesión) y el actor `+0x10`
+(`220.166` contra `218.166`, exactamente 2 de diferencia, en el primer cuadro de la pelea). El patrón de todos los de
+los primeros cuadros: un valor que se escribe una vez cuando la pelea termina de cargar (un tiempo de carga, uno de
+creación, una cuenta de lo que la carga hizo) y que las dos máquinas no escriben en el mismo cuadro. Por eso la regla
+ahora es que una palabra del hash tiene que **cambiar también en la pelea** (más de 120 cuadros después de su
+comienzo), no sólo al empezar (`fighter_diff.py`, `LATE`; `--within` filtra una tabla anterior sin perder lo que sus
+sesiones excluyeron): 336 tramos, 569 palabras por jugador. También aparece, a veces, un racimo de campos del objeto
+y del actor (`+0x38`, `+0x44` que difiere exactamente 12.0, `+0xfc`, el actor `+0x60` y `+0x13c`…) que se separa
+para siempre a mitad de una pelea sin que cambien los chequeos del juego: afuera también.
+
+**El SyncTest ahora compara los luchadores enteros** (`SyncTestFighters`: después de cada cuadro, con el borde en
+reposo, el bloque de la info, el objeto y el actor de los dos jugadores contra la primera corrida de ese cuadro,
+palabra por palabra). En 2844 cuadros re-corridos (475 rollbacks de 6) la info y el objeto volvieron **siempre**
+iguales y los chequeos del juego también; sólo cuatro palabras del actor no: `+0xc8` (604 veces: `187.152` la primera
+corrida, `187.037` la re-corrida, 0,115 s = los 7 cuadros de la rollback: la hora del último dibujo), `+0x13c` y
+`+0x68` (otras horas) y `+0x1b4` (una cuenta, 15 contra 14). Son lo que el dibujo le devuelve al juego: un cuadro
+re-corrido no se dibuja, y las dos máquinas re-corren cuadros distintos; de ahí el `+0x1b4` y la parte del actor del
+racimo. Quedan en `EXCLUDED` con ese motivo (ya estaban afuera). La parte del objeto del racimo no es de la rollback
+(el objeto vuelve igual): es algo de cada máquina con su reloj o su carga. Para B2 (no mandar la escena en los cuadros
+re-corridos): estas cuatro ya dependen del dibujo y no cambian la pelea; el SyncTest con los luchadores es la prueba.
+El volcado ahora guarda
+también el momento del hash (tipos 3-5): una palabra que cambie entre el comienzo del borde y el hash en una máquina
+(otro hilo, el trabajo del propio borde) queda afuera, y `intro_hunt.ps1` vuelca cada cuadro de los primeros segundos
+de la pelea, donde terminan esas cargas.
+
+**El protocolo 10**: el hash cambió, así que dos versiones no se pueden juntar (el HELLO ya lo dice y la sesión termina
+con "otra versión"). El HELLO lleva además un byte de ajustes (bit 0: el reloj de cuadros). La grabación lleva el
+protocolo en su versión (`1 + protocolo × 256`) y un espectador de otra versión se va con su motivo en pantalla.
+
+### El reporte de un desync (tarea A3, 2026-11-11)
+
+El primer cuadro cuyos hashes difieren deja, en cada máquina, `logs\desync_<fecha>_p<N>\`: `fighters.bin` (los bytes
+hasheados de los luchadores de los últimos cuadros hasta ese: `HashFighters` guarda los de los últimos 64, la última
+corrida de cada uno, y `WriteFighters` los escribe con la tabla de tramos) y `summary.txt` (versión, protocolo, cuadro
+de la época y del juego, los dos hashes, retraso, ida y vuelta, rollbacks, y qué `.mk9net` tiene las entradas de la
+sesión). La ventana de fin de sesión dice que hubo un desync y tiene un botón que abre la carpeta.
+`tools/online/desync_report.py <carpeta p1> <carpeta p2>` dice el primer cuadro y el primer campo distinto (nombrando
+la vida y la posición), con los dos valores en hexadecimal y como float; si los luchadores son iguales, la diferencia
+está en los chequeos del juego (sus sorteos: `rand_report.py`).
+
+### Lo que el hilo del juego le pregunta al sistema (tarea A4, 2026-11-11)
+
+El tiempo: el reloj del invitado (`mftb`) está hecho de cuadros (A1) y la posición de los eventos de FMOD también (A5).
+`KeQueryPerformanceFrequency` es constante. Queda la hora de pared, `KeQuerySystemTime` (la del host), que el juego lee
+desde 7 funciones (`tools/online/import_callers.py`): la capa de plataforma de UE3 (`sub_82373E60`, `sub_82374208`,
+`sub_82374378`, `sub_82376E98`, `sub_8237AD50`) y el CRT (`sub_82BDAE88`, `sub_82BDD918`). Un hook en cada una cuenta
+las del hilo del juego en una sesión: el log avisa con la pila la primera vez que una aparece y la línea `[time]` dice
+cuántas van. No se la reemplazó por una hora hecha de cuadros: el SDK la usa también para los temporizadores del
+kernel (`xtimer.cpp`, en otro hilo), y una fecha absoluta corrida entre hilos los haría saltar. El perfil y el
+almacenamiento ya arrancan nuevos en cada sesión, el idioma se probó mezclado, la red del juego no se usa.
+
+### Regresión de un comando (tarea A6, 2026-11-11)
+
+`tools/online/regress.ps1 [-Quick]`: el SyncTest (con el reloj de cuadros, que ahora también se prende con
+`mk9_synctest`), `hunt.ps1` con 60 ± 40 ms y 2 % de pérdida (4 corridas), un espectador que entra a los 95 s y se pone
+al día en el menú y en la pelea, y una sala completa por el lobby local. Sale con error ante un `DESYNC`, un espectador
+que se aparta de la partida o no llega a la pelea, una sala cuya pelea no empieza o un volcado de cierre. La cacería
+ahora compara los modos por el contador de cuadros del propio juego (el tag 9 de los chequeos): la primera columna del
+registro cuenta los bordes, cuadros re-corridos por la rollback incluidos, y después de una pelea las dos máquinas
+tenían números distintos para el mismo cuadro.

@@ -56,6 +56,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "online/fight_state.h"
 #include "online/guest_memory.h"
 #include "online/host_stack.h"
 #include "online/loading.h"
@@ -537,6 +538,7 @@ extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
   const auto boundary_start = std::chrono::steady_clock::now();
   mk9::virtual_time::BoundaryStart(base);  // the frame before's logic is over (its clock reads, virtual_time.h)
+  mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)
@@ -554,6 +556,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::frame_budget::NoteBoundary(
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - boundary_start).count());
   mk9::virtual_time::FrameStart(base);  // the frame's clock reads count from here (after the boundary's own)
+  mk9::fight_state::TestDesync(base, mk9::netplay::LocalPlayer());  // tests (mk9_net_test_desync_frame)
   __imp__sub_829D5230(ctx, base);
 }
 

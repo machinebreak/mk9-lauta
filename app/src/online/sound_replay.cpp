@@ -13,6 +13,7 @@
 #include <rex/logging.h>
 
 #include "online/netplay.h"
+#include "online/virtual_time.h"
 
 REXCVAR_DEFINE_BOOL(mk9_music_confirm, true, "MK9 Online",
                     "In a fight with rollback the music changes tracks once the frame's inputs are confirmed");
@@ -142,6 +143,7 @@ REX_HOOK_RAW(sub_82607310) {
 
 // FMOD::Event::start (r3 the event): in a frame run again, an instance the frame's first run started is playing already.
 REX_HOOK_RAW(sub_82E46DE8) {
+  mk9::virtual_time::SoundStarted(ctx.r3.u32);  // its position made of frames from here (virtual_time.h)
   if (!mk9::sound_replay::Mine()) {
     __imp__sub_82E46DE8(ctx, base);
     return;

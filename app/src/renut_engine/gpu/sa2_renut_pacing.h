@@ -16,6 +16,12 @@ void PaceSwap(uint32_t device_va);
 // start, with the guest's render thread idle (the rollback drains it there), so the frame's Swap reads its own value.
 void SetFrameHidden(bool hidden);
 bool FrameHidden();
+// mk9-lauta (2026-11-11, tests): frames drawn and presented but not paced (a spectator catching up while drawing,
+// mk9_watch_catch_up_draw); the grid starts again once it is off.
+void SetUnpaced(bool unpaced);
+// mk9-lauta (2026-11-11, tests): hidden frames paced as shown ones (a spectator catching up hidden at the players'
+// speed, mk9_watch_catch_up_mode=paced).
+void SetPaceHidden(bool paced);
 
 // mk9-lauta (2026-11-09): the performance mode (mk9_draw_mode): frames that are not drawn but still take their 1/60 s,
 // so the game keeps its speed while the GPU draws every other frame. Read by the thread that makes the Direct3D calls
