@@ -391,6 +391,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::Text(T("Salas abiertas (%d)"), int(lobby.rooms.size()));
     if (ImGui::BeginTable("rooms", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0, 0))) {
+      overlay_input::PageScroll();  // LT / RT: a page (F2 of the plan)
       ImGui::TableSetupColumn(T("Sala"), ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("Host", ImGuiTableColumnFlags_WidthFixed, 150);
       ImGui::TableSetupColumn(T("Ping aprox."), ImGuiTableColumnFlags_WidthFixed, 90);
@@ -505,6 +506,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::Text("%s", T("Chat de la sala"));
     const float input_h = ImGui::GetFrameHeightWithSpacing() + 4;
     if (ImGui::BeginChild("room_chat", ImVec2(0, -input_h), ImGuiChildFlags_Borders)) {
+      overlay_input::PageScroll();  // LT / RT: a page (F2 of the plan)
       for (const room::Line& l : room.chat) {
         if (l.system) {
           ImGui::TextColored(kGrey, "%s", l.text.c_str());
@@ -547,6 +549,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     const float input_h = ImGui::GetFrameHeightWithSpacing() * (lobby.error.empty() ? 1.0f : 2.0f) + 4;
     if (ImGui::BeginChild("global_chat", ImVec2(0, -input_h), ImGuiChildFlags_Borders)) {
+      overlay_input::PageScroll();  // LT / RT: a page (F2 of the plan)
       const std::string me = lobby.name.empty() ? name_ : lobby.name;
       for (const lobby::ChatLine& l : lobby.chat) {
         if (session::IsBlocked(l.name)) continue;
@@ -906,6 +909,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::Text("%s", T("Últimas partidas"));
     if (ImGui::BeginTable("history", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0, 0))) {
+      overlay_input::PageScroll();  // LT / RT: a page (F2 of the plan)
       ImGui::TableSetupColumn(T("Fecha"), ImGuiTableColumnFlags_WidthFixed, 110);
       ImGui::TableSetupColumn(T("Resultado"), ImGuiTableColumnFlags_WidthFixed, 90);
       ImGui::TableSetupColumn(T("Rival"), ImGuiTableColumnFlags_WidthStretch);
@@ -952,6 +956,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     if (ImGui::BeginTable("replays", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
                           ImVec2(0, 0))) {
+      overlay_input::PageScroll();  // LT / RT: a page (F2 of the plan)
       ImGui::TableSetupColumn(T("Fecha"), ImGuiTableColumnFlags_WidthFixed, 130);
       ImGui::TableSetupColumn(T("Rival"), ImGuiTableColumnFlags_WidthStretch);
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80);

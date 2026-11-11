@@ -85,6 +85,7 @@ set(MK9_SOURCES
     # player, the pads), the screen and the language, the online fights' input delay.
     src/options_ui.cpp
     src/first_run_ui.cpp
+    src/mk9_input_display.cpp
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
     src/mk9_localization.cpp

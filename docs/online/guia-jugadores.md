@@ -5,8 +5,8 @@
 - **F1** abre y cierra las pantallas online. **F2** abre las opciones. En el menú principal del juego, la opción
   **ONLINE (F1)** te lo recuerda.
 - Con el mando: **BACK + START** abre las opciones y **BACK + Y** (BACK + triángulo en PlayStation) las pantallas
-  online. Adentro, el stick o la cruceta se mueven, **A** (cruz) elige, **LB / RB** cambian de pestaña y **B**
-  (círculo) cierra. BACK es el botón chico de la izquierda (View en Xbox, Share o Create en PlayStation, - en Switch).
+  online. Adentro, el stick o la cruceta se mueven, **A** (cruz) elige, **LB / RB** cambian de pestaña, **LT / RT**
+  suben y bajan de a una página en las listas largas (salas, chat, replays, opciones) y **B** (círculo) cierra. BACK es el botón chico de la izquierda (View en Xbox, Share o Create en PlayStation, - en Switch).
 - La primera vez que abrís el juego, cuatro pasos te dejan listo: el **idioma** del juego, tu **nombre de usuario**
   para el online (de 2 a 20 letras: el que ven los demás en las salas y en el chat), la **calidad de los gráficos**
   (ya viene elegida para tu PC) y una **prueba del mando** (se encienden los botones que apretás). Se pueden saltar, y
@@ -106,6 +106,12 @@ tecla nueva. Para jugar un Versus en la misma PC con el teclado y un mando, pon�
 el online manejás a tu luchador con el teclado y con cualquier mando conectado.
 
 Qué golpe hace cada botón se cambia en el menú del juego, **OPCIONES > MANDO**, y el teclado lo sigue.
+
+Para practicar combos: **F2 > Controles > Mostrar las entradas en la pelea**. A la izquierda aparecen tus direcciones
+(flechas) y botones, lo último arriba, con cuántos cuadros duró cada uno, en la notación de MK con los botones de
+siempre: **1** puño frontal, **2** puño trasero, **3** patada frontal, **4** patada trasera, **BL** cubrirse, **TH**
+agarre, **SS** cambio de guardia y **TAG** relevo. Sirve en cualquier pelea (Práctica, Versus, online: ahí, las tuyas);
+el juego no se entera.
 
 Los botones que muestra el juego (en los menús y en la lista de movimientos) son los de tu mando: el juego mira el
 primer mando conectado al abrirse y muestra los botones de PlayStation (cruz, círculo, cuadrado, triángulo), de

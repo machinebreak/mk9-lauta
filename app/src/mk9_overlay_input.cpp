@@ -2,6 +2,7 @@
 
 #include "mk9_overlay_input.h"
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 
@@ -135,6 +136,14 @@ int TabStep() {
   if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) return -1;
   if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) return 1;
   return 0;
+}
+
+void PageScroll() {
+  const bool up = ImGui::IsKeyPressed(ImGuiKey_GamepadL2, true);
+  const bool down = ImGui::IsKeyPressed(ImGuiKey_GamepadR2, true);
+  if ((!up && !down) || !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return;
+  const float page = ImGui::GetWindowHeight() * 0.85f;
+  ImGui::SetScrollY(std::clamp(ImGui::GetScrollY() + (down ? page : -page), 0.0f, ImGui::GetScrollMaxY()));
 }
 
 bool ClosePressed() {

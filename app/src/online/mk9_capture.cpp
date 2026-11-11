@@ -62,6 +62,7 @@
 #include "online/loading.h"
 #include "online/netplay.h"
 #include "first_run_ui.h"
+#include "mk9_input_display.h"
 #include "online/online_ui.h"
 #include "options_ui.h"
 #include "online/quiesce.h"
@@ -545,6 +546,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::first_run_ui::Install();  // once: the first start's steps (before the online window, which waits for them)
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)
+  mk9::input_display::Install();  // and the inputs on screen (mk9_input_display)
   mk9::updater::Install();     // and the updater's banner (a newer release on GitHub)
   mk9::renderer_start::Install();  // and the notice of a graphics API swapped at this start
   mk9::online::FrameBegin(base);
@@ -774,8 +776,10 @@ REX_HOOK_RAW(sub_82A1C5C0) {
 // seed go in first, then the capture tools see (and record) what the game will read.
 extern "C" REX_FUNC(__imp__sub_82A1C550);
 REX_HOOK_RAW(sub_82A1C550) {
-  mk9::netplay::OverrideBlock(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r1.u32);
-  mk9::seed::OverrideModeSeed(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32);
-  mk9::online::CaptureBlock(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
+  const uint32_t tag = ctx.r3.u32, data = ctx.r4.u32, size = ctx.r5.u32, user = ctx.r6.u32;
+  mk9::netplay::OverrideBlock(base, tag, data, size, user, ctx.r1.u32);
+  mk9::seed::OverrideModeSeed(base, tag, data, size);
+  mk9::online::CaptureBlock(base, tag, data, size, user);
   __imp__sub_82A1C550(ctx, base);
+  mk9::input_display::NoteBlock(base, tag, data, size, user);  // H2: the block as the game takes it
 }

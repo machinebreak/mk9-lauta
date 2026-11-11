@@ -359,6 +359,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       ImGui::End();
       return;
     }
+    overlay_input::PageScroll();  // LT / RT: a page of the window (F2 of the plan)
     // the controller: B closes, LB / RB change tabs
     if (overlay_input::ClosePressed()) {
       visible_ = false;
@@ -606,6 +607,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     bool rumble = rex::cvar::GetFlagByName("input_rumble") == "true";
     if (ImGui::Checkbox("Vibración del mando", &rumble)) {
       Set({{"input_rumble", rumble ? "true" : "false"}}, rumble ? "Vibración activada" : "Vibración desactivada");
+    }
+    // mk9-lauta (2026-11-11, H2): the inputs on screen (mk9_input_display.h)
+    bool inputs = rex::cvar::GetFlagByName("mk9_input_display") == "true";
+    if (ImGui::Checkbox("Mostrar las entradas en la pelea (para practicar combos)", &inputs)) {
+      Set({{"mk9_input_display", inputs ? "true" : "false"}},
+          inputs ? "Entradas en pantalla activadas" : "Entradas en pantalla desactivadas");
     }
     ImGui::Text("Mandos conectados:");
     bool any_pad = false;

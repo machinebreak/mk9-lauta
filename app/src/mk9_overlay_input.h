@@ -35,5 +35,8 @@ bool ToggleOnlinePressed();   // Back + Y
 int TabStep();
 // B with nothing active in a focused window: close it.
 bool ClosePressed();
+// mk9-lauta (2026-11-11, F2): right after a scrolling region begins (a child window, a table with ScrollY, a window),
+// LT / RT scroll it a page up / down (held: again and again), while its window has the focus.
+void PageScroll();
 
 }  // namespace mk9::overlay_input

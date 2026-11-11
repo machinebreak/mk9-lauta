@@ -207,6 +207,13 @@ placas usa la dedicada. plume ya elegía, en D3D12, el adaptador con más memori
   Mientras se muestran, el juego no recibe entradas y la ventana online espera. Prueba con capturas de cada paso:
   `run_game.ps1 -Set "mk9_first_run_done=false;mk9_first_run_test_cycle_s=6;renut_capture_overlay=true" -Snapshots
   "4,10,16,22,28,34"`.
+- **Con el mando** (F2 del plan): LT / RT pasan de a una página las listas largas (`overlay_input::PageScroll`).
+- **Las entradas en pantalla** (H2, `mk9_input_display.h`, F2 > Controles): las direcciones y botones del jugador en
+  una pelea, lo último arriba, con los cuadros de cada uno, en notación MK (1-4, BL, TH, SS, TAG). Salen del
+  `XINPUT_STATE` crudo que el juego lee por usuario (la interfaz de captura, tag `0x00FF0002` de **16 bytes**: el
+  mismo tag trae también un bloque de 20 bytes de cada usuario que no es un mando, y el bloque "procesado"
+  `0x00FF0001` tiene los botones a la manera del juego: la A es `0x20` en su cuarto byte). Probado con un guion de
+  direcciones, diagonales, botones solos y juntos: cada uno con sus cuadros.
 
 ## Estado
 
