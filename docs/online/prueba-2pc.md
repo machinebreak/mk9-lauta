@@ -32,7 +32,9 @@ De **cada** PC, de la carpeta `logs` que está al lado de `mk9.exe`:
 - los `session_*.mk9net` de ese día (las entradas de cada partida);
 - los `mk9_*.log` de ese día (el registro del juego; los que se modificaron más tarde);
 - si aparece alguna carpeta `desync_*` (el juego la deja si las dos partidas dejaron de coincidir; la ventana del final
-  de la sesión tiene un botón que la abre), esa carpeta entera.
+  de la sesión tiene un botón que la abre), esa carpeta entera. También las `desync_*_fighters`: las deja el hash de
+  los luchadores cuando difiere sin que el juego lo note (un diagnóstico, no le avisa a nadie), y dicen en qué cuadro
+  y en qué campo.
 
 Comprimir todo en un zip por PC y mandarlo.
 
@@ -44,6 +46,7 @@ Comprimir todo en un zip por PC y mandarlo.
   luchadores que difirió (vida, posición, …), o si la diferencia está en los sorteos del juego.
 - En los `mk9_*.log`: las líneas `[net]` cada 10 s (ida y vuelta, retraso, rollbacks y su profundidad, la fase de las
   dos grillas: "phase X ms ahead"), `[fps]` (los cuadros por segundo y sus percentiles), `[frame]` (dónde se va el
-  tiempo del hilo del juego), `[time]` (el reloj de cuadros) y cualquier `DESYNC`.
+  tiempo del hilo del juego), `[time]` (el reloj de cuadros), cualquier `DESYNC` y cualquier "the fighters' state
+  differs" (el diagnóstico: el reporte `_fighters` de cada PC va a `desync_report.py` igual que los otros).
 
 **Listo cuando**: una sesión real sin desync, o cada diferencia explicada y arreglada.

@@ -37,6 +37,10 @@ void Diagnose(uint8_t* base);
 // The ranges are the ones the two machines always had the same (fighter_diff.py). Game thread, at a frame's boundary;
 // key: the frame's (epoch << 32 | frame), whose hashed bytes are kept (the latest 64 frames) for a desync's report.
 uint64_t HashFighters(uint8_t* base, uint64_t seed, uint64_t key);
+// The fight as the players see it: each player's health (object +0x78C0, 8 bytes) and position (actor +0xDC, 12 bytes),
+// hashed into seed (seed as it is out of a fight's play or with a fighter missing). What the two screens show apart:
+// netplay.cpp's sync hash has it (a desync the players hear of), as HashFighters is a diagnostic. Game thread.
+uint64_t HashCore(uint8_t* base, uint64_t seed);
 // A desync's report (A3): the kept frames of upto's epoch up to it, with the ranges they come from, to a file
 // (tools/online/desync_report.py compares the two players'). Game thread.
 bool WriteFighters(const std::filesystem::path& file, uint64_t upto);

@@ -63,14 +63,18 @@
 //            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags, then u32 a sound callback's
 //            announcement, sound_sync.h), u32 hash frame (~0: none),
 //            u64 hash (of that final frame), u32 the sender's live frame (time sync), u32 the live frame its last
-//            paced release started, u16 the time since that release in 10 us (0xFFFF: none) and i16 the sender's
-//            measure of the phase in 10 us (C1)
+//            paced release started, u16 the time since that release in 10 us (0xFFFF: none), i16 the sender's
+//            measure of the phase in 10 us (C1) and u64 the fighters' state hash of the hash frame (0: none)
 //   BARRIER  u32 epoch (the one starting there), u32 the sender's last frame of the epoch before
 //   PING / PONG  u64 microseconds (the sender's clock, echoed)
 //   BYE      u8 why (netplay.h, EndReason: the sender's player left, or its game found the two out of sync)
 // The sync hash of a frame: the game's own checks during it (OnCheck: what its online compared, a draw of its random
-// number generator among them), in a fight the fighters' state after it (fight_state.h HashFighters; protocol 10) and
-// the mk9_net_sync_ranges. A frame whose hashes differ is reported.
+// number generator among them), in a fight each player's health and position after it (fight_state.h HashCore;
+// protocol 10) and the mk9_net_sync_ranges. A frame whose hashes differ is reported, and 20 of them tell the players.
+// Beside it, in a fight, the rest of the fighters' state after the frame (HashFighters): a diagnostic that says at
+// which frame two fights parted, before the sync hash sees it, and leaves a report; it tells nobody, as what it hashes
+// is chosen from dumps (2026-11-11: a load's time it had kept differed by 0.1875 s between two machines whose fights
+// went on alike).
 
 #include "online/netplay.h"
 
@@ -277,6 +281,7 @@ struct Session {
   int64_t remote_upto = -1;          // every remote frame <= this is here
   int64_t peer_acked = -1;           // the peer has every local frame <= this
   std::vector<uint64_t> local_hash, remote_hash;  // by frame; 0 = not known yet
+  std::vector<uint64_t> local_fighters, remote_fighters;  // the fighters' state hash by frame; 0 = none (not a fight)
   int64_t compared_upto = -1;        // final frames compared so far
   // the newest frame the peer sent its hash of: each packet carries only its newest final frame's, so the frames it
   // skipped (a lost packet, or several frames made final at once by a rollback) never come and are not waited for
@@ -287,6 +292,9 @@ struct Session {
   uint32_t checks = 0;
   int64_t desync_at = -1;            // the epoch's first frame whose hashes differed
   uint64_t desync_frames = 0;
+  uint64_t fighters_compared = 0;    // frames whose fighters' state hashes were compared
+  int64_t fighters_at = -1;          // the epoch's first frame whose fighters' state differed
+  uint64_t fighters_frames = 0;
   Pad frame_pads[2];                 // this frame's players' pads
   uint8_t frame_busy = 0;            // either machine's busy flags when this frame's inputs left
   uint32_t busy_value[8] = {};       // the last busy answer of each flag's poll here (what it says while busy)
@@ -605,6 +613,8 @@ void Ensure(int64_t frame) {
     g.have_remote.resize(grow, 0);
     g.local_hash.resize(grow, 0);
     g.remote_hash.resize(grow, 0);
+    g.local_fighters.resize(grow, 0);
+    g.remote_fighters.resize(grow, 0);
     for (int p = 0; p < 2; ++p) {
       g.used[p].resize(grow);
       g.packet[p].resize(grow, 0);
@@ -628,7 +638,7 @@ std::string g_desync_report;  // the report's folder (the online screens offer i
 std::mutex g_desync_report_mutex;
 double RoundTripTypical();
 
-void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote) {
+void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool fighters_only) {
   wchar_t exe[MAX_PATH] = {};
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
   const std::time_t now = std::time(nullptr);
@@ -637,7 +647,8 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote) {
   char name[64];
   std::strftime(name, sizeof(name), "desync_%Y%m%d_%H%M%S", &when);
   const std::filesystem::path dir = std::filesystem::path(exe).parent_path() / L"logs" /
-                                    (std::string(name) + (g.player == 0 ? "_p1" : "_p2"));
+                                    (std::string(name) + (g.player == 0 ? "_p1" : "_p2") +
+                                     (fighters_only ? "_fighters" : ""));
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   const bool fighters =
@@ -647,6 +658,10 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote) {
                  g.player + 1);
     std::fprintf(f, "first frame whose hashes differ: epoch %u frame %lld (game frame %llu)\n", g.epoch,
                  static_cast<long long>(frame), static_cast<unsigned long long>(g.start_game_frame + frame));
+    std::fprintf(f, "what differs: %s\n",
+                 fighters_only ? "the fighters' state only (the sync hash agrees there: the game's checks, the "
+                                 "health and the positions): a diagnostic"
+                               : "the sync hash (the game's checks, or the health or a position: the two games apart)");
     std::fprintf(f, "hash here %016llx, the other's %016llx\n", static_cast<unsigned long long>(local),
                  static_cast<unsigned long long>(remote));
     std::fprintf(f, "epoch %s, input delay %d, round trip %.0f ms typical, %llu rollbacks so far\n",
@@ -658,11 +673,30 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote) {
   }
   const std::u8string utf8 = dir.u8string();
   const std::string path(reinterpret_cast<const char*>(utf8.c_str()), utf8.size());
-  {
+  if (!fighters_only) {  // the one the online screens offer: the players were told of this one
     std::lock_guard lock(g_desync_report_mutex);
     g_desync_report = path;
   }
-  REXLOG_WARN("[net] the desync's report is in {} (tools/online/desync_report.py with the other player's)", path);
+  REXLOG_WARN("[net] the {} report is in {} (tools/online/desync_report.py with the other player's)",
+              fighters_only ? "fighters' state" : "desync's", path);
+}
+
+// mk9-lauta (2026-11-11): the fighters' state hashes of a final frame, a diagnostic (the head of this file): its first
+// difference in an epoch is logged, and leaves a report when the sync hash still agrees there (a frame where both
+// differ leaves the desync's own).
+void CompareFighters(int64_t frame, bool checks_agree) {
+  const uint64_t local = g.local_fighters[size_t(frame)], remote = g.remote_fighters[size_t(frame)];
+  if (!local || !remote) return;
+  ++g.fighters_compared;
+  if (local == remote) return;
+  ++g.fighters_frames;
+  if (g.fighters_at >= 0) return;
+  g.fighters_at = frame;
+  REXLOG_WARN("[net] the fighters' state differs from frame {} of epoch {} on (game frame {}; {:016x}, the peer's "
+              "{:016x}){}",
+              frame, g.epoch, g.start_game_frame + frame, local, remote,
+              checks_agree ? ": the sync hash agrees there, the session goes on as it was (a diagnostic)" : "");
+  if (checks_agree) WriteDesyncReport(frame, local, remote, true);
 }
 
 void CompareFinalHashes() {
@@ -674,12 +708,14 @@ void CompareFinalHashes() {
     g.compared_upto = frame;
     if (!local || !remote) continue;  // one the peer skipped
     ++g.hashes_compared;
+    CompareFighters(frame, local == remote);
     if (local == remote) continue;
     if (g.desync_at < 0) {
       g.desync_at = frame;
       if (!REXCVAR_GET(mk9_net_end_on_desync)) {
-        REXLOG_WARN("[net] the two games' checks differ from frame {} of epoch {} on: the session goes on "
-                    "(mk9_net_end_on_desync); a fight may look different on the two screens from here",
+        REXLOG_WARN("[net] the two games differ from frame {} of epoch {} on (the sync hash: the game's checks, the "
+                    "health or a position): the session goes on (mk9_net_end_on_desync); a fight may look different "
+                    "on the two screens from here",
                     frame, g.epoch);
       }
       if (g_rec.file) {
@@ -687,7 +723,7 @@ void CompareFinalHashes() {
         REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
                     "says where the two games parted", g_rec.path);
       }
-      WriteDesyncReport(frame, local, remote);
+      WriteDesyncReport(frame, local, remote, false);
     }
     if (++g.desync_frames <= 10) {
       REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, peer {:016x}", g.epoch,
@@ -812,6 +848,7 @@ void SendInputs() {
   Put16(p, g.release_us ? uint16_t(std::min<uint64_t>((NowUs() - std::min(NowUs(), g.release_us)) / 10, 0xFFFE))
                         : uint16_t(0xFFFF));
   Put16(p, uint16_t(int16_t(std::clamp(g.phase * 100.0, -32767.0, 32767.0))));
+  Put64(p, final_frame >= 0 && g.local_hash[size_t(final_frame)] ? g.local_fighters[size_t(final_frame)] : 0);
   Send(p);
   ++g.sent;
 }
@@ -915,6 +952,7 @@ void Receive() {
         Ensure(hash_frame);
         g.remote_hash[hash_frame] = Get64(h + 4);
         g.remote_hash_newest = std::max<int64_t>(g.remote_hash_newest, hash_frame);
+        if (left >= 13 + count * kPadBytes + 32) g.remote_fighters[hash_frame] = Get64(h + 24);
       }
       g.peer_latest = std::max<int64_t>(g.peer_latest, int64_t(Get32(h + 12)));
       if (left >= 13 + count * kPadBytes + 24) {
@@ -1316,6 +1354,8 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.have_remote.clear();
   g.local_hash.clear();
   g.remote_hash.clear();
+  g.local_fighters.clear();
+  g.remote_fighters.clear();
   for (int p = 0; p < 2; ++p) {
     g.used[p].clear();
     g.packet[p].clear();
@@ -1331,6 +1371,9 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.checks = 0;
   g.desync_at = -1;
   g.desync_frames = 0;
+  g.fighters_compared = 0;
+  g.fighters_at = -1;
+  g.fighters_frames = 0;
   g.rollback = rollback;
   g.frames_sound = rollback && REXCVAR_GET(mk9_sound_sync_fights);
   g.speculating = false;
@@ -1363,10 +1406,16 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
 void FinishFrameHash() {
   if (g.frame <= 0) return;
   uint64_t h = XXH3_64bits_withSeed(&g.checks, sizeof(g.checks), g.check_hash);
-  // mk9-lauta (2026-11-11, A2): in a fight, the fighters' state too (fight_state.h HashFighters: what both machines
-  // always had the same), so a desync shows at its frame, not once it reaches the random number generator
-  h = fight_state::HashFighters(rex::system::kernel_memory()->TranslateVirtual<uint8_t*>(0), h,
-                                uint64_t(g.epoch) << 32 | uint64_t(g.frame - 1));
+  uint8_t* const base = rex::system::kernel_memory()->TranslateVirtual<uint8_t*>(0);
+  // mk9-lauta (2026-11-11): in a fight, each player's health and position too (fight_state.h HashCore): two screens
+  // showing another fight are a desync though the game's checks agree (5 % of a fighter's health taken on one machine
+  // went 359 frames without them seeing it)
+  h = fight_state::HashCore(base, h);
+  // mk9-lauta (2026-11-11, A2): in a fight, the fighters' state apart (fight_state.h HashFighters: what both machines
+  // always had the same; 0: not a fight's frame), so where a desync starts shows at its frame, not once it reaches the
+  // random number generator. Not a spectator's: the recordings have the sync hash only.
+  g.local_fighters[size_t(g.frame - 1)] =
+      g.watching ? 0 : fight_state::HashFighters(base, 0, uint64_t(g.epoch) << 32 | uint64_t(g.frame - 1));
   if (!g.sync_ranges.empty() && g.frame % std::max(1, REXCVAR_GET(mk9_net_sync_every)) == 0) {
     auto* memory = rex::system::kernel_memory();
     for (const auto& [lo, hi] : g.sync_ranges) {
@@ -1442,6 +1491,10 @@ void LogStats() {
                 g.wait_ms_max, g.remote_upto, g.sent, g.received, g.hashes_compared, rb,
                 g.desync_at >= 0 ? fmt::format("; {} frame(s) out of sync, the first {}", g.desync_frames, g.desync_at)
                                  : "");
+    if (g.fighters_at >= 0) {
+      REXLOG_INFO("[net] the fighters' state differed in {} of {} frames compared, the first {}", g.fighters_frames,
+                  g.fighters_compared, g.fighters_at);
+    }
   }
   g.wait_ms_window = g.wait_ms_max = 0;
   g.stalls_window = 0;
@@ -1738,7 +1791,10 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     // the frames run again get their hashes again: the old ones (their wrong predictions' runs) must not go out as the
     // final frame's (SendInputs takes the newest final frame's hash before the frame that just ran has its new one:
     // the lone false DESYNC of a very long round trip, 2026-11-10)
-    for (int64_t f = to; f <= g.latest && size_t(f) < g.local_hash.size(); ++f) g.local_hash[size_t(f)] = 0;
+    for (int64_t f = to; f <= g.latest && size_t(f) < g.local_hash.size(); ++f) {
+      g.local_hash[size_t(f)] = 0;
+      g.local_fighters[size_t(f)] = 0;
+    }
     g.frame = to;
     if (g.mode_change_at >= to) g.mode_change_at = -1;
   }

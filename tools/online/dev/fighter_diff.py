@@ -86,9 +86,18 @@ EXCLUDED = {(0, 0x118): 'match info +0x118: a load time (seconds)', (1, 0x240): 
 # a fight's first frame (+0x118, +0x148: 2026-11-11), and whose entries move during the fight.
 EXCLUDED_RANGES = [(0, 0x24, 0x238, 'match info +0x24-0x238: timed entries (vtable 0x82003cb0, a time, a handle)')]
 
+# The objects that say when a load of theirs ended: {vtable, the time (seconds, ~2.0 or ~7.0-7.4), a handle 0x1000xxxx,
+# ...}. The word after one of these vtables, wherever it is in any block, stays out: the same 7.01256 against 7.20006
+# came at the match info's +0x260 (2026-11-11, the regression's third run), the time of one of the 0x2C-byte entries
+# {vtable 0x820f3b60, the time, a handle, ...} from +0x25c on, after +0x118 and +0x148 before it. When a load ends is up
+# to each machine's disk and render thread, not to the fight.
+TIMED_VTABLES = {0x82003CB0, 0x820F3B60, 0x820124B8, 0x8200FF28, 0x82010028}
+after_timed = {0: set(), 1: set(), 2: set()}  # per kind: the word offsets right after one of them, in any record
+
 
 def excluded(kind, offset):
-    return (kind, offset) in EXCLUDED or any(k == kind and lo <= offset < hi for k, lo, hi, _ in EXCLUDED_RANGES)
+    return ((kind, offset) in EXCLUDED or offset in after_timed[kind] or
+            any(k == kind and lo <= offset < hi for k, lo, hi, _ in EXCLUDED_RANGES))
 
 
 def looks_like_handle(v):
@@ -139,6 +148,8 @@ for pair in range(0, len(args), 2):
                 e[3] += 1
             if looks_like_handle(wx[i]) or looks_like_handle(wy[i]):
                 e[4] += 1
+            if (wx[i] in TIMED_VTABLES or wy[i] in TIMED_VTABLES) and i + 1 < n:
+                after_timed[kind].add((i + 1) * 4)
         previous[(player, kind)] = wx
         # between the machines: at the hash's moment when both have it, else at the boundary's start
         hk = (frame, player, kind + 3)
@@ -167,6 +178,9 @@ for kind in (0, 1, 2):
         continue
     same = [o for o, e in s.items() if e[1] == 0 and e[4] == 0 and e[5] == 0 and (e[6] > 0 or not hash_moment) and
             not excluded(kind, o)]
+    timed_out = [o for o in after_timed[kind] if o in s and s[o][1] == 0 and s[o][4] == 0]
+    if timed_out:
+        print(f'  out as the time after a timed vtable: {len(timed_out)} words alike on both')
     moved = [o for o, e in s.items() if e[5] > 0]
     if moved:
         print(f"  moved between the boundary's start and the hash's moment: {len(moved)} words: " +

@@ -783,7 +783,9 @@ El primer cuadro cuyos hashes difieren deja, en cada máquina, `logs\desync_<fec
 hasheados de los luchadores de los últimos cuadros hasta ese: `HashFighters` guarda los de los últimos 64, la última
 corrida de cada uno, y `WriteFighters` los escribe con la tabla de tramos) y `summary.txt` (versión, protocolo, cuadro
 de la época y del juego, los dos hashes, retraso, ida y vuelta, rollbacks, y qué `.mk9net` tiene las entradas de la
-sesión). La ventana de fin de sesión dice que hubo un desync y tiene un botón que abre la carpeta.
+sesión). La ventana de fin de sesión dice que hubo un desync y tiene un botón que abre la carpeta. Desde que el hash
+de los luchadores es un diagnóstico (más abajo), su primera diferencia con el hash de sincronía igual deja otro
+reporte, `desync_<fecha>_p<N>_fighters\`, que la ventana no ofrece.
 `tools/online/desync_report.py <carpeta p1> <carpeta p2>` dice el primer cuadro y el primer campo distinto (nombrando
 la vida y la posición), con los dos valores en hexadecimal y como float; si los luchadores son iguales, la diferencia
 está en los chequeos del juego (sus sorteos: `rand_report.py`).
@@ -864,3 +866,35 @@ rechaza con su motivo.
 de entradas de 12 bytes {vtable `0x82003cb0`, un tiempo ~7,01 s, un id `0x1000xxxx`} cuyos tiempos salieron 0,1875 s
 distintos en el primer cuadro de una pelea (`+0x148`, después de `+0x118`) y cuyas entradas se mueven: el rango entero
 queda afuera (`fighter_diff.py` `EXCLUDED_RANGES`), 324 tramos.
+
+### El hash de los luchadores pasa a ser un diagnóstico (2026-11-11, protocolo 10)
+
+La tercera regresión volvió a fallar por lo mismo: la info `+0x260`, `7.01256` contra `7.20006` (otra vez 0,1875 s),
+en el cuadro 828 de la pelea, con los chequeos del juego iguales. Desde `+0x25c` la info tiene otro arreglo, de
+entradas de `0x2C` bytes {vtable `0x820f3b60`, un tiempo, un id `0x1000xxxx`, …}, y el objeto del luchador tiene más
+entradas así. Son objetos que anotan **cuándo terminó una carga suya**: esa carga corre en otro hilo y termina cuando
+lo deciden el disco y el hilo de render de cada máquina, y el hilo del juego la ve terminada en su espera del render
+(donde el reloj de cuadros avanza por lectura). Ningún reloj hace eso determinista, y en ninguno de estos casos
+divergieron los chequeos del propio juego.
+
+Dos cambios:
+
+- **Por estructura, no de a uno**: la palabra que sigue a una de las cinco vtables que llevan esa hora (`0x82003cb0`,
+  `0x820f3b60`, `0x820124b8`, `0x8200ff28`, `0x82010028`), en cualquier bloque, queda afuera (`fighter_diff.py`
+  `TIMED_VTABLES`). Eran 56 palabras hasheadas, una por entrada del arreglo. Quedan 268 tramos, 1992 bytes por jugador.
+- **El hash que avisa: los chequeos del juego, la vida y la posición.** El hash de cada cuadro son los chequeos (y los
+  `mk9_net_sync_ranges`) más, en la pelea, la vida (objeto `+0x78C0`, 8 bytes) y la posición (actor `+0xDC`, 12
+  bytes) de cada jugador (`fight_state.h` `HashCore`): lo que las dos pantallas muestran. Esos campos nunca difirieron
+  entre las máquinas en 7494 muestras de dos sesiones, y siempre estuvieron en las dos. Hace falta: con
+  `mk9_net_test_desync_frame` (un 5 % de vida menos en una máquina) los chequeos del juego **nunca** se separaron, y las
+  barras de vida estuvieron distintas 359 cuadros. Ahora es un desync en ese mismo cuadro (`DESYNC in epoch 1 at frame
+  316 (game frame 4700)`). Esto es lo que avisa a los jugadores (20 cuadros distintos), puede terminar la sesión
+  (`mk9_net_end_on_desync`) y deja el reporte de A3 que ofrece la ventana de fin. La grabación y el espectador lo
+  comparan igual.
+- **El resto de los luchadores, un diagnóstico.** La tabla entera va aparte en el mismo paquete (`INPUT` termina con
+  un u64, el de ese mismo cuadro final; `CompareFighters`). Si difiere con el hash de sincronía igual, lo anota una vez
+  por época ("the fighters' state differs from frame …") y deja un reporte `logs\desync_<fecha>_p<N>_fighters\` (el
+  `summary.txt` dice qué difirió), sin avisarle a nadie. Así sigue diciendo el cuadro exacto donde algo se separa, y sus
+  falsos positivos ya no molestan a los jugadores. El espectador no lo calcula (adelanta con otros tiempos de carga que
+  los jugadores). `hunt.ps1` y `regress.ps1` cuentan esas líneas aparte, sin fallar (y buscan "DESYNC in" distinguiendo
+  mayúsculas: `Select-String` no lo hace solo, y encontraba "desync" en la carpeta de un reporte).

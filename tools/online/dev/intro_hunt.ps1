@@ -1,6 +1,6 @@
 # Short sessions (through the first seconds of the first fight, where what the fight streamed in ends loading) with the
 # fighters dumped every frame (both moments: the boundary's start and the sync hash's) and the game's checks on.
-# Without -KeepGoing it stops at the first run whose fighter hash differs (A2's DESYNC lines) and keeps that run's files
+# Without -KeepGoing it stops at the first run whose fighter hash differs ("the fighters' state differs") and keeps that run's files
 # as out\f3\intro_<role>_{checks,draws}.txt and out\pc\logs\intro_pair_<role>.log; with it, every run's dumps stay as
 # out\f3\intro_<n>_<role>_dump.bin for tools/online/dev/fighter_diff.py.
 #
@@ -16,7 +16,7 @@ for ($i = 1; $i -le $Runs; $i++) {
         -HostScript 'out\f3\host_fight.txt' -GuestScript 'out\f3\guest_fight.txt' -Seconds $Seconds -Checks `
         -Extra "$Extra --mk9_fighter_dump_every=1" `
         -HostExtra "--mk9_fighter_dump=$f3\intro_host_dump.bin" -GuestExtra "--mk9_fighter_dump=$f3\intro_guest_dump.bin" | Out-Null
-    $d = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern 'DESYNC in' -ErrorAction SilentlyContinue | Select-Object -First 1)
+    $d = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern "fighters' state differs|DESYNC in" -CaseSensitive -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($KeepGoing) {
         foreach ($role in 'host', 'guest') {
             Move-Item (Join-Path $f3 "intro_$($role)_dump.bin") (Join-Path $f3 "intro_$($i)_$($role)_dump.bin") -Force
@@ -24,7 +24,7 @@ for ($i = 1; $i -le $Runs; $i++) {
     }
     if ($d) {
         $parted++
-        "run ${i}: $($d.Line.Substring($d.Line.IndexOf('DESYNC')))"
+        "run ${i}: $($d.Line.Substring($d.Line.IndexOf('[net]')))"
         if (-not $KeepGoing) {
             foreach ($role in 'host', 'guest') {
                 foreach ($kind in 'checks', 'draws') {

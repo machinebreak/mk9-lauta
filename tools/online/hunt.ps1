@@ -42,9 +42,12 @@ for ($i = 1; $i -le $Runs; $i++) {
     $gb = First-Match (Join-Path $logs 'pair_guest.log') "barrier 'fight start' at frame (\d+)"
     $hm = Mode-Starts (Join-Path $f3 'host_checks.txt')
     $gm = Mode-Starts (Join-Path $f3 'guest_checks.txt')
-    $ds = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern 'DESYNC' -ErrorAction SilentlyContinue | Measure-Object).Count
+    # case-sensitive: the reports' folders (logs\desync_...) are named in lines of their own
+    $ds = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern 'DESYNC in' -CaseSensitive -ErrorAction SilentlyContinue | Measure-Object).Count
+    # the fighters' state hash (netplay.cpp CompareFighters): a diagnostic, said but no failure
+    $fs = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern "fighters' state differs" -CaseSensitive -ErrorAction SilentlyContinue | Measure-Object).Count
     $ep = First-Match (Join-Path $logs 'pair_host.log') 'frame (\d+) \(game \d+\), rtt'
-    "run $i : fight start host $hb guest $gb; mode starts host [$hm] guest [$gm]; desync lines $ds"
+    "run $i : fight start host $hb guest $gb; mode starts host [$hm] guest [$gm]; desync lines $ds; fighters' state lines $fs"
     if ($hb -ne $gb -or $hm -ne $gm -or $ds -gt 0) {
         foreach ($role in 'host', 'guest') {
             foreach ($kind in 'natives', 'draws', 'checks', 'scripts') {

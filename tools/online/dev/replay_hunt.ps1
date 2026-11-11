@@ -15,7 +15,7 @@ for ($i = 1; $i -le $Runs; $i++) {
     if ($HostAffinity) { $args += '-HostAffinity', $HostAffinity }
     if ($GuestAffinity) { $args += '-GuestAffinity', $GuestAffinity }
     & powershell @args | Out-Null
-    $ds = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern 'DESYNC|checks differ' -CaseSensitive -ErrorAction SilentlyContinue | Measure-Object).Count
+    $ds = (Select-String -Path (Join-Path $logs 'pair_host.log') -Pattern 'DESYNC|checks differ|games differ' -CaseSensitive -ErrorAction SilentlyContinue | Measure-Object).Count
     $modes = foreach ($role in 'host', 'guest') {
         ((Select-String -Path (Join-Path $f3 "$($role)_checks.txt") -Pattern '^(\d+) 9=\S+ 8=00000000' |
             ForEach-Object { $_.Matches[0].Groups[1].Value }) -join ',')

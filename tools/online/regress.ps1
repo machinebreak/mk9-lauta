@@ -11,11 +11,13 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $logs = Join-Path $root 'out\pc\logs'
 $started = Get-Date
 $fails = New-Object System.Collections.Generic.List[string]
+$notes = New-Object System.Collections.Generic.List[string]  # no failure: what the fighters' state hash said
 function Step([string]$name) { "== $(Get-Date -Format HH:mm:ss) $name" }
 function Since([string]$path, [string]$pattern) {
-    # lines matching pattern written since the regression started (logs that append keep older runs)
+    # lines matching pattern written since the regression started (logs that append keep older runs); case-sensitive:
+    # "DESYNC" is the line of a desync, "desync" the folder of a report
     if (-not (Test-Path $path)) { return @() }
-    return @(Select-String -Path $path -Pattern $pattern | Where-Object {
+    return @(Select-String -Path $path -Pattern $pattern -CaseSensitive | Where-Object {
         $_.Line -match '^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)' -and [datetime]$Matches[1] -ge $started.AddSeconds(-1)
     })
 }
@@ -48,7 +50,7 @@ $caught = Since $watch '\[watch\] epoch 1 at'
 if ($parted.Count -gt 0) { $fails.Add("spectator: $($parted[0].Line)") }
 if ($caught.Count -eq 0) { $fails.Add('spectator: never reached the fight') }
 foreach ($role in 'host', 'guest') {
-    $d = Since (Join-Path $logs "pair_$role.log") 'DESYNC'
+    $d = Since (Join-Path $logs "pair_$role.log") 'DESYNC in'
     if ($d.Count -gt 0) { $fails.Add("spectator's players ($role): $($d[0].Line)") }
 }
 
@@ -57,12 +59,17 @@ Step 'room'
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'room_test.ps1') | Out-Null
 foreach ($role in 'host', 'guest') {
     $log = Join-Path $logs "room_$role.log"
-    $d = Since $log 'DESYNC'
+    $d = Since $log 'DESYNC in'
     $fight = Since $log "barrier 'fight start'"
     "room ${role}: fight started $($fight.Count -gt 0), desync lines $($d.Count)"
     if ($d.Count -gt 0) { $fails.Add("room ($role): $($d[0].Line)") }
     if ($fight.Count -eq 0) { $fails.Add("room ($role): the fight never started") }
 }
+
+# The fighters' state hash (netplay.cpp CompareFighters): a diagnostic, not a desync; its reports are in out\pc\logs
+$fighters = @(Get-ChildItem (Join-Path $logs '*.log') | Where-Object { $_.LastWriteTime -ge $started } |
+    ForEach-Object { Since $_.FullName "fighters' state differs" })
+foreach ($f in $fighters) { $notes.Add("$(Split-Path $f.Path -Leaf): $($f.Line)") }
 
 # Crashes and hangs anywhere in the run
 $dumps = @(Get-ChildItem (Join-Path $logs 'crash_*.dmp') -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $started })
@@ -71,6 +78,10 @@ $hangs = @(Get-ChildItem (Join-Path $logs '*.log') | Where-Object { $_.LastWrite
 if ($hangs.Count -gt 0) { $fails.Add("hangs: $($hangs[0].Line)") }
 
 Step 'done'
+if ($notes.Count -gt 0) {
+    "the fighters' state differed ($($notes.Count), no failure: tools/online/desync_report.py on the _fighters reports):"
+    $notes | ForEach-Object { "  - $_" }
+}
 if ($fails.Count -gt 0) {
     "REGRESSION FAILED ($($fails.Count)):"
     $fails | ForEach-Object { "  - $_" }

@@ -309,6 +309,28 @@ uint64_t HashFighters(uint8_t* base, uint64_t seed, uint64_t key) {
   return h;
 }
 
+// mk9-lauta (2026-11-11): health and position, at the same places in every fight; never apart between two machines in
+// 7494 samples of two sessions (fighter_diff.py's dumps), and there on both whenever either had them. A run of the
+// SyncTest brings them back the same (SyncTestFighters: the object and the actor's position always came back).
+uint64_t HashCore(uint8_t* base, uint64_t seed) {
+  if (State(base) != kStatePlay) return seed;
+  QuietFaults quiet;
+  uint32_t words[2][5];
+  for (uint32_t p = 0; p < 2; ++p) {
+    uint32_t object = 0, actor = 0;
+    if (!Read32(base, kGameInfo + p * kPlayerStride + kObject, &object) || object < 0x30000000u ||
+        object >= 0xA0000000u || !Read32(base, object + 8, &actor) || actor < 0x30000000u || actor >= 0xA0000000u) {
+      return seed;
+    }
+    if (!Read32(base, object + kHealth, &words[p][0]) || !Read32(base, object + kHealth + 4, &words[p][1]) ||
+        !Read32(base, actor + 0xDC, &words[p][2]) || !Read32(base, actor + 0xE0, &words[p][3]) ||
+        !Read32(base, actor + 0xE4, &words[p][4])) {
+      return seed;
+    }
+  }
+  return XXH3_64bits_withSeed(words, sizeof(words), seed);
+}
+
 bool WriteFighters(const std::filesystem::path& file, uint64_t upto) {
   FILE* f = _wfopen(file.c_str(), L"wb");
   if (!f) return false;

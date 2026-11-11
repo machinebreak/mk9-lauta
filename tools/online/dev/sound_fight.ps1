@@ -10,6 +10,6 @@ $extra = "--mk9_net_lag_ms=$Lag --mk9_net_jitter_ms=$Jitter $More".Trim()
 foreach ($role in 'host', 'guest') {
     $log = Join-Path $root "out\pc\logs\pair_$role.log"
     "== $role"
-    Select-String -Path $log -Pattern 'checks differ|DESYNC|mode ended|barrier .fight|no new FMOD|sound sync|\[sound\]' |
+    Select-String -Path $log -Pattern 'checks differ|games differ|DESYNC|mode ended|barrier .fight|no new FMOD|sound sync|\[sound\]' |
         Select-Object -First 30 | ForEach-Object { $_.Line.Substring(0, [Math]::Min(210, $_.Line.Length)) }
 }
