@@ -18,6 +18,9 @@ namespace mk9::session {
 // mk9-lauta (2026-11-10): starts the game again watching the room's session (a profile of its own made anew, as the
 // players') and ends this one.
 [[noreturn]] void Watch(const std::string& room, const std::string& name);
+// mk9-lauta (2026-11-11, PLAN-0.4 F5): starts the game again playing back a session recording (path: UTF-8; a profile
+// made anew, as a spectator's) and ends this one.
+[[noreturn]] void Replay(const std::string& path);
 // Starts the game again without a session and ends this one.
 [[noreturn]] void Back();
 

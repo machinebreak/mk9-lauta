@@ -177,6 +177,22 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"La repetición se desvió de la partida.", {"The playback drifted from the match.", "A reprodução se desviou da partida."}},
       {"%d mirando", {"%d watching", "%d assistindo"}},
       {"No se pudo traer la partida.", {"The match could not be fetched.", "Não foi possível trazer a partida."}},
+      {"Replays", {"Replays", "Replays"}},
+      {"Ver", {"Watch", "Ver"}},
+      {"Cada sesión online queda grabada (las últimas 10): verla la juega de nuevo desde el principio, los menús rápido "
+       "y las peleas a su ritmo.",
+       {"Every online session is recorded (the last 10): watching one plays it again from the start, the menus fast and "
+        "the fights at their pace.",
+        "Cada sessão online fica gravada (as últimas 10): vê-la joga de novo desde o começo, os menus rápido e as lutas "
+        "no seu ritmo."}},
+      {"Todavía no hay sesiones grabadas.", {"No sessions recorded yet.", "Ainda não há sessões gravadas."}},
+      {"Replay", {"Replay", "Replay"}},
+      {"Adelantando los menús...", {"Skipping the menus...", "Adiantando os menus..."}},
+      {"El replay terminó.", {"The replay is over.", "O replay terminou."}},
+      {"No se pudo leer el replay.", {"The replay could not be read.", "Não foi possível ler o replay."}},
+      {"Este replay es de otra versión de mk9-lauta: no se puede ver con esta.",
+       {"This replay is from another version of mk9-lauta: it cannot be watched with this one.",
+        "Este replay é de outra versão do mk9-lauta: não pode ser visto com esta."}},
       {"Hubo un desync: el reporte quedó en la carpeta logs.",
        {"There was a desync: its report is in the logs folder.", "Houve um desync: o relatório ficou na pasta logs."}},
       {"Abrir el reporte del desync", {"Open the desync report", "Abrir o relatório do desync"}},

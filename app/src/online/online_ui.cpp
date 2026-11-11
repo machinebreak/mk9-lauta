@@ -6,10 +6,17 @@
 #include "mk9_updater.h"
 #include "options_ui.h"
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -220,6 +227,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (!room.in_session) tabs.push_back("Salas");
       tabs.push_back("Chat global");
       tabs.push_back("Perfil");
+      if (!room.in_session) tabs.push_back("Replays");
       const char* wanted = nullptr;
       if (static bool once = false; !once && !REXCVAR_GET(mk9_online_test_tab).empty()) {
         once = true;
@@ -260,6 +268,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem(Label("Perfil").c_str(), nullptr, tab_flags("Perfil", 0))) {
         tab_ = "Perfil";
         DrawProfile(lobby);
+        ImGui::EndTabItem();
+      }
+      if (!room.in_session && ImGui::BeginTabItem(Label("Replays").c_str(), nullptr, tab_flags("Replays", 0))) {
+        tab_ = "Replays";
+        DrawReplays();
         ImGui::EndTabItem();
       }
       ImGui::EndTabBar();
@@ -656,6 +669,13 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##watch_badge", nullptr, flags)) {
+      if (info.replay) {  // a replay: no room, no live match
+        ImGui::TextColored(kGold, "%s", T("Replay"));
+        if (info.catching_up) ImGui::TextColored(kGrey, "%s", T("Adelantando los menús..."));
+        if (info.watch_diffs > 0) ImGui::TextColored(kRed, "%s", T("La repetición se desvió de la partida."));
+        ImGui::End();
+        return;
+      }
       ImGui::Text("%s", T("Mirando:"));
       ImGui::SameLine();
       FlagInline(room.p1_country);
@@ -845,6 +865,99 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
   }
 
+  // mk9-lauta (2026-11-11, PLAN-0.4 F5): the sessions recorded (logs\session_*.mk9net, the newest 10), newest first,
+  // with the rival of the matches played in each (the profile's records), and "Ver": the game starts again playing it
+  // back (a spectator whose match is the file: the menus fast, the fights at their pace).
+  void DrawReplays() {
+    ImGui::PushStyleColor(ImGuiCol_Text, kGrey);
+    ImGui::TextWrapped("%s", T("Cada sesión online queda grabada (las últimas 10): verla la juega de nuevo desde el "
+                               "principio, los menús rápido y las peleas a su ritmo."));
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    if (Clock::now() - replays_listed_ > std::chrono::seconds(5)) ListReplays();
+    if (replays_.empty()) {
+      ImGui::TextColored(kGrey, "%s", T("Todavía no hay sesiones grabadas."));
+      return;
+    }
+    if (ImGui::BeginTable("replays", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_ScrollY,
+                          ImVec2(0, 0))) {
+      ImGui::TableSetupColumn(T("Fecha"), ImGuiTableColumnFlags_WidthFixed, 130);
+      ImGui::TableSetupColumn(T("Rival"), ImGuiTableColumnFlags_WidthStretch);
+      ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80);
+      ImGui::TableHeadersRow();
+      for (size_t i = 0; i < replays_.size(); ++i) {
+        const Replay& r = replays_[i];
+        ImGui::PushID(int(i));
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(kGrey, "%s", r.when.c_str());
+        ImGui::TableNextColumn();
+        ImGui::Text("%s", r.rival.empty() ? "-" : r.rival.c_str());
+        ImGui::TableNextColumn();
+        if (ImGui::SmallButton(T("Ver"))) session::Replay(r.path);
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+  }
+
+  struct Replay {
+    std::string path;    // UTF-8
+    std::string when;    // "dd/mm hh:mm"
+    std::string rival;   // the rivals of the matches recorded in it, from the profile's records
+    int64_t start = 0;   // seconds since 1970 (its name's date)
+  };
+  void ListReplays() {
+    replays_listed_ = Clock::now();
+    replays_.clear();
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(logs, ec)) {
+      const std::string name = entry.path().filename().string();
+      int y, mo, d, h, mi, s;
+      if (entry.path().extension() != L".mk9net" ||
+          std::sscanf(name.c_str(), "session_%4d%2d%2d_%2d%2d%2d", &y, &mo, &d, &h, &mi, &s) != 6) {
+        continue;
+      }
+      Replay r;
+      const std::u8string u8 = entry.path().u8string();
+      r.path.assign(reinterpret_cast<const char*>(u8.data()), u8.size());
+      r.when = fmt::format("{:02d}/{:02d} {:02d}:{:02d}", d, mo, h, mi);
+      std::tm t{};
+      t.tm_year = y - 1900;
+      t.tm_mon = mo - 1;
+      t.tm_mday = d;
+      t.tm_hour = h;
+      t.tm_min = mi;
+      t.tm_sec = s;
+      t.tm_isdst = -1;
+      r.start = int64_t(std::mktime(&t));
+      replays_.push_back(std::move(r));
+    }
+    // one a session (two games on one PC, a test's, leave both players' files: player 1's kept)
+    std::sort(replays_.begin(), replays_.end(), [](const Replay& a, const Replay& b) {
+      return a.start != b.start ? a.start > b.start : a.path < b.path;
+    });
+    replays_.erase(std::unique(replays_.begin(), replays_.end(),
+                               [](const Replay& a, const Replay& b) { return a.start == b.start; }),
+                   replays_.end());
+    // the matches each one holds: those that ended after it began and before the next one began
+    const std::vector<stats::Match> matches = stats::Recent(100);
+    for (size_t i = 0; i < replays_.size(); ++i) {
+      const int64_t until = i == 0 ? INT64_MAX : replays_[i - 1].start;
+      for (const stats::Match& m : matches) {
+        if (m.at < replays_[i].start || m.at >= until || m.rival.empty()) continue;
+        if (replays_[i].rival.find(m.rival) == std::string::npos) {
+          replays_[i].rival += (replays_[i].rival.empty() ? "" : ", ") + m.rival;
+        }
+      }
+    }
+  }
+  std::vector<Replay> replays_;
+  Clock::time_point replays_listed_{};
+
   // The session is over: why, and back to the lobby (by itself after a few seconds).
   void DrawSessionEnd(const room::State& room, const netplay::SessionInfo& info) {
     if (ended_at_ == Clock::time_point{}) ended_at_ = Clock::now();
@@ -855,7 +968,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       return;
     }
     std::string why;
-    if (info.watching) {
+    if (info.replay) {
+      why = info.end_reason == netplay::EndReason::kOtherVersion
+                ? T("Este replay es de otra versión de mk9-lauta: no se puede ver con esta.")
+            : info.end_reason == netplay::EndReason::kFailed ? T("No se pudo leer el replay.")
+                                                             : T("El replay terminó.");
+    } else if (info.watching) {
       if (room.watch_full) why = T("La sala ya tiene el máximo de espectadores.");
       else if (info.end_reason == netplay::EndReason::kFailed) why = T("No se pudo traer la partida.");
       else if (info.end_reason == netplay::EndReason::kOtherVersion)

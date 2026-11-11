@@ -835,3 +835,15 @@ lado). Las pruebas de hoy corrieron a 20-30 fps porque la PC tenía otro juego a
 primera versión (la mitad de la fase por segundo, sin banda muerta) hizo que los dos lados corrieran sus grillas de un
 lado a otro (101 y 133 ms en 100 s). Con el ajuste apagado la medida corre igual (el log `[net]` dice "phase X ms ahead
 (here, there)"): en una cacería, el invitado iba ~10 ms adelante.
+
+### Replays (tarea F5, 2026-11-11)
+
+Un replay es un espectador cuya partida es un archivo (`mk9_net_replay=<logs\session_*.mk9net>`): `feed::LoadFile` lo
+pone entero en el búfer que el relay llenaría, y el resto es el reproductor del espectador (sus hashes contra los
+grabados incluidos). La grabación del invitado tiene su propia entrada primero: con el jugador de la cabecera en 1 se
+cruzan. El ritmo: los menús rápido y en silencio, las peleas a su ritmo (no lo que falta para el vivo: no hay vivo); la
+carga de la pelea, como siempre, a velocidad normal. El juego se vuelve a abrir con un perfil nuevo, como el de un
+espectador (`session::Replay`), desde **F1 > Replays** (las grabaciones por fecha, una por sesión, con el rival de las
+partidas del perfil que terminaron en ella). Probado con la grabación del host y la del invitado de la misma sesión:
+8922 y 8859 cuadros comparados, ninguno distinto. Una grabación de otra versión (su protocolo en la cabecera) se
+rechaza con su motivo.

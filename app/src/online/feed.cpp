@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -172,6 +173,19 @@ uint64_t Size() {
 bool Ended() {
   std::lock_guard<std::mutex> lock(g_mutex);
   return g_ended;
+}
+
+bool LoadFile(const std::wstring& path) {
+  FILE* f = _wfopen(path.c_str(), L"rb");
+  if (!f) return false;
+  std::string bytes;
+  char buffer[65536];
+  for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) bytes.append(buffer, n);
+  std::fclose(f);
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_received = std::move(bytes);
+  g_ended = true;
+  return true;
 }
 
 }  // namespace mk9::feed

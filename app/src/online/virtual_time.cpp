@@ -32,6 +32,7 @@ REXCVAR_DECLARE(std::string, mk9_net_room);
 REXCVAR_DECLARE(int32_t, mk9_net_host);
 REXCVAR_DECLARE(std::string, mk9_net_join);
 REXCVAR_DECLARE(std::string, mk9_synctest);
+REXCVAR_DECLARE(std::string, mk9_net_replay);
 
 namespace mk9::virtual_time {
 namespace {
@@ -129,7 +130,7 @@ uint64_t Filter(uint64_t real_ticks) {
 // must read what an online game's would).
 bool SessionGame() {
   return !REXCVAR_GET(mk9_net_room).empty() || REXCVAR_GET(mk9_net_host) > 0 || !REXCVAR_GET(mk9_net_join).empty() ||
-         !REXCVAR_GET(mk9_synctest).empty();
+         !REXCVAR_GET(mk9_synctest).empty() || !REXCVAR_GET(mk9_net_replay).empty();
 }
 
 }  // namespace

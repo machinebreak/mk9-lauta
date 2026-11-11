@@ -75,6 +75,7 @@ std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropp
     if (a.rfind(L"--mk9_net_room", 0) == 0 || a.rfind(L"--mk9_net_role", 0) == 0 ||
         a.rfind(L"--mk9_online_name", 0) == 0 || a.rfind(L"--mk9_online_show", 0) == 0 ||
         a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos ||
+        a.rfind(L"--mk9_net_replay", 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const wchar_t* o) { return a.rfind(o, 0) == 0; }) ||
         std::any_of(dropping.begin(), dropping.end(), [&](const wchar_t* o) { return a.rfind(o, 0) == 0; })) {
@@ -140,6 +141,17 @@ void Watch(const std::string& room, const std::string& name) {
   options.push_back(L"--mk9_online_name=" + Wide(name));
   options.push_back(L"--user_data_root=" + profile.wstring());
   Start(options, "watching a room's session");
+}
+
+void Replay(const std::string& path) {
+  const std::filesystem::path profile = ExeDir() / "online_session_watch";
+  std::error_code ec;
+  std::filesystem::remove_all(profile, ec);
+  std::filesystem::create_directories(profile, ec);
+  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
+  options.push_back(L"--mk9_net_replay=" + Wide(path));
+  options.push_back(L"--user_data_root=" + profile.wstring());
+  Start(options, "a replay");
 }
 
 void Back() {

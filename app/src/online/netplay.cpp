@@ -169,6 +169,9 @@ REXCVAR_DEFINE_BOOL(mk9_net_phase_align, false, "MK9 Online",
                     "In a fight, a side whose frames start ahead of the other's by part of a frame (the two machines' "
                     "start of the same frame, from the packets) moves its 60 Hz grid back a little each second: the two "
                     "see each other's inputs equally late (PLAN-0.4 C1; off until measured on a machine at 60 fps)");
+REXCVAR_DEFINE_STRING(mk9_net_replay, "", "MK9 Online",
+                      "A session recording (logs\\session_*.mk9net) played back from the game's start, as a spectator "
+                      "watches a match: the menus fast and muted, the fights at their pace (F1 > Replays)");
 REXCVAR_DEFINE_STRING(mk9_watch_catch_up_mode, "", "MK9 Online",
                       "Tests: how a spectator catches up: \"\" hidden and unpaced; \"drawn\" drawn and shown but unpaced "
                       "(with renut_vsync=false); \"paced\" hidden at the players' speed (it never catches up)");
@@ -304,6 +307,8 @@ struct Session {
   uint64_t light_live = 0;           // live frames that started with no snapshot (mk9_net_light_live)
   // mk9-lauta (2026-11-10): a spectator's game (mk9_net_role=watch): the host's recording played back (feed.h)
   bool watching = false;
+  bool replay = false;                 // a replay (mk9_net_replay): watching a recording read from a file
+  bool replay_swap = false;            // ... recorded by the guest: its frames' two inputs player 2's first
   struct WatchedFrame {
     Pad p1, p2;
     uint64_t hash = 0;
@@ -1144,6 +1149,21 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
 
 bool Configure() {
   g.configured = true;
+  // mk9-lauta (2026-11-11, PLAN-0.4 F5): a replay is a spectator whose match is a file, there whole from the start
+  if (const std::string replay = REXCVAR_GET(mk9_net_replay); !replay.empty()) {
+    g.watching = true;
+    g.replay = true;
+    g.host = false;
+    g.player = 0;
+    const std::filesystem::path path = std::filesystem::u8path(replay);
+    if (!feed::LoadFile(path.wstring())) {
+      REXLOG_ERROR("[watch] the replay {} cannot be read", replay);
+      g.failed = true;
+      return false;
+    }
+    REXLOG_INFO("[watch] a replay: {} ({} bytes)", replay, feed::Size());
+    return true;
+  }
   const int host_port = REXCVAR_GET(mk9_net_host);
   const std::string join = REXCVAR_GET(mk9_net_join);
   const std::string room = REXCVAR_GET(mk9_net_room);
@@ -1847,6 +1867,7 @@ void WatchParse() {
     }
     std::memcpy(&g.seed, h + 13, 4);
     g.rollback_wanted = h[17] != 0;
+    g.replay_swap = g.replay && h[12] == 1;  // a guest's recording: its own input first
     g.watch_header = true;
     g.watch_read = sizeof(h);
   }
@@ -1874,6 +1895,7 @@ void WatchParse() {
         auto& frames = g.watched.back().frames;
         frames.emplace_back();
         Pad* pads[2] = {&frames[frame].p1, &frames[frame].p2};
+        if (g.replay_swap) std::swap(pads[0], pads[1]);
         for (int p = 0; p < 2; ++p) {
           const uint8_t* at = r + 5 + p * kPadBytes;
           std::memcpy(pads[p]->bytes, at, 12);
@@ -2023,8 +2045,9 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   const int64_t behind = WatchBehind();
   g.watch_behind.store(behind, std::memory_order_relaxed);
   const bool loading = g.game_state.load(std::memory_order_relaxed) == fight_state::kStateLoadingFight;
-  const bool hide = (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && !loading &&
-                    REXCVAR_GET(mk9_watch_catch_up) && (g.watch_hidden ? behind > 90 : behind > 300);
+  const bool hide = g.replay ? !fight && !loading  // a replay: the menus fast, the fights at their pace
+                             : (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && !loading &&
+                                   REXCVAR_GET(mk9_watch_catch_up) && (g.watch_hidden ? behind > 90 : behind > 300);
   if (hide != g.watch_hidden) {
     snapshot::FlushRendering(ctx, base);
     // (tests, mk9_watch_catch_up_mode: "drawn", the frames drawn and shown but not paced, run with renut_vsync off;
@@ -2336,6 +2359,7 @@ SessionInfo Info() {
     info.catching_up = g.watch_hidden;
     info.watch_diffs = g.watch_diffs;
   }
+  info.replay = g.replay;
   {
     std::lock_guard lock(g_desync_report_mutex);
     info.desync_report = g_desync_report;

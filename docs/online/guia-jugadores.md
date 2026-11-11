@@ -53,11 +53,17 @@ En la pestaña **Perfil** está tu récord online: partidas, ganadas, perdidas, 
 ## Mirar una partida
 
 En la lista de salas, las públicas que están jugando tienen el botón **Mirar**. El juego se vuelve a abrir mirando esa
-partida desde el principio: la juega igual que los jugadores, con sus botones. Si llegás tarde se pone al día rápido en
-los menús (sin imagen ni sonido un momento) y después la seguís unos dos segundos detrás; las peleas siempre se ven a
-velocidad normal, así que si entraste en medio de una pelea vas a ver esa pelea un poco atrasado. Arriba a la derecha
-dice a quién mirás y cuánto vas detrás del vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4
-espectadores.
+partida desde el principio: la juega igual que los jugadores, con sus botones. Si llegás tarde se pone al día rápido
+(sin imagen ni sonido un momento), en los menús y también en medio de una pelea, y después la seguís unos dos segundos
+detrás. Mientras carga una pelea va a velocidad normal. Arriba a la derecha dice a quién mirás y cuánto vas detrás del
+vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4 espectadores.
+
+## Replays
+
+Cada sesión online queda grabada (las últimas 10, en la carpeta `logs`). En **F1 > Replays** están por fecha, con el
+rival, y **Ver** vuelve a abrir el juego jugando esa sesión desde el principio: los menús pasan rápido (sin imagen ni
+sonido un momento) y las peleas se ven a su ritmo, con sonido. Al terminar, "Volver al lobby". Un replay de otra
+versión de mk9-lauta no se puede ver (el juego lo avisa).
 
 ## Salir
 

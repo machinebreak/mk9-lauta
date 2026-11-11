@@ -113,6 +113,8 @@ struct SessionInfo {
   int game_state = -1;
   bool catching_up = false;
   uint64_t watch_diffs = 0;
+  // mk9-lauta (2026-11-11, F5): a replay (mk9_net_replay): watching a recording read from a file
+  bool replay = false;
   // mk9-lauta (2026-11-11, A3): the folder of this session's desync report (logs\desync_<date>_p<N>; empty: none)
   std::string desync_report;
 };
