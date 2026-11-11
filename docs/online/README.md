@@ -149,6 +149,17 @@ Medido con un solo juego (`tools/online/run_game.ps1`) y la línea `Memory: proc
   713) y el proceso en ~1,95 GB, quieto; las capturas de una pelea y del título después de liberar texturas, bien; sin
   más tirones.
 
+### Los pipelines y los tirones (2026-11-11, tarea E3 del plan 0.4)
+
+La lista que viaja con la release (`pipeline_list.bin`, 4272 registros: cada API toma los suyos, 1597 D3D12 y 3496
+Vulkan) se construye por adelantado con 4 hilos de prioridad baja, cada pipeline cuando llegan sus shaders. Medido en
+la misma pelea (`run_game.ps1`): con la lista, los cuadros lentos caen en el arranque (los primeros ~25 s: 691
+pipelines, 34-51 fps en la intro y los menús) y en la pantalla de carga de la pelea; **la pelea va a 60 sin ningún
+cuadro de más de 20 ms**. Sin la lista, los pipelines nuevos se crean en plena pelea: cuadros de hasta 167 ms. Una
+barrida nueva de una Escalera (`out/f3/make_sweep.py`) sumó sólo 9 registros: la lista ya cubre casi todo lo que la
+Escalera recorre. `mk9_async_pipelines` (dibujar sin el pipeline hasta que esté) es de deko3d: en PC los shaders ya
+están compilados y no aplica.
+
 ### PCs con menos núcleos (2026-11-09)
 
 Con el proceso limitado a pocos núcleos (`run_game.ps1 -Affinity`, `pair_test.ps1 -HostAffinity/-GuestAffinity`; el
