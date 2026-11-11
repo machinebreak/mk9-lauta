@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -31,6 +32,11 @@ REXCVAR_DEFINE_STRING(renut_gpu_backend, "d3d12", "Nuts&Bolts/Graphics",
                       "Non-Windows builds always use vulkan. banjo-nx: deko3d on the Switch, plume's deko3d "
                       "back end (docs/deko3d-renderer.md); elsewhere it means vulkan.")
     .allowed({"d3d12", "vulkan", "deko3d"})
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_STRING(renut_gpu_adapter, "", "Nuts&Bolts/Graphics",
+                      "The graphics card, by the name the API gives it (F2 lists them when there is more than one; "
+                      "empty: Direct3D 12 the one with the most memory, Vulkan the discrete one). Takes effect after a "
+                      "restart.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_BOOL(renut_gpu_dred, false, "Nuts&Bolts/Graphics",
                     "D3D12 device removed diagnostics (DRED breadcrumbs and page faults) for "
@@ -275,6 +281,21 @@ Backend LatchBackend() {
 
 void FallBackToVulkan() { detail::g_backend_plus1 = uint8_t(uint8_t(Backend::Vulkan) + 1); }
 void ForceBackend(Backend backend) { detail::g_backend_plus1 = uint8_t(uint8_t(backend) + 1); }
+
+namespace {
+std::mutex g_adapters_mutex;
+std::vector<std::string> g_adapters;
+}  // namespace
+
+void SetAdapterNames(std::vector<std::string> names) {
+  std::lock_guard lock(g_adapters_mutex);
+  g_adapters = std::move(names);
+}
+
+std::vector<std::string> AdapterNames() {
+  std::lock_guard lock(g_adapters_mutex);
+  return g_adapters;
+}
 
 const char *BackendName(Backend backend) {
   return backend == Backend::Vulkan ? "Vulkan" : backend == Backend::Deko3D ? "deko3d" : "D3D12";

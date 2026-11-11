@@ -34,6 +34,7 @@
 #include "mk9_controls.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
+#include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
 #if defined(MK9_BUILTIN_CONFIG)
@@ -108,6 +109,26 @@ const std::vector<Option>& GraphicsOptions() {
        "Bordes más suaves; cada paso cuesta más placa de video. Se aplica al volver a abrir el juego."},
   };
   return options;
+}
+
+// mk9-lauta (2026-11-11, PLAN-0.4 E1): the graphics card, when the PC has more than one (a notebook's integrated and
+// dedicated ones): the names the API listed when the device was made (null until there are two).
+const Option* GpuOption() {
+  static std::vector<std::string> names;
+  static Option option{"renut_gpu_adapter", "Placa de video", {},
+                       "Automática usa la que tiene más memoria (en una notebook, la dedicada). Se aplica al volver a "
+                       "abrir el juego.",
+                       true};
+  static bool built = false;
+  if (!built) {
+    std::vector<std::string> listed = renut::gpu::AdapterNames();
+    if (listed.size() < 2) return nullptr;
+    names = std::move(listed);  // not touched again: the choices point into it
+    option.choices.push_back({"", "Automática"});
+    for (const std::string& name : names) option.choices.push_back({name.c_str(), name.c_str()});
+    built = true;
+  }
+  return &option;
 }
 
 const std::vector<Option>& DisplayOptions() {
@@ -359,6 +380,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem("Pantalla e idioma", nullptr, TabFlags("Pantalla e idioma"))) {
         if (!select_tab_) tab_ = "Pantalla e idioma";
         for (const Option& o : DisplayOptions()) DrawOption(o);
+        if (const Option* gpu = GpuOption()) DrawOption(*gpu);
         DrawMonitor();
         DrawWindowSize();
         ImGui::EndTabItem();
@@ -718,6 +740,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         later = true;
       }
       for (const Option& o : DisplayOptions()) later |= o.restart && key == o.key;
+      later |= key == "renut_gpu_adapter";
       later |= key == kButtonIconsOption.key;
     }
     note_ok_ = SaveToConfig(values);

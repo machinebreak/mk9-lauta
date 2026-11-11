@@ -79,6 +79,8 @@
 #include "host_shaders/resolve_copy_ps.dxil.h"
 #endif
 
+REXCVAR_DECLARE(std::string, renut_gpu_adapter);  // backend.cpp
+
 REXCVAR_DEFINE_BOOL(sa2_renut_double_buffer, false, "SA2/Renderer",
                     "Renut's renderer: a swapchain of 2 images instead of 3 (input latency: a finished frame is shown at "
                     "the next refresh instead of queueing behind one already waiting). Off by default: a frame that "
@@ -905,7 +907,7 @@ bool Video::CreateHostDevice() {
   mk9::renderer_start::BeforeDevice();
   s.render_interface = CreateRenderInterface();
   if (s.render_interface)
-    s.device = s.render_interface->createDevice();
+    s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
 #if defined(_WIN32)
   // mk9-nx (2026-11-08): no Direct3D 12 on this GPU or driver: Vulkan instead (renut_gpu_backend stays as it is)
   if (!s.device && !IsVulkan()) {
@@ -915,7 +917,7 @@ bool Video::CreateHostDevice() {
     FallBackToVulkan();
     s.render_interface = CreateRenderInterface();
     if (s.render_interface)
-      s.device = s.render_interface->createDevice();
+      s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
   }
 #endif
   if (!s.render_interface || !s.device) {
@@ -935,6 +937,7 @@ bool Video::CreateHostDevice() {
   }
   banjo::renut_gpu::OnDeviceCreated(s.device.get());
   mk9::renderer_start::DeviceReady(IsVulkan() ? "vulkan" : "d3d12");
+  SetAdapterNames(s.render_interface->getDeviceNames());  // F2's choice of graphics card
   s.backend_description =
       std::string(BackendName(ActiveBackend())) + " on " + s.device->getDescription().name;
   RGPU_INFO("Renderer: {}", s.backend_description);

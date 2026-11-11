@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <plume_render_interface.h>
 
@@ -33,6 +35,10 @@ inline bool IsVulkan() { return ActiveBackend() == Backend::Vulkan; }
 void FallBackToVulkan();
 // mk9-lauta (2026-11-11): this API from now on, before or after the first ActiveBackend (mk9_renderer_start.h).
 void ForceBackend(Backend backend);
+// mk9-lauta (2026-11-11): the graphics cards the API listed when the device was made (renut_gpu_adapter's choices in
+// F2; empty before it).
+void SetAdapterNames(std::vector<std::string> names);
+std::vector<std::string> AdapterNames();
 // banjo-nx: the deko3d back end.
 inline bool IsDeko3D() { return ActiveBackend() == Backend::Deko3D; }
 // banjo-nx: Vulkan's way of binding (dynamic constant buffer sets, push constants, buffer device addresses,
