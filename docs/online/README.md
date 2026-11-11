@@ -203,6 +203,37 @@ falla: pasa a Vulkan y lo muestra. La ejecutable exporta `NvOptimusEnablement` y
 (los drivers de NVIDIA y AMD los buscan en el `.exe`; el DLL del SDK los tenía, sin efecto): una notebook con dos
 placas usa la dedicada. plume ya elegía, en D3D12, el adaptador con más memoria dedicada y, en Vulkan, la discreta.
 
+### DirectX 12 en placas estrictas (2026-11-11)
+
+Un jugador con una PC de pocos recursos veía personajes y escenarios rotos con D3D12 (el piso en bandas
+horizontales) y bien con Vulkan. Acá (Radeon 760M) D3D12 se veía bien, así que la prueba fue con **WARP**, el D3D12
+por software de Windows, que cumple la API al pie de la letra: `renut_gpu_adapter="Microsoft Basic Render Driver"`
+(plume ahora toma un adaptador por software si se lo pide por su nombre; a 480p, ~25 fps en los menús y ~3 en la
+pelea). Con WARP el título y los escenarios se veían bien, pero en la pelea **no se dibujaban los luchadores, sí sus
+sombras**: la geometría y el esqueleto andaban, fallaba el paso que los pinta.
+
+El juego usa profundidad invertida, y 1086 de sus pipelines prueban "mayor o igual" sin escribir la profundidad: dibujan
+encima de una profundidad que dejó otro paso. Eso exige que los dos shaders calculen la posición con los mismos bits,
+como en la consola. Los shaders traducidos la calculaban sin `precise`, y cada compilador podía fusionar
+multiplicaciones y sumas de un shader y no del otro: la profundidad cambia en el último bit, el dibujo de arriba
+desaparece entero o a franjas (z-fighting, como el piso del jugador). Ahora la salida de posición de todos los
+shaders de vértices es `out precise float4 oPos : SV_Position` (XenosRecomp): en DXIL esas operaciones van sin
+`fast`, en SPIR-V con `NoContraction`; D3D12 y Vulkan en esta PC, bien. **Con WARP no alcanzó**: en otra pelea
+tampoco se dibujaron los luchadores ni el puente del escenario (el cielo, la niebla y las partículas sí), así que lo de
+WARP es otra cosa, todavía abierta (no son la referencia de stencil, que plume pone con `OMSetStencilRef`, ni los
+pipelines, que se crean todos).
+
+**La API por defecto** (`mk9_hardware.cpp`, cada arranque, si el jugador no eligió una: ni en mk9.toml, ni en la línea
+de comandos, ni `REX_RENUT_GPU_BACKEND`): **Vulkan** en las integradas de Intel (no Arc), en las placas anteriores al
+resource binding tier 3 de D3D12 y en las dedicadas de menos de 2 GB, si la PC tiene Vulkan; D3D12 en el resto. Es
+donde el camino D3D12 de este renderer es más frágil, y el camino Vulkan es el más probado. Si Vulkan no arranca dos
+veces seguidas, el vigía del arranque vuelve a D3D12 y lo guarda (`mk9_renderer_start.h`).
+
+Para lo que falte: `renut_diag_depth_pass` (las pruebas "igual" y "menor o igual" pasan siempre: si un dibujo
+reaparece, era su profundidad; con WARP a 1,5 fps las capturas fallan) y la línea `[hardware] Direct3D 12 there:
+resource binding tier, resource heap tier, shader model, memory, driver` del log, que dice la placa y el driver de
+quien reporta.
+
 ### La interfaz: fuentes propias y el primer arranque (2026-11-11, tareas F1 y F3 del plan 0.4)
 
 - **Fuentes** (`overlay_ui.cpp`): Barlow (texto), Barlow SemiBold y Barlow Condensed Bold (títulos), dentro del

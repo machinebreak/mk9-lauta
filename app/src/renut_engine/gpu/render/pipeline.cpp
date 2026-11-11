@@ -37,6 +37,9 @@ REXCVAR_DEFINE_BOOL(banjo_deko3d_variant_log, false, "Banjo/Renut",
 // waited for after 10 s on the render thread, and mk9_diag_bad_vertices logged 17-26 draws of particle vertices read
 // wrong (players' coloured triangles while shaders compiled); off, the same fight played as with a full cache (47-49
 // fps, the compiles during the loading screen) and logged none.
+REXCVAR_DEFINE_BOOL(renut_diag_depth_pass, false, "Nuts&Bolts/Graphics",
+                    "Diagnosis: depth tests that are equal or less-equal always pass (the image is wrong where depth "
+                    "hides things): whether a draw that disappears does so by its depth test");
 REXCVAR_DEFINE_BOOL(mk9_async_pipelines, false, "MK9/Renderer",
                     "deko3d: a new pipeline whose shaders need compiling (not in the DKSH cache) is built by a prebuild "
                     "worker; its draws are left out until it is done (a few frames) instead of the frame waiting for "
@@ -343,6 +346,14 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     if (desc.depthEnabled && !desc.depthWriteEnabled && ((dc >> 4) & 7) == 7)
       desc.depthEnabled = false;
     desc.depthFunction = ConvertCompareFunction((dc >> 4) & 7);
+    // mk9-lauta (2026-11-11, diagnosis): a strict Direct3D 12 (WARP) draws the fighters' shadows but not the fighters
+    // (a player's report: broken characters on Direct3D 12 on a low-end PC, fine on Vulkan). Equal and less-equal
+    // depth tests that always pass say whether the depth of the passes after the depth-only one is the cause.
+    if (REXCVAR_GET(renut_diag_depth_pass) &&
+        (desc.depthFunction == plume::RenderComparisonFunction::EQUAL ||
+         desc.depthFunction == plume::RenderComparisonFunction::LESS_EQUAL)) {
+      desc.depthFunction = plume::RenderComparisonFunction::ALWAYS;
+    }
     desc.stencilEnabled = dc & 1;
     desc.stencilReference = key.stencil_ref_mask & 0xFF;
     desc.stencilReadMask = (key.stencil_ref_mask >> 8) & 0xFF;

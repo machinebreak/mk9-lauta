@@ -2234,7 +2234,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
         out += "\tin uint iInstanceId : SV_InstanceID,\n";
     #endif
 
-        out += "\tout float4 oPos : SV_Position";
+        // mk9-lauta (2026-11-11): the position precise (no fused multiply-adds, no reordering), so two shaders that
+        // compute it the same way give the same bits, as the console did: a game that draws with a depth-only pass
+        // first and then tests against it (MK9: greater-equal without writing, 1,086 of its pipelines) loses whole
+        // draws where a driver fuses one shader's math and not the other's. WARP (Direct3D 12 as the API says it,
+        // nothing fused behind its back) drew the fighters' shadows but not the fighters; a player's low-end PC
+        // showed broken characters on Direct3D 12 and none on Vulkan. DXIL: no "fast" on those operations; SPIR-V:
+        // NoContraction.
+        out += "\tout precise float4 oPos : SV_Position";
 
         for (auto& [usage, usageIndex] : INTERPOLATORS)
             print(",\n\tout float4 o{0}{1} : {2}{1}", USAGE_VARIABLES[uint32_t(usage)], usageIndex, USAGE_SEMANTICS[uint32_t(usage)]);

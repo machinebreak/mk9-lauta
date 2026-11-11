@@ -3660,10 +3660,16 @@ namespace plume {
             DXGI_ADAPTER_DESC1 adapterDesc;
             adapterOption->GetDesc1(&adapterDesc);
 
-            // Ignore remote or software adapters.
+            // Ignore remote or software adapters. mk9-lauta (2026-11-11): a software one asked for by its name (WARP,
+            // "Microsoft Basic Render Driver": Windows' own Direct3D 12, slow but strict to the API's rules) is taken,
+            // to see what a strict driver makes of this renderer.
             if (adapterDesc.Flags & (DXGI_ADAPTER_FLAG_REMOTE | DXGI_ADAPTER_FLAG_SOFTWARE)) {
-                adapterOption->Release();
-                continue;
+                const bool askedFor = (adapterDesc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
+                                      !preferredDeviceName.empty() && Utf16ToUtf8(adapterDesc.Description) == preferredDeviceName;
+                if (!askedFor) {
+                    adapterOption->Release();
+                    continue;
+                }
             }
 
             ID3D12Device8 *deviceOption = nullptr;
