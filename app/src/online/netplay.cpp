@@ -62,7 +62,9 @@
 //   INPUT    u32 epoch, u32 ack (the peer's last frame received in order, +1), u32 first, u8 count, count x 18 bytes
 //            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags, then u32 a sound callback's
 //            announcement, sound_sync.h), u32 hash frame (~0: none),
-//            u64 hash (of that final frame), u32 the sender's live frame (time sync)
+//            u64 hash (of that final frame), u32 the sender's live frame (time sync), u32 the live frame its last
+//            paced release started, u16 the time since that release in 10 us (0xFFFF: none) and i16 the sender's
+//            measure of the phase in 10 us (C1)
 //   BARRIER  u32 epoch (the one starting there), u32 the sender's last frame of the epoch before
 //   PING / PONG  u64 microseconds (the sender's clock, echoed)
 //   BYE      u8 why (netplay.h, EndReason: the sender's player left, or its game found the two out of sync)
@@ -163,6 +165,10 @@ REXCVAR_DEFINE_STRING(mk9_net_input_replay, "", "MK9 Online",
                       "that parted run again on the same path");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up, true, "MK9 Online",
                     "A spectator far behind the match catches up in the menus (frames hidden, fast and muted)");
+REXCVAR_DEFINE_BOOL(mk9_net_phase_align, false, "MK9 Online",
+                    "In a fight, a side whose frames start ahead of the other's by part of a frame (the two machines' "
+                    "start of the same frame, from the packets) moves its 60 Hz grid back a little each second: the two "
+                    "see each other's inputs equally late (PLAN-0.4 C1; off until measured on a machine at 60 fps)");
 REXCVAR_DEFINE_STRING(mk9_watch_catch_up_mode, "", "MK9 Online",
                       "Tests: how a spectator catches up: \"\" hidden and unpaced; \"drawn\" drawn and shown but unpaced "
                       "(with renut_vsync=false); \"paced\" hidden at the players' speed (it never catches up)");
@@ -330,6 +336,15 @@ struct Session {
   int64_t mode_change_at = -1;       // a frame whose checks showed the game's mode change (tag 8 back to 0)
   int64_t peer_latest = -1;          // the peer's live frame, from its packets
   double advantage = 0;              // time sync: frames ahead of the peer, averaged
+  // mk9-lauta (2026-11-11, C1): the two machines' start of the same frame
+  uint64_t release_us = 0;           // the last paced Swap's release a fight's boundary saw (sa2 LastReleaseUs)
+  int64_t release_frame = 0;         // the live frame that release started (g.latest at the first boundary after it)
+  std::array<std::pair<int64_t, uint64_t>, 128> starts{};  // live frame -> its release, the latest 128
+  double phase = 0;                  // ms this side started the peer's frames before the peer did (the packets')
+  double peer_phase = 0;             // the peer's own measure, from its packets (the other way round)
+  uint64_t phase_samples = 0, phase_check_at = 0, phase_shifts = 0;
+  int phase_ahead_checks = 0;        // checks running that found this side ahead past the dead band
+  double phase_shifted_ms = 0;       // this side's grid moved back so far
   uint64_t slept_at_frame = 0;
   // statistics
   uint64_t last_heard_us = 0, last_sent_us = 0, last_ping_us = 0, log_at_us = 0;
@@ -518,6 +533,30 @@ void Put64(std::vector<uint8_t>& out, uint64_t v) {
 }
 uint32_t Get32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24; }
 uint64_t Get64(const uint8_t* p) { return uint64_t(Get32(p)) | uint64_t(Get32(p + 4)) << 32; }
+
+double RoundTripTypical();
+
+// mk9-lauta (2026-11-11, C1): a packet from the peer said it left `into_us` after the release that started its live
+// frame `remote_frame`: that frame started on the peer at its arrival minus half the round trip minus into_us, in this
+// machine's time; against when it started here (the starts kept by frame), the ms this side was ahead, averaged. The
+// two grids run at 60 Hz each on its own clock, at any phase: with ~44 ms each way, 8 ms of phase made one side see
+// the other's inputs 2.2 frames late and the other 3.1, and one side did nearly all the rollbacks
+// (docs/online/baseline-0.3.0.md: 0 against 305). Half the round trip is a guess, and the jitter adds on both sides:
+// the error is the same in the two measures, so the alignment goes by half their difference (the peer's comes in its
+// packets), as NTP does. By frame, not by 1/60 s: a machine late on its grid does not throw it off.
+void NotePhase(int64_t remote_frame, uint64_t into_us) {
+  if (!g.rollback || g.rtt_count == 0 || remote_frame < 0) return;
+  const auto& here = g.starts[size_t(remote_frame) % g.starts.size()];
+  if (here.first != remote_frame || !here.second) return;  // not started here yet, or long ago
+  const uint64_t now = NowUs();
+  uint64_t arrived = g.link->LastArrivalUs();
+  if (!arrived || arrived > now) arrived = now;
+  const double there = double(arrived) - RoundTripTypical() * 500.0 - double(into_us);
+  const double ahead_ms = (there - double(here.second)) / 1000.0;
+  if (std::abs(ahead_ms) > 300.0) return;  // nonsense
+  g.phase = g.phase_samples ? g.phase * 0.95 + ahead_ms * 0.05 : ahead_ms;
+  ++g.phase_samples;
+}
 
 // The protocol version this side speaks (mk9_net_test_protocol: another one, for tests).
 uint8_t Protocol() {
@@ -761,6 +800,13 @@ void SendInputs() {
     Put64(p, 0);
   }
   Put32(p, uint32_t(g.rollback ? g.latest : g.frame));
+  // mk9-lauta (2026-11-11, C1): the live frame the last paced release started here and the time since it (10 us
+  // units; 0xFFFF: none yet in this epoch), and this side's own measure of the phase (10 us units, signed): the
+  // peer's two halves of the measure
+  Put32(p, uint32_t(g.release_frame));
+  Put16(p, g.release_us ? uint16_t(std::min<uint64_t>((NowUs() - std::min(NowUs(), g.release_us)) / 10, 0xFFFE))
+                        : uint16_t(0xFFFF));
+  Put16(p, uint16_t(int16_t(std::clamp(g.phase * 100.0, -32767.0, 32767.0))));
   Send(p);
   ++g.sent;
 }
@@ -866,6 +912,11 @@ void Receive() {
         g.remote_hash_newest = std::max<int64_t>(g.remote_hash_newest, hash_frame);
       }
       g.peer_latest = std::max<int64_t>(g.peer_latest, int64_t(Get32(h + 12)));
+      if (left >= 13 + count * kPadBytes + 24) {
+        const uint32_t into = uint32_t(h[20]) | uint32_t(h[21]) << 8;
+        if (into != 0xFFFF) NotePhase(int64_t(Get32(h + 16)), uint64_t(into) * 10);
+        g.peer_phase = double(int16_t(uint16_t(h[22] | h[23] << 8))) / 100.0;
+      }
     } else if (type == kBarrier && left >= 8) {
       const uint32_t epoch = Get32(p);
       if (epoch == g.epoch + 1 && g.peer_barrier < epoch) {
@@ -1267,6 +1318,13 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.prev_hidden = true;
   g.mode_change_at = -1;
   g.advantage = 0;
+  g.release_us = 0;
+  g.starts.fill({-1, 0});
+  g.phase = 0;
+  g.peer_phase = 0;
+  g.phase_samples = 0;
+  g.phase_check_at = 0;
+  g.phase_ahead_checks = 0;
   // the delay the round trip needs (from the pongs so far): a lockstep epoch starts with it instead of the host's
   // and goes on adjusting from its first frame; a fight's first kLearnFrames (its intro, nobody plays yet) run in
   // lockstep with it too, and the fight's own delay comes after them (FightDelay). With the host's 1 frame, 140-220
@@ -1323,7 +1381,8 @@ void LogStats() {
       rb = fmt::format("; rollback{}: {} rollbacks ({} frames run again, deepest {}), {} frames predicted, {} wrong; "
                        "keeping a frame {:.2f} ms, a rollback's restore {:.2f} ms; at rest {:.2f} ms a boundary "
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
-                       "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; {} frames "
+                       "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; phase {:+.1f} ms ahead "
+                       "(here {:+.1f}, there {:+.1f}), the grid moved back {:.1f} ms in {} steps; {} frames "
                        "run again and {} live with no snapshot; the delay changed {} times",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
@@ -1332,7 +1391,8 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, g.light_boundaries, g.light_live,
+                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, (g.phase - g.peer_phase) / 2.0,
+                       g.phase, g.peer_phase, g.phase_shifted_ms, g.phase_shifts, g.light_boundaries, g.light_live,
                        g.delay_changes);
     }
     const sound::HeapStats sound = sound::Stats();
@@ -1518,6 +1578,12 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
 
 // One frame of a fight with rollback.
 void RollbackFrame(PPCContext& ctx, uint8_t* base) {
+  // C1: a paced release since the last boundary started the live frame this one runs
+  if (const uint64_t release = sa2::renut::LastReleaseUs(); release != g.release_us) {
+    g.release_us = release;
+    g.release_frame = g.latest;
+    g.starts[size_t(g.latest) % g.starts.size()] = {g.latest, release};
+  }
   Receive();
   const bool live = g.frame == g.latest;
   if (live) {
@@ -1716,16 +1782,36 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   ++g.frames_window;
   if (g.frame > g.latest) g.latest = g.frame;
   // time sync: the peer's live frame lags by about half the round trip; a side ahead by two frames or more on average
-  // sleeps one frame, at most once a second
+  // sleeps one frame, at most once a second. mk9-lauta (2026-11-11, C1/C2): with the two machines' measures of the
+  // phase (mk9_net_phase_align, NotePhase: half their difference, the error they share out), it goes by them instead
+  // (half the round trip is not the way there when frames run late: a busy PC's "round trip" had its frames' waits in
+  // it, and the side ahead by 100 ms and more did not sleep), and a part of a frame ahead moves this side's grid back
+  // a quarter of it, 2 ms at most, once a second, once three checks running found it ahead by 2 ms or more (the 60 Hz
+  // grids' phase: the side behind does nothing; on a PC that could not keep 60 fps both sides moved theirs back and
+  // forth with half of it each second)
   if (g.speculating && g.frame == g.latest && g.peer_latest >= 0) {
-    const double lag = g.rtt_ms / 2.0 / (1000.0 / 60.0);
+    constexpr double kFrameMs = 1000.0 / 60.0;
+    const double lag = g.rtt_ms / 2.0 / kFrameMs;
     const double ahead = double(g.latest) - (double(g.peer_latest) + lag);
     g.advantage = g.advantage * 0.95 + ahead * 0.05;
-    if (g.advantage >= 2.0 && uint64_t(g.frame) > g.slept_at_frame + 60) {
+    const bool measured = REXCVAR_GET(mk9_net_phase_align) && g.phase_samples >= 60;
+    const double ahead_ms = measured ? (g.phase - g.peer_phase) / 2.0 : g.advantage * kFrameMs;
+    if (ahead_ms >= 2.0 * kFrameMs && uint64_t(g.frame) > g.slept_at_frame + 60) {
       std::this_thread::sleep_for(std::chrono::microseconds(16667));
       g.slept_at_frame = uint64_t(g.frame);
       g.advantage -= 1.0;
+      if (measured) g.phase -= kFrameMs;
       ++g.syncs_slept;
+    } else if (measured && uint64_t(g.frame) >= g.phase_check_at) {
+      g.phase_check_at = uint64_t(g.frame) + 60;
+      g.phase_ahead_checks = ahead_ms >= 2.0 ? g.phase_ahead_checks + 1 : 0;
+      if (g.phase_ahead_checks >= 3) {
+        const double step = std::min(ahead_ms / 4.0, 2.0);
+        sa2::renut::ShiftGrid(step);
+        g.phase -= step;
+        g.phase_shifted_ms += step;
+        ++g.phase_shifts;
+      }
     }
   }
   LogStats();

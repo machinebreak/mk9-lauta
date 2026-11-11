@@ -808,3 +808,30 @@ que se aparta de la partida o no llega a la pelea, una sala cuya pelea no empiez
 ahora compara los modos por el contador de cuadros del propio juego (el tag 9 de los chequeos): la primera columna del
 registro cuenta los bordes, cuadros re-corridos por la rollback incluidos, y después de una pelea las dos máquinas
 tenían números distintos para el mismo cuadro.
+
+### La fase de las dos grillas (tareas C1/C2, 2026-11-11: el mecanismo, apagado hasta medirlo a 60 fps)
+
+Cada máquina larga sus cuadros en una grilla de 60 Hz con su propio reloj (`sa2_renut_pacing.cpp`; en la PC no hay
+sincronía con el refresco del monitor), con cualquier fase entre las dos. Con ~44 ms por lado, 8 ms de fase hacen que
+un lado vea las entradas del otro 2,2 cuadros tarde y el otro 3,1, y uno solo hace casi todas las rollbacks (la línea
+de base: 0 contra 305). El time sync de antes iba por cuadros enteros (la ventaja con medio ida y vuelta, y un cuadro
+de sueño por segundo con 2 o más), y no ve una fase de pocos ms.
+
+**La medida** (`NotePhase`): cada paquete de entradas lleva el cuadro vivo que empezó la última liberación de la grilla
+del que lo manda, cuánto pasó desde ella y su propia medida. El que lo recibe ubica cuándo empezó ese cuadro allá (la
+llegada menos medio ida y vuelta menos lo que pasó) contra cuándo empezó acá (guarda el comienzo de sus últimos 128
+cuadros vivos): por cuadro, no por 1/60 s, así una PC atrasada en su grilla no la tuerce. Medio ida y vuelta es una
+suposición y el jitter suma de los dos lados: el error es el mismo en las dos medidas, así que la fase es la mitad de
+su diferencia (como en NTP). Probado: las dos medidas salen opuestas (−143,5 contra +141,8 ms; −178,6 contra +178,6).
+
+**El ajuste** (`mk9_net_phase_align`, apagado): con las dos medidas, el lado adelantado 2 cuadros o más duerme un
+cuadro (a lo sumo uno por segundo, como antes pero con la medida buena: en una PC cargada el "ida y vuelta" llevaba
+las esperas de sus cuadros y el lado adelantado 100 ms no dormía), y uno adelantado 2 ms o más en tres chequeos
+seguidos corre su grilla un cuarto de eso, 2 ms como mucho, una vez por segundo (`ShiftGrid`); el de atrás no hace
+nada. Sin las medidas (los primeros segundos), como antes.
+
+**Lo que falta**: medirlo a 60 fps (`tools/online/dev/phase_ab.ps1`: la misma sesión con y sin, las rollbacks de cada
+lado). Las pruebas de hoy corrieron a 20-30 fps porque la PC tenía otro juego abierto: así no se puede juzgar, y una
+primera versión (la mitad de la fase por segundo, sin banda muerta) hizo que los dos lados corrieran sus grillas de un
+lado a otro (101 y 133 ms en 100 s). Con el ajuste apagado la medida corre igual (el log `[net]` dice "phase X ms ahead
+(here, there)"): en una cacería, el invitado iba ~10 ms adelante.

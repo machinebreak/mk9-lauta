@@ -86,6 +86,7 @@ uint32_t RefreshesPerFrame(uint32_t interval) {
 }
 
 Clock::time_point g_grid;  // the first Swap
+std::atomic<uint64_t> g_last_release_us{0};  // LastReleaseUs (mk9-lauta, C1)
 Clock::time_point g_due;   // when the next Swap may go (on the 60 Hz grid while the game keeps up)
 bool g_started = false;
 
@@ -104,6 +105,8 @@ double Ms(Clock::duration d) { return std::chrono::duration<double, std::milli>(
 
 // At a Swap's release ('now' the Swap's arrival).
 void NoteRelease(Clock::time_point arrived, Clock::time_point released, bool late) {
+  g_last_release_us.store(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(released.time_since_epoch()).count()),
+                          std::memory_order_relaxed);
   Stats &s = g_stats;
   if (s.released != Clock::time_point{}) {
     const double work = Ms(arrived - s.released);
@@ -166,7 +169,15 @@ namespace {
 std::atomic<bool> g_frame_hidden{false};
 std::atomic<bool> g_unpaced{false};
 std::atomic<bool> g_pace_hidden{false};
+std::atomic<int64_t> g_shift_ns{0};        // ShiftGrid's, for the next paced Swap
 }  // namespace
+
+void ShiftGrid(double ms) {
+  const double clamped = std::clamp(ms, -4.0, 4.0);
+  g_shift_ns.fetch_add(int64_t(clamped * 1e6), std::memory_order_relaxed);
+}
+
+uint64_t LastReleaseUs() { return g_last_release_us.load(std::memory_order_relaxed); }
 
 void SetFrameHidden(bool hidden) { g_frame_hidden.store(hidden, std::memory_order_release); }
 bool FrameHidden() { return g_frame_hidden.load(std::memory_order_acquire); }
@@ -416,6 +427,8 @@ void PaceSwap(uint32_t device_va) {
     return;
   }
   const auto period = kRefresh * refreshes;
+  // the online's phase alignment (ShiftGrid): the grid moved, from this Swap on
+  if (const int64_t shift = g_shift_ns.exchange(0, std::memory_order_relaxed)) g_due += std::chrono::nanoseconds(shift);
   if (now <= g_due) {
     // On time: released at the due refresh; the next is due a period after it (a fixed grid, so the sleep's own
     // lateness does not add up).

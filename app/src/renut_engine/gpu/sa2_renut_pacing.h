@@ -22,6 +22,12 @@ void SetUnpaced(bool unpaced);
 // mk9-lauta (2026-11-11, tests): hidden frames paced as shown ones (a spectator catching up hidden at the players'
 // speed, mk9_watch_catch_up_mode=paced).
 void SetPaceHidden(bool paced);
+// mk9-lauta (2026-11-11, PLAN-0.4 C1): the online's phase alignment. ShiftGrid moves the 60 Hz grid later by ms (the
+// machine whose frames run ahead of the other's in time moves its own back), at the next paced Swap, 4 ms at most a
+// call; LastReleaseUs is when the last paced Swap was let go (steady_clock, microseconds; 0: none yet): the start of
+// the frame the game runs live now, on the grid.
+void ShiftGrid(double ms);
+uint64_t LastReleaseUs();
 
 // mk9-lauta (2026-11-09): the performance mode (mk9_draw_mode): frames that are not drawn but still take their 1/60 s,
 // so the game keeps its speed while the GPU draws every other frame. Read by the thread that makes the Direct3D calls
