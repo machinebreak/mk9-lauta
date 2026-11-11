@@ -19,7 +19,15 @@
 
 #include <plume_render_interface.h>
 
+struct ImFont;
+
 namespace renut::gpu::overlay {
+
+// mk9-lauta (2026-11-11, F1): the screens' fonts, inside the executable (app/thirdparty/barlow): the default is
+// Barlow Regular; these are Barlow Condensed Bold for titles and Barlow SemiBold for what stands out. nullptr before
+// Start (ImGui::PushFont(nullptr, size) keeps the current font).
+ImFont *TitleFont();
+ImFont *StrongFont();
 
 // An overlay window. Draw builds its widgets, on the UI thread with the
 // overlay's context current, once per overlay frame.

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -43,6 +44,39 @@ std::mutex g_dialogs_mutex;
 std::vector<Dialog *> g_dialogs;
 
 ImGuiContext *g_context = nullptr;
+
+ImFont *g_title_font = nullptr;
+ImFont *g_strong_font = nullptr;
+
+#if defined(_WIN32)
+// mk9-lauta (2026-11-11, F1): the screens' fonts (app/thirdparty/barlow, SIL OFL 1.1; ~320 KB)
+const unsigned char kBarlowRegular[] = {
+#embed "../../../../thirdparty/barlow/Barlow-Regular.ttf"
+};
+const unsigned char kBarlowSemiBold[] = {
+#embed "../../../../thirdparty/barlow/Barlow-SemiBold.ttf"
+};
+const unsigned char kBarlowCondensedBold[] = {
+#embed "../../../../thirdparty/barlow/BarlowCondensed-Bold.ttf"
+};
+
+// One of the fonts above, at the screens' 18 pixels, and Segoe UI merged after it (its glyphs where it has none).
+ImFont *AddEmbeddedFont(ImGuiIO &io, const unsigned char *data, size_t size, const char *name, bool segoe) {
+  ImFontConfig config;
+  config.FontDataOwnedByAtlas = false;  // static: the atlas must not free it
+  std::snprintf(config.Name, sizeof(config.Name), "%s", name);
+  ImFont *font = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char *>(data), int(size), 18.0f, &config);
+  if (font && segoe) {
+    ImFontConfig merge;
+    merge.MergeMode = true;
+    std::snprintf(merge.Name, sizeof(merge.Name), "Segoe UI after %s", name);
+    // 20: its letters as big as Barlow's at 18 (a pixel size is ascent + descent: Segoe UI's line is taller for its
+    // letters, 1.33 em against 1.2)
+    io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 20.0f, &merge);
+  }
+  return font;
+}
+#endif
 
 // Makes the overlay's context current for a scope and puts the previous one
 // back. The overlay's ImGui copy has only this context; the scope keeps it
@@ -517,6 +551,10 @@ bool EnsurePipeline() {
 
 } // namespace
 
+ImFont *TitleFont() { return g_title_font; }
+
+ImFont *StrongFont() { return g_strong_font; }
+
 void SetPadReader(PadReader reader) { g_pad_reader.store(reader, std::memory_order_release); }
 
 void SetCloseFilter(CloseFilter filter) { g_close_filter.store(filter, std::memory_order_release); }
@@ -579,8 +617,9 @@ bool Start(UIThreadRunner run_on_ui_thread) {
       ImVec4 *c = style.Colors;
       const ImVec4 red(0.55f, 0.08f, 0.07f, 1.0f), red_hover(0.72f, 0.12f, 0.10f, 1.0f), red_active(0.85f, 0.18f, 0.12f, 1.0f);
       const ImVec4 gold(0.95f, 0.72f, 0.25f, 1.0f);
-      c[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.05f, 0.05f, 0.95f);
-      c[ImGuiCol_ChildBg] = ImVec4(0.10f, 0.08f, 0.08f, 0.60f);
+      // opaque (F1, 2026-11-11): the game's logos and texts showed through the lists
+      c[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.05f, 0.05f, 1.0f);
+      c[ImGuiCol_ChildBg] = ImVec4(0.09f, 0.07f, 0.07f, 1.0f);
       c[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.06f, 0.06f, 0.97f);
       c[ImGuiCol_Border] = ImVec4(0.45f, 0.30f, 0.12f, 0.55f);
       c[ImGuiCol_TitleBg] = ImVec4(0.22f, 0.04f, 0.04f, 1.0f);
@@ -607,11 +646,40 @@ bool Start(UIThreadRunner run_on_ui_thread) {
       c[ImGuiCol_TableRowBgAlt] = ImVec4(1.0f, 0.9f, 0.8f, 0.04f);
       c[ImGuiCol_TextSelectedBg] = ImVec4(0.75f, 0.45f, 0.10f, 0.45f);
       c[ImGuiCol_NavCursor] = gold;
+      // mk9-lauta (2026-11-11, F1): the rest of the palette, so nothing is left in ImGui's blue
+      c[ImGuiCol_ScrollbarBg] = ImVec4(0.05f, 0.04f, 0.04f, 0.60f);
+      c[ImGuiCol_ScrollbarGrab] = ImVec4(0.36f, 0.12f, 0.09f, 1.0f);
+      c[ImGuiCol_ScrollbarGrabHovered] = red_hover;
+      c[ImGuiCol_ScrollbarGrabActive] = red_active;
+      c[ImGuiCol_ResizeGrip] = ImVec4(0.95f, 0.72f, 0.25f, 0.20f);
+      c[ImGuiCol_ResizeGripHovered] = ImVec4(0.95f, 0.72f, 0.25f, 0.60f);
+      c[ImGuiCol_ResizeGripActive] = gold;
+      c[ImGuiCol_SeparatorHovered] = ImVec4(0.95f, 0.72f, 0.25f, 0.70f);
+      c[ImGuiCol_SeparatorActive] = gold;
+      c[ImGuiCol_TabDimmed] = ImVec4(0.16f, 0.05f, 0.04f, 1.0f);
+      c[ImGuiCol_TabDimmedSelected] = ImVec4(0.32f, 0.07f, 0.06f, 1.0f);
+      c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0.95f, 0.72f, 0.25f, 0.50f);
+      c[ImGuiCol_PlotLines] = gold;
+      c[ImGuiCol_PlotHistogram] = gold;
+      c[ImGuiCol_PlotHistogramHovered] = ImVec4(1.0f, 0.82f, 0.40f, 1.0f);
+      c[ImGuiCol_TextLink] = gold;
+      c[ImGuiCol_DragDropTarget] = gold;
+      c[ImGuiCol_NavWindowingHighlight] = ImVec4(0.95f, 0.72f, 0.25f, 0.70f);
+      c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
+      c[ImGuiCol_MenuBarBg] = ImVec4(0.12f, 0.06f, 0.05f, 1.0f);
+      c[ImGuiCol_TableBorderStrong] = ImVec4(0.45f, 0.30f, 0.12f, 0.55f);
+      c[ImGuiCol_TableBorderLight] = ImVec4(0.45f, 0.30f, 0.12f, 0.25f);
     }
-    // mk9-nx online (2026-11-08): Windows' Segoe UI, whose glyphs ImGui takes as they are drawn (accents, eñes: the
-    // online screens are in Spanish); ImGui's own font, ASCII only, where it is missing
-    if (GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES)
-      io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 18.0f);
+    // mk9-lauta (2026-11-11, F1): the game's own fonts, inside the executable: Barlow for the text (the default),
+    // Barlow SemiBold for what stands out, Barlow Condensed Bold for the titles (app/thirdparty/barlow, SIL OFL 1.1).
+    // The same on every computer: before them the screens took Windows' Segoe UI, and where it is missing (Wine, the
+    // Steam Deck) ImGui's own font, ASCII only, drew no accents. Segoe UI, where it is, comes after each for the glyphs
+    // Barlow lacks (a player's name in another alphabet).
+    const bool segoe = GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES;
+    io.FontDefault = AddEmbeddedFont(io, kBarlowRegular, sizeof(kBarlowRegular), "Barlow", segoe);
+    g_strong_font = AddEmbeddedFont(io, kBarlowSemiBold, sizeof(kBarlowSemiBold), "Barlow SemiBold", segoe);
+    g_title_font =
+        AddEmbeddedFont(io, kBarlowCondensedBold, sizeof(kBarlowCondensedBold), "Barlow Condensed Bold", segoe);
   }
   g_last_build = std::chrono::steady_clock::now();
 

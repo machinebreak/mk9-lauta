@@ -32,6 +32,9 @@ Status GetStatus();
 void CheckNow();
 void Download();
 void InstallAndRestart();
+// mk9-lauta (2026-11-11, F3): the game started again as this one was (its arguments), and this one closed (a setting
+// read only at the start: the game's language). Returns only if the new one could not start.
+void Restart();
 // Opens a web page or a folder (ShellExecute).
 void Open(const std::string& what);
 // The folder of this program's logs.

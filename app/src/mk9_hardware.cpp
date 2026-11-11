@@ -115,6 +115,10 @@ void ApplyDefaults() {
   }
   values.emplace_back("mk9_preset_detected", preset);
   rex::cvar::SetFlagByName("mk9_preset_detected", preset);
+  // mk9-lauta (2026-11-11, F3): the first start's steps show until finished or skipped (first_run_ui.h); the players
+  // of earlier releases have mk9_preset_detected already and never see them
+  values.emplace_back("mk9_first_run_done", "false");
+  rex::cvar::SetFlagByName("mk9_first_run_done", "false");
   mk9::options_ui::SaveToConfig(values);
   REXLOG_INFO("[hardware] first start: quality preset \"{}\" for this PC (F2 changes it)", preset);
 }

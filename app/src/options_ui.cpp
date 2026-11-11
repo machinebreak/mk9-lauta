@@ -348,7 +348,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
                                         ImVec2(std::max(320.0f, io.DisplaySize.x - 16), std::max(200.0f, io.DisplaySize.y - 16)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
-    if (!ImGui::Begin("Opciones  (F2 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse)) {
+    // the title in the titles' font (F1), the rest in the text's
+    ImGui::PushFont(renut::gpu::overlay::TitleFont(), 0.0f);
+    const bool open = ImGui::Begin("Opciones  (F2 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopFont();
+    if (!open) {
       ImGui::End();
       return;
     }

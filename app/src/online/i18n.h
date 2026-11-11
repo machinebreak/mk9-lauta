@@ -10,4 +10,8 @@ namespace mk9::i18n {
 // "%s" or "{}", in every language); a text the table lacks stays in Spanish.
 const char* T(const char* es);
 
+// mk9-lauta (2026-11-11, F3): the game's language just chosen (the first start's steps), as the online screens'
+// language ("es", "en", "pt"): they follow it at once, unless mk9_online_language says another than auto.
+void SetLanguage(const char* code);
+
 }  // namespace mk9::i18n

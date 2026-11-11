@@ -7,8 +7,11 @@
 - Con el mando: **BACK + START** abre las opciones y **BACK + Y** (BACK + triángulo en PlayStation) las pantallas
   online. Adentro, el stick o la cruceta se mueven, **A** (cruz) elige, **LB / RB** cambian de pestaña y **B**
   (círculo) cierra. BACK es el botón chico de la izquierda (View en Xbox, Share o Create en PlayStation, - en Switch).
-- La primera vez, la ventana online se abre sola y te pide un **nombre de usuario** (de 2 a 20 letras). Es el que ven
-  los demás en las salas y en el chat. Se puede cambiar cuando quieras con "Cambiar".
+- La primera vez que abrís el juego, cuatro pasos te dejan listo: el **idioma** del juego, tu **nombre de usuario**
+  para el online (de 2 a 20 letras: el que ven los demás en las salas y en el chat), la **calidad de los gráficos**
+  (ya viene elegida para tu PC) y una **prueba del mando** (se encienden los botones que apretás). Se pueden saltar, y
+  todo se cambia después en F1 y F2. Si saltaste el nombre, la ventana online se abre sola y te lo pide; se puede
+  cambiar cuando quieras con "Cambiar".
 
 ## Encontrar rival
 

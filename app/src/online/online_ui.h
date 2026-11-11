@@ -5,9 +5,15 @@
 
 #pragma once
 
+#include <string>
+
 namespace mk9::online_ui {
 
 // Once (any thread): the window goes into the overlay; with a name kept, the lobby connects.
 void Install();
+
+// mk9-lauta (2026-11-11, F3): the online name the first start's steps chose (UI thread): saved, the lobby connects
+// with it, and the window does not need to open by itself for it.
+void UseName(const std::string& name);
 
 }  // namespace mk9::online_ui

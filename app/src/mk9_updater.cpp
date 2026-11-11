@@ -604,6 +604,31 @@ void Download() {
   RunWorker(&DownloadWorker);
 }
 
+// The program in this folder (a new version just installed, or this one) started as this one was, and this one
+// closed; returns only if it could not start.
+static void StartAgain() {
+  const fs::path exe_folder = ExeFolder();
+  STARTUPINFOW si{sizeof(si)};
+  PROCESS_INFORMATION pi{};
+  const fs::path exe = exe_folder / L"mk9.exe";
+  std::wstring command = L"\"" + exe.wstring() + L"\"";
+  int argc = 0;
+  if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
+    for (int i = 1; i < argc; ++i) {
+      const std::wstring arg = argv[i];
+      if (arg.rfind(L"--mk9_update_test", 0) == 0) continue;
+      command += L" \"" + arg + L"\"";
+    }
+    LocalFree(argv);
+  }
+  if (CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, exe_folder.c_str(), &si,
+                     &pi)) {
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    ExitProcess(0);
+  }
+}
+
 void InstallAndRestart() {
   const fs::path exe_folder = ExeFolder();
   const fs::path staging = UpdateFolder() / L"staging";
@@ -659,27 +684,14 @@ void InstallAndRestart() {
   }
   REXLOG_INFO("[update] {} files installed: starting the new version", moved.size());
   fs::remove_all(UpdateFolder(), ec);
-  // the new version, as this one was started
-  STARTUPINFOW si{sizeof(si)};
-  PROCESS_INFORMATION pi{};
-  const fs::path exe = exe_folder / L"mk9.exe";
-  std::wstring command = L"\"" + exe.wstring() + L"\"";
-  int argc = 0;
-  if (wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-    for (int i = 1; i < argc; ++i) {
-      const std::wstring arg = argv[i];
-      if (arg.rfind(L"--mk9_update_test", 0) == 0) continue;
-      command += L" \"" + arg + L"\"";
-    }
-    LocalFree(argv);
-  }
-  if (CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, exe_folder.c_str(), &si,
-                     &pi)) {
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    ExitProcess(0);
-  }
+  StartAgain();
   SetStatus(Phase::kFailed, "La versión nueva quedó instalada: cerrá y abrí el juego.");
+}
+
+void Restart() {
+  REXLOG_INFO("[update] the game starts again");
+  StartAgain();
+  REXLOG_ERROR("[update] the game could not start again");
 }
 
 void Open(const std::string& what) {

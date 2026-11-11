@@ -72,9 +72,11 @@ submodules into `sdk/thirdparty`.
 | [libnx](https://github.com/switchbrew/libnx) and the devkitA64 runtime (newlib, libstdc++) | ISC; newlib and GCC runtime licenses |
 | zlib, Zstandard and Expat, from devkitPro's Switch portlibs (linked for Mesa) | zlib License; BSD-3-Clause; MIT |
 
-On the PC: [SDL3](https://www.libsdl.org) (zlib License; controllers, keyboard and the window) and the community
+On the PC: [SDL3](https://www.libsdl.org) (zlib License; controllers, keyboard and the window), the community
 controller mappings of [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) (`gamecontrollerdb.txt`,
-zlib License), shipped with the PC release; for builds on a computer or for the tests only: MoltenVK and the Vulkan
+zlib License), shipped with the PC release, and the online and options screens' fonts, Barlow and Barlow Condensed
+by Jeremy Tribby ([jpt/barlow](https://github.com/jpt/barlow); SIL Open Font License 1.1), embedded in the executable
+unmodified (`app/thirdparty/barlow`); for builds on a computer or for the tests only: MoltenVK and the Vulkan
 loader (Apache-2.0), Catch2 (BSL-1.0). The PC release also carries Microsoft's Visual C++ runtime DLLs, redistributed
 under the Visual Studio license terms.
 

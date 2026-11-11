@@ -25,7 +25,7 @@ void Install(rex::input::InputSystem* input);
 void OnFrame();
 
 // The overlay's windows (UI thread, each overlay frame): open or not.
-enum Window { kOptions = 0, kOnline = 1, kConfirm = 2 };
+enum Window { kOptions = 0, kOnline = 1, kConfirm = 2, kWizard = 3 };  // kWizard: first_run_ui.h
 void SetOpen(Window window, bool open);
 
 // The combos, as the overlay's ImGui sees the controller (UI thread, inside a dialog's Draw).

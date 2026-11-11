@@ -2,6 +2,7 @@
 
 #include "online/online_ui.h"
 
+#include "first_run_ui.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
 #include "options_ui.h"
@@ -164,6 +165,8 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::GetStyle().FontScaleMain = options_ui::UiScale();
     if (const std::string country = flags::Mine(); !country.empty()) lobby::SetCountry(country);
     room::Pump();
+    // the first start's steps first (first_run_ui.h): this window, open by itself for a name, waits for them
+    if (first_run_ui::Active()) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false) || overlay_input::ToggleOnlinePressed()) {
       visible_ = !visible_;
       focus_ = visible_;  // over the options if they are open too
@@ -204,8 +207,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                         ImVec2(std::max(320.0f, io.DisplaySize.x - 16), std::max(200.0f, io.DisplaySize.y - 16)));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_FirstUseEver,
                             ImVec2(0.5f, 0.5f));
-    if (!ImGui::Begin((std::string(T("Online  (F1 para mostrar u ocultar)")) + "###online").c_str(), &visible_,
-                      ImGuiWindowFlags_NoCollapse)) {
+    // the title in the titles' font (F1), the rest in the text's
+    ImGui::PushFont(renut::gpu::overlay::TitleFont(), 0.0f);
+    const bool open = ImGui::Begin((std::string(T("Online  (F1 para mostrar u ocultar)")) + "###online").c_str(),
+                                   &visible_, ImGuiWindowFlags_NoCollapse);
+    ImGui::PopFont();
+    if (!open) {
       ImGui::End();
       return;
     }
@@ -283,6 +290,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::EndTabBar();
     }
     ImGui::End();
+  }
+
+  // The first start's steps chose it (online_ui.h UseName).
+  void UseName(const std::string& name) {
+    name_ = name;
+    std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
+    name_note_.clear();
+    editing_name_ = false;
+    session::SaveName(name_);
+    if (lobby::Configured()) lobby::Start(name_);  // connects, or renames
+    visible_ = REXCVAR_GET(mk9_online_show);       // it had opened by itself for the name
   }
 
  private:
@@ -633,7 +651,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs;
     if (ImGui::Begin("##peer_silent", nullptr, flags)) {
-      ImGui::PushFont(nullptr, 24.0f);
+      ImGui::PushFont(renut::gpu::overlay::TitleFont(), 28.0f);
       ImGui::TextColored(kGold, T("Sin noticias de %s"), Other(room).c_str());
       ImGui::PopFont();
       const int left = std::max(0, int(info.timeout_s - info.silent_s + 0.5));
@@ -1057,7 +1075,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
     if (ImGui::Begin("##session_end", nullptr, flags)) {
-      ImGui::PushFont(nullptr, 30.0f);
+      ImGui::PushFont(renut::gpu::overlay::TitleFont(), 36.0f);
       ImGui::TextColored(kGold, "%s", T("Fin de la sesión"));
       ImGui::PopFont();
       ImGui::Spacing();
@@ -1109,14 +1127,21 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   const Clock::time_point started_ = Clock::now();
 };
 
+OnlineWindow* g_window = nullptr;
+
 }  // namespace
 
 void Install() {
   static std::once_flag once;
   std::call_once(once, [] {
     static OnlineWindow window;
+    g_window = &window;
     renut::gpu::overlay::AddDialog(&window);
   });
+}
+
+void UseName(const std::string& name) {
+  if (g_window) g_window->UseName(name);
 }
 
 }  // namespace mk9::online_ui

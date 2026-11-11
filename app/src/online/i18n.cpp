@@ -2,6 +2,7 @@
 
 #include "online/i18n.h"
 
+#include <atomic>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -18,7 +19,10 @@ namespace {
 
 enum Lang { kEs, kEn, kPt };
 
+std::atomic<int> g_chosen{-1};  // SetLanguage's, once called
+
 Lang Current() {
+  if (const int chosen = g_chosen.load(std::memory_order_relaxed); chosen >= 0) return Lang(chosen);
   static const Lang lang = [] {
     const std::string chosen = REXCVAR_GET(mk9_online_language);
     if (chosen == "es") return kEs;
@@ -233,11 +237,124 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"Online: en los menús", {"Online: in the menus", "Online: nos menus"}},
       {"Peleando online", {"Fighting online", "Lutando online"}},
       {"vs {}", {"vs {}", "vs {}"}},
+      // the first start's steps (first_run_ui.cpp, F3)
+      {"Para tener a mano:",
+       {"Good to know:", "Para ter à mão:"}},
+      {"El online: salas, chat global, tu perfil y los replays",
+       {"Online: rooms, global chat, your profile and replays", "O online: salas, chat global, seu perfil e os replays"}},
+      {"Las opciones: gráficos, controles, pantalla e idioma",
+       {"Options: graphics, controls, display and language", "As opções: gráficos, controles, tela e idioma"}},
+      {"Pantalla completa o ventana",
+       {"Full screen or window", "Tela cheia ou janela"}},
+      {"BACK + Y (mando)",
+       {"BACK + Y (controller)", "BACK + Y (controle)"}},
+      {"BACK + START (mando)",
+       {"BACK + START (controller)", "BACK + START (controle)"}},
+      {"El online",
+       {"Online", "O online"}},
+      {"Las opciones",
+       {"Options", "As opções"}},
+      {"Cambiar de pestaña",
+       {"Change tabs", "Mudar de aba"}},
+      {"Volver o cerrar",
+       {"Back or close", "Voltar ou fechar"}},
+      {"Paso %d de 4",
+       {"Step %d of 4", "Passo %d de 4"}},
+      {"¡Bienvenido a mk9-lauta!",
+       {"Welcome to mk9-lauta!", "Bem-vindo ao mk9-lauta!"}},
+      {"Mortal Kombat Komplete Edition en tu PC, con online y rollback.",
+       {"Mortal Kombat Komplete Edition on your PC, with online play and rollback.", "Mortal Kombat Komplete Edition no seu PC, com online e rollback."}},
+      {"Cuatro pasos y a jugar: el idioma, tu nombre para el online, la calidad de los gráficos y el mando. Todo se puede cambiar después: F2 abre las opciones y F1 el online (con el mando, BACK + START y BACK + Y).",
+       {"Four steps and you are playing: the language, your online name, the graphics quality and the controller. Everything can be changed later: F2 opens the options and F1 the online screens (with a controller, BACK + START and BACK + Y).", "Quatro passos e pronto: o idioma, seu nome online, a qualidade gráfica e o controle. Tudo pode ser mudado depois: F2 abre as opções e F1 o online (com o controle, BACK + START e BACK + Y)."}},
+      {"Empezar",
+       {"Start", "Começar"}},
+      {"Saltar",
+       {"Skip", "Pular"}},
+      {"Idioma",
+       {"Language", "Idioma"}},
+      {"El idioma de los textos del juego (en español el Modo Historia está doblado). Las pantallas del online van en español, inglés o portugués.",
+       {"The language of the game's texts (in Spanish the Story Mode is dubbed). The online screens are in Spanish, English or Portuguese.", "O idioma dos textos do jogo (em espanhol o Modo História é dublado). As telas do online ficam em espanhol, inglês ou português."}},
+      {"El juego cambia de idioma al volver a abrirlo: al final podés reiniciarlo.",
+       {"The game changes its language when it starts again: you can restart it at the end.", "O jogo muda de idioma ao ser aberto de novo: no final você pode reiniciá-lo."}},
+      {"Siguiente",
+       {"Next", "Próximo"}},
+      {"Atrás",
+       {"Back", "Voltar"}},
+      {"Tu nombre online",
+       {"Your online name", "Seu nome online"}},
+      {"Es el que ven los demás en las salas y en el chat (de 2 a 20 letras). Si lo dejás vacío, lo elegís después en F1.",
+       {"It is what the others see in the rooms and the chat (2 to 20 letters). Leave it empty to choose it later in F1.", "É o que os outros veem nas salas e no chat (de 2 a 20 letras). Se deixar vazio, você escolhe depois no F1."}},
+      {"Calidad de los gráficos",
+       {"Graphics quality", "Qualidade gráfica"}},
+      {"Tu PC: %s.",
+       {"Your PC: %s.", "Seu PC: %s."}},
+      {"placa de video desconocida",
+       {"unknown graphics card", "placa de vídeo desconhecida"}},
+      {" GB de RAM",
+       {" GB of RAM", " GB de RAM"}},
+      {"Para ella elegimos «%s». Si el juego no va fluido, probá una más baja.",
+       {"We chose “%s” for it. If the game does not run smoothly, try a lower one.", "Para ele escolhemos “%s”. Se o jogo não rodar liso, tente uma mais baixa."}},
+      {"Muy baja",
+       {"Very low", "Muito baixa"}},
+      {"Baja",
+       {"Low", "Baixa"}},
+      {"Consola",
+       {"Console", "Console"}},
+      {"Alta",
+       {"High", "Alta"}},
+      {"Ultra",
+       {"Ultra", "Ultra"}},
+      {"Para PCs con gráficos integrados viejos o 4 GB de RAM: 480p, y si no llega a 60 se dibuja uno de cada dos cuadros.",
+       {"For PCs with old integrated graphics or 4 GB of RAM: 480p, and below 60 one frame in two is drawn.", "Para PCs com gráficos integrados antigos ou 4 GB de RAM: 480p, e abaixo de 60 se desenha um de cada dois quadros."}},
+      {"Para PCs con poca placa de video: 480p, como en la consola.",
+       {"For PCs with a modest graphics card: 480p, as on the console.", "Para PCs com pouca placa de vídeo: 480p, como no console."}},
+      {"Como en la Xbox 360: 720p.",
+       {"As on the Xbox 360: 720p.", "Como no Xbox 360: 720p."}},
+      {"1080p, sombras nítidas, texturas filtradas.",
+       {"1080p, sharp shadows, filtered textures.", "1080p, sombras nítidas, texturas filtradas."}},
+      {"1440p y todo al máximo: para placas de video potentes.",
+       {"1440p and everything at its best: for strong graphics cards.", "1440p e tudo no máximo: para placas de vídeo potentes."}},
+      {"El mando",
+       {"The controller", "O controle"}},
+      {"Jugador %d: %s",
+       {"Player %d: %s", "Jogador %d: %s"}},
+      {"Ningún mando conectado. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan. Sin mando jugás con el teclado: F2 > Controles muestra y cambia las teclas.",
+       {"No controller connected. Xbox, PlayStation and Switch Pro controllers work as soon as they are connected. Without one you play with the keyboard: F2 > Controles shows and changes the keys.", "Nenhum controle conectado. Os de Xbox, PlayStation e Switch Pro funcionam assim que conectados. Sem controle você joga com o teclado: F2 > Controles mostra e muda as teclas."}},
+      {"Apretá los botones: se encienden los que el juego recibe.",
+       {"Press the buttons: the ones the game gets light up.", "Aperte os botões: acendem os que o jogo recebe."}},
+      {"Qué golpe hace cada botón se cambia en el menú del juego: OPCIONES > MANDO.",
+       {"Which attack each button does is changed in the game's menu: OPTIONS > CONTROLLER.", "Qual golpe cada botão faz se muda no menu do jogo: OPÇÕES > CONTROLE."}},
+      {"START sigue.",
+       {"START goes on.", "START continua."}},
+      {"Arriba",
+       {"Up", "Cima"}},
+      {"Abajo",
+       {"Down", "Baixo"}},
+      {"Izquierda",
+       {"Left", "Esquerda"}},
+      {"Derecha",
+       {"Right", "Direita"}},
+      {"Stick",
+       {"Stick", "Analógico"}},
+      {"¡Listo!",
+       {"All set!", "Pronto!"}},
+      {"El idioma nuevo se ve al volver a abrir el juego.",
+       {"The new language shows when the game starts again.", "O novo idioma aparece ao abrir o jogo de novo."}},
+      {"Jugar",
+       {"Play", "Jogar"}},
+      {"Reiniciar ahora",
+       {"Restart now", "Reiniciar agora"}},
   };
   return table;
 }
 
 }  // namespace
+
+void SetLanguage(const char* code) {
+  if (REXCVAR_GET(mk9_online_language) != "auto") return;  // the player chose the online screens' own
+  const std::string_view c(code ? code : "");
+  g_chosen.store(c == "en" ? kEn : c == "pt" ? kPt : kEs, std::memory_order_relaxed);
+}
 
 const char* T(const char* es) {
   const Lang lang = Current();

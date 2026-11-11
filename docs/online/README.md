@@ -172,6 +172,22 @@ falla: pasa a Vulkan y lo muestra. La ejecutable exporta `NvOptimusEnablement` y
 (los drivers de NVIDIA y AMD los buscan en el `.exe`; el DLL del SDK los tenía, sin efecto): una notebook con dos
 placas usa la dedicada. plume ya elegía, en D3D12, el adaptador con más memoria dedicada y, en Vulkan, la discreta.
 
+### La interfaz: fuentes propias y el primer arranque (2026-11-11, tareas F1 y F3 del plan 0.4)
+
+- **Fuentes** (`overlay_ui.cpp`): Barlow (texto), Barlow SemiBold y Barlow Condensed Bold (títulos), dentro del
+  ejecutable (`app/thirdparty/barlow`, SIL OFL 1.1, ~320 KB; la release copia su licencia a `licencias`). Antes se
+  usaba la Segoe UI de Windows, y donde no está (Wine, la Steam Deck) la fuente de ImGui, sólo ASCII: sin acentos ni
+  eñes. Segoe UI sigue, donde está, detrás de cada una para lo que Barlow no tiene (un nombre en otro alfabeto).
+  `overlay::TitleFont()` / `StrongFont()` para los títulos; la paleta de ImGui completa en negro, rojo y dorado.
+- **El primer arranque** (`first_run_ui.h`): bienvenida, idioma del juego, nombre online, calidad (la que eligió
+  `mk9_hardware` para esta PC, con las otras para tocar) y el mando (los conectados y una prueba de sus botones), y al
+  final qué hacen F1 y F2 (y "Reiniciar ahora" si cambió el idioma, que el juego lee al arrancar: `updater::Restart`).
+  El primer arranque escribe `mk9_first_run_done = false` en mk9.toml y los pasos se muestran hasta terminarlos o
+  saltarlos; los jugadores de versiones anteriores nunca los ven. Nunca en un juego de sesión ni con guion de mando.
+  Mientras se muestran, el juego no recibe entradas y la ventana online espera. Prueba con capturas de cada paso:
+  `run_game.ps1 -Set "mk9_first_run_done=false;mk9_first_run_test_cycle_s=6;renut_capture_overlay=true" -Snapshots
+  "4,10,16,22,28,34"`.
+
 ## Estado
 
 | Fase | Estado |
