@@ -37,6 +37,9 @@ bool Active();
 bool SessionGame();
 // This machine's player in a session (0 the host, 1 the guest); -1 with no session and for a spectator.
 int LocalPlayer();
+// mk9-lauta (2026-11-11): the game's state (fight_state.h State) at a recent frame, sessions or not (any thread); -1
+// before the game has one.
+int GameState();
 // Test logs: the epoch and the epoch's frame running, and whether it runs again (a rollback's hidden frames); -1 when no
 // session runs.
 int64_t FrameRunning(uint32_t* epoch = nullptr, bool* again = nullptr);

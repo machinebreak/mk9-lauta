@@ -4,6 +4,9 @@
 // own path is up: hello, the room's chat, ready, and the host's start. Then both games start again already joined
 // (session.h): the session runs from the first frame, the same on both machines.
 //
+// mk9-lauta (2026-11-11): the hello, the welcome and the pings carry the player's picture's hash too ("av"); a game
+// that lacks it asks "av?" {h} (a spectator with its id) and gets "av" {h, d} (avatars.h).
+//
 // Messages relayed (data.room): "hi" {name, id, cc} the guest to the host, again every second until welcomed; "welcome"
 // {name, cc} or "full" (cc: the player's country, flags.h); "chat" {text}; "ready" {on}; "start" the host's; "bye"; "ping" every 3 s (12 s without a word: the
 // other is gone).
@@ -40,10 +43,11 @@ struct State {
   std::string me, other;      // the names
   std::string other_country;  // the other player's (two letters; "" not said): mk9-lauta, flags.h
   int other_won = -1, other_lost = -1;  // the other player's online record (stats.h; -1: not said)
+  std::string other_avatar;   // mk9-lauta (2026-11-11): the other player's picture's hash (avatars.h; "" none)
   // mk9-lauta (2026-11-10): spectators. The watching game: the two players (the host's answer), or the room has
   // feed::kMaxWatchers already (watch_full); the host: how many watch.
   bool watching = false, watch_full = false;
-  std::string p1, p2, p1_country, p2_country;
+  std::string p1, p2, p1_country, p2_country, p1_avatar, p2_avatar;
   int watchers = 0;
   bool my_ready = false, other_ready = false;
   std::vector<Line> chat;

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -31,6 +32,7 @@
 #include <rex/logging.h>
 #include <rex/ui/keybinds.h>
 
+#include "mk9_brand.h"
 #include "mk9_controls.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
@@ -149,6 +151,10 @@ const std::vector<Option>& DisplayOptions() {
         {"2", "200 %"}},
        "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K) y "
        "sigue la escala de Windows (125 %, 150 %)."},
+      {"mk9_brand_menu", "Redes en el menú principal",
+       {{"true", "Mostrar"}, {"false", "Ocultar"}},
+       "MK9 Online by Lauta y los botones de Discord, WhatsApp, Instagram, Kick, YouTube y X, abajo a la derecha del "
+       "menú principal."},
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},
@@ -179,6 +185,22 @@ const std::vector<Option>& OnlineOptions() {
        {{"full", "Completo (rival, señal, ping y retraso)"}, {"bars", "Sólo la señal"}, {"off", "Oculto"}},
        "Lo que se ve abajo durante una pelea online. Los avisos (conexión inestable, esperando al rival) aparecen "
        "siempre; en los menús se ve completo."},
+      // mk9-lauta (2026-11-11)
+      {"mk9_plates_names", "Nombres en la pelea",
+       {{"true", "Mostrar"}, {"false", "Ocultar"}},
+       "El nombre y la bandera de cada jugador debajo de su barra de vida en las peleas online (y en la selección de "
+       "personajes)."},
+      {"mk9_plates_avatars", "Fotos de perfil en la pelea",
+       {{"true", "Mostrar"}, {"false", "Ocultar"}},
+       "La foto de cada jugador al lado de su nombre. Se cargan antes de la pelea: no cuestan nada mientras se juega."},
+      {"mk9_avatars_others", "Fotos de los otros jugadores",
+       {{"true", "Mostrar"}, {"false", "No mostrar ninguna"}},
+       "Las fotos de perfil de los demás, en la sala, en la pelea y en los perfiles. Las de los jugadores que "
+       "silenciaste no se ven nunca."},
+      {"mk9_net_record", "Grabar replays",
+       {{"false", "No"}, {"true", "Sí, mis sesiones online"}},
+       "Guarda las entradas de cada sesión online (unos 3 KB por segundo, en la carpeta logs; las últimas 10) para "
+       "verlas en F1 > Replays. No usa internet ni se nota en el juego. Vale desde la próxima sesión."},
   };
   return options;
 }
@@ -500,11 +522,22 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     ImGui::PopID();
   }
 
-  // mk9-lauta: the version, the updater, the logs folder and the project's page.
+  // mk9-lauta: the version, the updater, the logs folder and the project's page; mk9-lauta (2026-11-11): the logo and
+  // Lauta's networks.
   void DrawAbout() {
     const updater::Status st = updater::GetStatus();
-    ImGui::Text("mk9-lauta v%s", st.current.c_str());
-    ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "Mortal Kombat Komplete Edition para PC, con online con rollback.");
+    const float scale = UiScale();
+    brand::Logo(std::min(ImGui::GetContentRegionAvail().x * 0.5f, 330.0f * scale));
+    const std::string version = "MK9 Online by Lauta  v" + st.current;
+    ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                         std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(version.c_str()).x) * 0.5f));
+    ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.30f, 1.0f), "%s", version.c_str());
+    ImGui::PopFont();
+    const char* about = "Mortal Kombat Komplete Edition para PC, con online con rollback. Hecho por y para la comunidad.";
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                         std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(about).x) * 0.5f));
+    ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", about);
     ImGui::Separator();
     bool check = rex::cvar::GetFlagByName("mk9_update_check") != "false";
     if (ImGui::Checkbox("Buscar una versión nueva al iniciar", &check)) {
@@ -533,6 +566,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::Button("Reportar un problema")) updater::Open("https://github.com/machinebreak/mk9-lauta/issues");
     ImGui::SameLine();
     if (ImGui::Button("Página del proyecto")) updater::Open("https://github.com/machinebreak/mk9-lauta");
+    ImGui::Separator();
+    ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
+    ImGui::Text("Comunidad y redes");
+    ImGui::PopFont();
+    brand::SocialButtons(ImGui::GetContentRegionAvail().x, 3, std::round(38.0f * scale));
   }
 
   // The frames a second, top left: the shown ones, and the game's when they differ (the performance mode).

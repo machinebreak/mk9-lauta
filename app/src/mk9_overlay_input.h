@@ -27,6 +27,8 @@ void OnFrame();
 // The overlay's windows (UI thread, each overlay frame): open or not.
 enum Window { kOptions = 0, kOnline = 1, kConfirm = 2, kWizard = 3 };  // kWizard: first_run_ui.h
 void SetOpen(Window window, bool open);
+// mk9-lauta (2026-11-11): some overlay window is open (any thread).
+bool AnyOpen();
 
 // The combos, as the overlay's ImGui sees the controller (UI thread, inside a dialog's Draw).
 bool ToggleOptionsPressed();  // Back + Start

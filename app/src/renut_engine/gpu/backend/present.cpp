@@ -353,7 +353,18 @@ bool CaptureFrameLocked(VideoState &s, const PresentImage &image, rex::ui::RawIm
   cmd->barriers(plume::RenderBarrierStage::GRAPHICS,
                 plume::RenderTextureBarrier(c.target.get(), plume::RenderTextureLayout::COLOR_WRITE));
   cmd->setFramebuffer(c.framebuffer.get());
-  RecordScanOut(s, image, w, h);
+  {
+    // mk9-lauta (2026-11-11): the capture's scan-out leaves the window's placement as the window's presents set it
+    // (overlay::FramePointToOutput: a minimized test window's overlay is laid out by its own size, not the capture's)
+    Placement window;
+    {
+      std::lock_guard lock(g_placement_mutex);
+      window = g_placement;
+    }
+    RecordScanOut(s, image, w, h);
+    std::lock_guard lock(g_placement_mutex);
+    g_placement = window;
+  }
   if (REXCVAR_GET(renut_capture_overlay)) {
     // mk9-nx online (2026-11-08): the overlay over the frame, as the screen shows it (the online screens in tests)
     cmd->setViewports(plume::RenderViewport(0.0f, 0.0f, float(w), float(h)));

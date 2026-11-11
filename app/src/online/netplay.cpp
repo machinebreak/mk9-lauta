@@ -89,6 +89,7 @@
 #include <algorithm>
 #include <cmath>
 #include <atomic>
+#include <condition_variable>
 #include <chrono>
 #include <array>
 #include <cstdio>
@@ -187,10 +188,11 @@ REXCVAR_DEFINE_BOOL(mk9_net_auto_delay, true, "MK9 Online",
                     "A fight's input delay follows the round trip all fight long (from the host's "
                     "mk9_net_rollback_delay up to 7 frames) so rollbacks stay about 5 frames deep: steadier characters "
                     "with 150-400 ms of ping");
-REXCVAR_DEFINE_BOOL(mk9_net_record, true, "MK9 Online",
-                    "Each session's final frames (both players' inputs and the sync hash) go to "
-                    "logs/session_<date>_<player>.mk9net: the two players' files say where the games parted "
-                    "(tools/online/session_report.py); the newest 10 are kept");
+REXCVAR_DEFINE_BOOL(mk9_net_record, false, "MK9 Online",
+                    "Replays: each session's final frames (both players' inputs and the sync hash) go to "
+                    "logs/session_<date>_<player>.mk9net (F1 > Replays plays them; the two players' files say where "
+                    "the games parted: tools/online/session_report.py); the newest 10 are kept. Off (the default): "
+                    "nothing is written, the inputs stay in memory for a desync's report alone (F2 > Online)");
 REXCVAR_DEFINE_BOOL(mk9_net_end_on_desync, false, "MK9 Online",
                     "The session ends when the two games' sync hashes differ (false: it goes on and the log says so). "
                     "Off since the hashes are compared all along (2026-11-09): what they catch most is the game's random "
@@ -388,23 +390,60 @@ Session g;
 //   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
 //   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
 //   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
+// mk9-lauta (2026-11-11): the replays are off by default (F2 > Online). The game thread never touches the disk: a
+// frame's records are built in one buffer and handed over at once (to the spectators' feed, and to the recording);
+// with mk9_net_record on, a thread of its own writes them to the file every 2 s. Off, they stay in memory (about 3 KB a
+// second of session, in pieces of 1 MB: nothing there is ever copied again; 64 MB at most) for a desync's report alone,
+// which writes them beside it (logs\desync_...\session.mk9net).
+constexpr size_t kRecordPiece = 1u << 20;
+constexpr size_t kRecordMemoryMax = 64u << 20;
+
 struct Recorder {
-  FILE* file = nullptr;
+  bool open = false;     // RecordOpen ran: the session's records are kept
+  bool to_file = false;  // mk9_net_record: the writer's thread writes them to `path`
   bool feeding = false;  // the host: every record also goes to the spectators (feed.h)
-  std::string path;
-  int64_t upto = -1;  // the epoch's frames written
+  std::string path;      // the file's, UTF-8 (the log, the desync's summary)
+  std::string record;    // the records being built (game thread)
+  int64_t upto = -1;     // the epoch's frames written
   uint64_t frames = 0;
+  // the game thread's records for the writer (to_file), or kept in memory (else)
+  std::mutex mutex;
+  std::condition_variable wake;
+  std::string pending;              // to_file: not written yet
+  std::vector<std::string> memory;  // !to_file: all of them, in pieces of kRecordPiece
+  size_t memory_size = 0;
+  bool closing = false, flush_now = false;
+  std::thread writer;
 };
 Recorder g_rec;
 
 void RecordPut(const void* data, size_t size) {
-  if (g_rec.file) std::fwrite(data, 1, size, g_rec.file);
-  if (g_rec.feeding) feed::Append(data, size);
+  if (g_rec.open || g_rec.feeding) g_rec.record.append(static_cast<const char*>(data), size);
 }
 
 template <typename T>
 void RecordValue(T v) {
   RecordPut(&v, sizeof(v));
+}
+
+// The records built since the last hand-over, to the spectators and to the recording (game thread).
+void RecordHandOver() {
+  if (g_rec.record.empty()) return;
+  if (g_rec.feeding) feed::Append(g_rec.record.data(), g_rec.record.size());
+  if (g_rec.open) {
+    std::lock_guard<std::mutex> lock(g_rec.mutex);
+    if (g_rec.to_file) {
+      g_rec.pending += g_rec.record;
+    } else if (g_rec.memory_size + g_rec.record.size() <= kRecordMemoryMax) {
+      if (g_rec.memory.empty() || g_rec.memory.back().size() + g_rec.record.size() > kRecordPiece) {
+        g_rec.memory.emplace_back();
+        g_rec.memory.back().reserve(std::max(kRecordPiece, g_rec.record.size()));
+      }
+      g_rec.memory.back() += g_rec.record;
+      g_rec.memory_size += g_rec.record.size();
+    }
+  }
+  g_rec.record.clear();
 }
 
 uint8_t Protocol();
@@ -426,20 +465,12 @@ void RecordPad(const Pad& pad) {
   RecordValue(pad.sound);
 }
 
-void RecordOpen() {
-  if (g_rec.file || g_rec.feeding) return;
-  g_rec.feeding = g.host && !g.room.empty();  // a room's host: its spectators get the same records
-  if (!REXCVAR_GET(mk9_net_record)) {
-    if (g_rec.feeding) RecordHeader();
-    return;
-  }
-  wchar_t exe[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
+// The writer's thread (mk9_net_record): the logs' newest sessions kept, the file made, the records written every 2 s
+// (at once when asked: a desync, the session's end) until the session closes.
+void RecordWriter(std::filesystem::path logs, std::filesystem::path file) {
   std::error_code ec;
   std::filesystem::create_directories(logs, ec);
-  // the newest 10 stay
-  std::vector<std::filesystem::path> old;
+  std::vector<std::filesystem::path> old;  // the newest 10 stay, this one with them
   for (const auto& entry : std::filesystem::directory_iterator(logs, ec)) {
     const std::wstring name = entry.path().filename().wstring();
     if (name.rfind(L"session_", 0) == 0 && entry.path().extension() == L".mk9net") old.push_back(entry.path());
@@ -449,35 +480,70 @@ void RecordOpen() {
     std::filesystem::remove(old.front(), ec);
     old.erase(old.begin());
   }
-  const std::time_t now = std::time(nullptr);
-  std::tm local{};
-  localtime_s(&local, &now);
-  char name[64];
-  std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
-  const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
-  g_rec.file = _wfopen(path.c_str(), L"wb");
-  if (g_rec.file) {
-    g_rec.path = path.string();
-    REXLOG_INFO("[net] the session's inputs go to {}", g_rec.path);
+  FILE* f = _wfopen(file.c_str(), L"wb");
+  if (!f) REXLOG_WARN("[net] the replay's file could not be made: the session is not recorded");
+  std::string chunk;
+  for (;;) {
+    bool closing = false;
+    {
+      std::unique_lock<std::mutex> lock(g_rec.mutex);
+      g_rec.wake.wait_for(lock, std::chrono::seconds(2), [] { return g_rec.closing || g_rec.flush_now; });
+      chunk.swap(g_rec.pending);
+      g_rec.flush_now = false;
+      closing = g_rec.closing;
+    }
+    if (f && !chunk.empty()) {
+      std::fwrite(chunk.data(), 1, chunk.size(), f);
+      std::fflush(f);
+    }
+    chunk.clear();
+    if (closing) break;
+  }
+  if (f) std::fclose(f);
+}
+
+void RecordOpen() {
+  if (g_rec.open) return;
+  g_rec.feeding = g.host && !g.room.empty();  // a room's host: its spectators get the same records
+  g_rec.open = true;
+  g_rec.to_file = REXCVAR_GET(mk9_net_record);
+  g_rec.record.reserve(4096);
+  if (g_rec.to_file) {
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_s(&local, &now);
+    char name[64];
+    std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
+    const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
+    const std::u8string utf8 = path.u8string();
+    g_rec.path.assign(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+    g_rec.pending.reserve(64 * 1024);
+    g_rec.writer = std::thread(RecordWriter, logs, path);
+    REXLOG_INFO("[net] the session's inputs go to {} (replays on: mk9_net_record)", g_rec.path);
   }
   RecordHeader();
+  RecordHandOver();
 }
 
 void RecordEpoch() {
-  if (!g_rec.file && !g_rec.feeding) return;
+  if (!g_rec.open && !g_rec.feeding) return;
   RecordValue<uint8_t>('E');
   RecordValue<uint32_t>(g.epoch);
   RecordValue<uint64_t>(g.start_game_frame);
   // bit 0 rollback; bit 1 (mk9-lauta, 2026-11-10): its sounds' callbacks by frame numbers (sound_sync.h kFrames)
   RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0)));
   g_rec.upto = -1;
+  RecordHandOver();
 }
 
 int64_t FinalUpto();
 
 // The frames that are final now (both players' real inputs, their last run done), in order.
 void RecordFinal() {
-  if (!g_rec.file && !g_rec.feeding) return;
+  if (!g_rec.open && !g_rec.feeding) return;
   const int64_t upto = std::min(FinalUpto(), g.frame - 1);
   for (int64_t f = g_rec.upto + 1; f <= upto; ++f) {
     if (!g.have_remote[size_t(f)]) break;
@@ -489,21 +555,49 @@ void RecordFinal() {
     g_rec.upto = f;
     ++g_rec.frames;
   }
-  if (g_rec.file && (g_rec.frames & 1023) == 0) std::fflush(g_rec.file);
+  RecordHandOver();
 }
 
 // mk9-lauta (2026-11-10): 'M' u32 frame: the fight's mode ended at that frame (the rest of the epoch in lockstep), for a
 // spectator to play it as the players did.
 void RecordModeEnd(int64_t frame) {
-  if (!g_rec.file && !g_rec.feeding) return;
+  if (!g_rec.open && !g_rec.feeding) return;
   RecordValue<uint8_t>('M');
   RecordValue<uint32_t>(uint32_t(frame));
+  RecordHandOver();
 }
 
+// The file written now (the writer's thread; the game thread does not wait for it).
+void RecordFlushSoon() {
+  if (!g_rec.to_file) return;
+  {
+    std::lock_guard<std::mutex> lock(g_rec.mutex);
+    g_rec.flush_now = true;
+  }
+  g_rec.wake.notify_one();
+}
+
+// The records kept in memory (the replays off), for a desync's report: a copy (any thread may write it out).
+std::string RecordMemoryCopy() {
+  std::lock_guard<std::mutex> lock(g_rec.mutex);
+  std::string out;
+  out.reserve(g_rec.memory_size);
+  for (const std::string& piece : g_rec.memory) out += piece;
+  return out;
+}
+
+// The session's end: the writer writes what is left and closes the file (the session is over: a moment is fine).
 void RecordClose() {
-  if (!g_rec.file) return;
-  std::fclose(g_rec.file);
-  g_rec.file = nullptr;
+  if (!g_rec.open) return;
+  RecordHandOver();
+  if (g_rec.writer.joinable()) {
+    {
+      std::lock_guard<std::mutex> lock(g_rec.mutex);
+      g_rec.closing = true;
+    }
+    g_rec.wake.notify_one();
+    g_rec.writer.join();
+  }
 }
 
 // The online screens' requests to the game thread (Leave, PeerLeft) and how the session ended: any thread.
@@ -668,8 +762,21 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool figh
                  g.rollback ? "with rollback (a fight)" : "lockstep", g.delay, RoundTripTypical(),
                  static_cast<unsigned long long>(g.rollbacks));
     std::fprintf(f, "the fighters' bytes: %s\n", fighters ? "fighters.bin" : "(not written)");
-    std::fprintf(f, "the session's inputs: %s\n", g_rec.path.empty() ? "(not recorded)" : g_rec.path.c_str());
+    std::fprintf(f, "the session's inputs: %s\n",
+                 g_rec.to_file ? g_rec.path.c_str()
+                 : g_rec.open  ? "session.mk9net (in this folder: the replays are off, they were kept in memory)"
+                               : "(not recorded)");
     std::fclose(f);
+  }
+  // mk9-lauta (2026-11-11): the replays off, the inputs kept in memory go beside the report (a copy now, the file on a
+  // thread of its own: the game thread does not wait on the disk)
+  if (g_rec.open && !g_rec.to_file && !fighters_only) {
+    std::thread([inputs = RecordMemoryCopy(), file = dir / L"session.mk9net"] {
+      if (FILE* out = _wfopen(file.c_str(), L"wb")) {
+        std::fwrite(inputs.data(), 1, inputs.size(), out);
+        std::fclose(out);
+      }
+    }).detach();
   }
   const std::u8string utf8 = dir.u8string();
   const std::string path(reinterpret_cast<const char*>(utf8.c_str()), utf8.size());
@@ -718,8 +825,8 @@ void CompareFinalHashes() {
                     "on the two screens from here",
                     frame, g.epoch);
       }
-      if (g_rec.file) {
-        std::fflush(g_rec.file);
+      if (g_rec.to_file) {
+        RecordFlushSoon();
         REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
                     "says where the two games parted", g_rec.path);
       }
@@ -2170,6 +2277,11 @@ bool SessionGame() {
   return g.watching || g.link != nullptr;
 }
 
+// mk9-lauta (2026-11-11): the game's state sessions or not (OnFrame; GameState: the main menu's corner, Discord).
+std::atomic<int> g_state_any{-1};
+
+int GameState() { return g_state_any.load(std::memory_order_relaxed); }
+
 int LocalPlayer() {
   if (!g.configured) Configure();
   return g.link != nullptr && !g.watching ? g.player : -1;
@@ -2182,6 +2294,9 @@ bool Active() {
 }
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
+  if ((game_frame & 3) == 0 || g_state_any.load(std::memory_order_relaxed) < 0) {
+    g_state_any.store(fight_state::State(base), std::memory_order_relaxed);
+  }
   if (Active()) {
     TakeEndRequest();
     // two games out of sync go their own ways: the session ends on both (the goodbye says why)

@@ -34,17 +34,34 @@ Los dos tienen que tener **la misma versión** de mk9-lauta (F2 > Acerca de). Si
 otra versión de mk9-lauta") y vuelve al lobby: actualicen los dos a la última.
 
 En la pestaña **Chat global** se habla con todos los que están en línea; cada uno con la bandera de su país. Tocando un
-nombre podés **silenciar** a esa persona: no ves más sus mensajes ni sus salas, y no puede entrar a tu sala ni mirar
-tus partidas. Es sólo en tu juego; la lista de silenciados está arriba del chat global, para sacar a alguien de ahí.
+nombre se abre un menú:
 
-En la pestaña **Perfil** está tu récord online: partidas, ganadas, perdidas, tus luchadores más usados y las últimas
-30 partidas (con quién, de dónde y con qué luchadores).
+- **Ver perfil**: su foto, su récord (partidas, ganadas, perdidas, efectividad), sus luchadores más usados y sus
+  últimas partidas, y cuántas jugaron ustedes dos. El perfil se lo pide tu juego al suyo en el momento (no hay un
+  servidor que lo guarde): si está jugando en una sala o tiene una versión anterior, no contesta y la ventana lo dice.
+- **Silenciar**: no ves más sus mensajes, sus salas ni su foto, y no puede entrar a tu sala ni mirar tus partidas. Es
+  sólo en tu juego; la lista de silenciados está arriba del chat global, para sacar a alguien de ahí.
+
+En la sala, tocando el nombre o la foto del rival también se ve su perfil.
+
+En la pestaña **Perfil** está el tuyo: tu **foto**, tu récord online, tus luchadores más usados y las últimas 30
+partidas (con quién, de dónde y con qué luchadores).
+
+### Tu foto de perfil
+
+En **F1 > Perfil**: **Elegir foto...** (cualquier imagen: JPG, PNG, la de tu celular; el juego toma el cuadrado del medio
+y la achica) o **Usar mi foto de Discord** (con Discord abierto en la PC). La ven tus rivales en la sala, al lado de tu
+nombre en la pelea y en tu perfil, y quienes miran tus partidas. Viaja de tu juego al del otro una sola vez (unos pocos
+KB) y queda guardada en el suyo: la próxima vez que se crucen ya no viaja. No queda en ningún servidor y no le cuesta
+nada a la pelea (se carga antes). En **F2 > Online** podés ocultar las fotos de los demás, o las fotos y los nombres
+en la pelea.
 
 ## La pelea
 
 - Los menús son los del juego: cualquiera de los dos puede elegir VERSUS, ONE VS ONE o TWO VS TWO. El otro se suma con
   START en la pantalla de 2 jugadores, y cada uno elige su luchador.
-- En la selección de personajes y debajo de las barras de vida aparece el nombre y la bandera de cada jugador.
+- En la selección de personajes y debajo de las barras de vida aparece la foto, la bandera y el nombre de cada
+  jugador. En **F2 > Online** se ocultan las fotos o los nombres en la pelea.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
   el ping y, en la pelea, el retraso ("vs Rival - 180 ms - retraso 2"). Si la conexión pierde paquetes o varía mucho
   lo dice, y también si va directa o por el relay. Si alguien mira tu partida, dice cuántos ("1 mirando"). En
@@ -69,10 +86,12 @@ vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4 espectadores.
 
 ## Replays
 
-Cada sesión online queda grabada (las últimas 10, en la carpeta `logs`). En **F1 > Replays** están por fecha, con el
-rival, y **Ver** vuelve a abrir el juego jugando esa sesión desde el principio: los menús pasan rápido (sin imagen ni
-sonido un momento) y las peleas se ven a su ritmo, con sonido. Al terminar, "Volver al lobby". Un replay de otra
-versión de mk9-lauta no se puede ver (el juego lo avisa).
+La grabación viene **apagada**: se activa en **F1 > Replays** ("Grabar mis sesiones online para verlas después") o
+en **F2 > Online > Grabar replays**, y vale desde la próxima sesión. No graba video: guarda las entradas de los dos
+jugadores (unos 3 KB por segundo, en la carpeta `logs`; las últimas 10 sesiones), así que no usa internet ni se nota
+en el juego. En **F1 > Replays** están por fecha, con el rival, y **Ver** vuelve a abrir el juego jugando esa sesión
+desde el principio: los menús pasan rápido (sin imagen ni sonido un momento) y las peleas se ven a su ritmo, con
+sonido. Al terminar, "Volver al lobby". Un replay de otra versión de mk9-lauta no se puede ver (el juego lo avisa).
 
 ## Salir
 

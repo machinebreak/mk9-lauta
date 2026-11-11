@@ -256,6 +256,21 @@ quien reporta.
   mismo tag trae también un bloque de 20 bytes de cada usuario que no es un mando, y el bloque "procesado"
   `0x00FF0001` tiene los botones a la manera del juego: la A es `0x20` en su cuarto byte). Probado con un guion de
   direcciones, diagonales, botones solos y juntos: cada uno con sus cuadros.
+- **La marca de la versión** (2026-11-11, `mk9_brand.h`): el logo "MK9 BY LAUTA" y las redes de Lauta (Discord,
+  WhatsApp, Instagram, Kick, YouTube, X) en la bienvenida, en F2 > Acerca de y abajo a la derecha del menú principal
+  (`mk9_brand_menu`; sólo fuera de las sesiones y sin ventanas del overlay abiertas). Las imágenes van dentro del
+  ejecutable (`app/src/brand`, hechas por `tools/brand/make_brand_assets.py` a partir del logo; los íconos son de
+  Simple Icons, CC0), en varios tamaños porque las texturas del overlay no tienen mipmaps. El estado del juego
+  (`netplay::GameState`) ahora se lee también fuera de las sesiones, cada 4 cuadros.
+- **Fotos de perfil y perfiles** (2026-11-11, `avatars.h`, `profiles.h`, lobby.md): la foto viaja entre los juegos
+  por el relay del lobby, una vez, y se guarda en `avatars\`; en la pelea va al lado del nombre y la bandera, debajo
+  de la barra de vida (`mk9_plates_names`, `mk9_plates_avatars`, `mk9_avatars_others`; `mk9_plates_test` los dibuja en
+  cualquier pelea para probarlos). En el chat global, tocar un nombre abre "Ver perfil" / "Silenciar". Probado con
+  dos juegos en el lobby local: el perfil y la foto llegan (la foto se revisa: JPEG de 128x128 con su hash), y en una
+  sala completa cada lado recibe la foto del otro y la muestra en la pelea con rollback, sin desync.
+- **Discord** (2026-11-11): el logo por URL (`mk9_discord_image`: `docs/assets/discord_logo.png` en GitHub), "MK9
+  Online by Lauta" sobre él y dos botones (descargar, la comunidad). El título "Jugando a ..." es el nombre de la
+  aplicación de Discord: se cambia en el portal de desarrolladores, no desde el juego.
 
 ## Estado
 

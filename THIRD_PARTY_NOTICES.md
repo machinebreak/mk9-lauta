@@ -76,9 +76,11 @@ On the PC: [SDL3](https://www.libsdl.org) (zlib License; controllers, keyboard a
 controller mappings of [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB) (`gamecontrollerdb.txt`,
 zlib License), shipped with the PC release, and the online and options screens' fonts, Barlow and Barlow Condensed
 by Jeremy Tribby ([jpt/barlow](https://github.com/jpt/barlow); SIL Open Font License 1.1), embedded in the executable
-unmodified (`app/thirdparty/barlow`); for builds on a computer or for the tests only: MoltenVK and the Vulkan
-loader (Apache-2.0), Catch2 (BSL-1.0). The PC release also carries Microsoft's Visual C++ runtime DLLs, redistributed
-under the Visual Studio license terms.
+unmodified (`app/thirdparty/barlow`), and the social networks' icons of the screens (Discord, WhatsApp, Instagram,
+Kick, YouTube and X) from [Simple Icons](https://simpleicons.org) (CC0 1.0; `tools/brand/social_icons.json`, drawn
+into `app/src/brand/social_icons.png` by `tools/brand/make_brand_assets.py`); for builds on a computer or for the tests
+only: MoltenVK and the Vulkan loader (Apache-2.0), Catch2 (BSL-1.0). The PC release also carries Microsoft's Visual
+C++ runtime DLLs, redistributed under the Visual Studio license terms.
 
 ### FFmpeg and libmspack (LGPL)
 
@@ -110,5 +112,7 @@ license terms; SPIRV-Tools Apache-2.0; SPIRV-Headers MIT).
 
 Mortal Kombat is a trademark of Warner Bros. Entertainment. The icon (`app/icon.jpg`), the intro video
 (`app/thorhax_intro`) and the Switch button icons drawn by `app/src/mk9_button_icons.cpp` are the project's own and
-contain no Warner Bros. artwork. Nintendo Switch is a trademark of Nintendo. Xbox 360 is a trademark of Microsoft. This
-project is not affiliated with or endorsed by any of them.
+contain no Warner Bros. artwork. The "MK9 BY LAUTA" logo (`app/src/brand/logo_*.png`, `docs/assets/discord_logo.png`)
+is this release's own. Nintendo Switch is a trademark of Nintendo. Xbox 360 is a trademark of Microsoft. Discord,
+WhatsApp, Instagram, Kick, YouTube and X are trademarks of their owners; their icons only link to the release's
+community and its author's pages. This project is not affiliated with or endorsed by any of them.

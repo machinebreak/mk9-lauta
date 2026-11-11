@@ -70,7 +70,8 @@ void Chat(const std::string& text);
 // Hosts the room code (open: in the list; playing: no longer waiting for a guest).
 void Host(const std::string& room, const std::string& title, bool open, bool playing);
 void Unhost();
-// Joins the room code as the guest id (the host's relayed messages come to it).
+// Joins the room code as the guest id (the host's relayed messages come to it); "" leaves it. mk9-lauta (2026-11-11):
+// a link that comes back joins it again; in no room, the game is the guest of its own profile room (profiles.h).
 void Join(const std::string& room, const std::string& id);
 void Quick();
 // Relays data to the room's host, or to its guest id.
@@ -79,6 +80,8 @@ void SigToGuest(const std::string& room, const std::string& id, const nlohmann::
 bool PollEvent(Event* event);
 // The relayed messages of the ICE handshake (their data has "ice"), apart: ice_link.cpp takes them.
 bool PollIce(Event* event);
+// mk9-lauta (2026-11-11): the profiles' (their data has "pf"), apart: profiles.cpp takes them.
+bool PollProfile(Event* event);
 
 // The ICE servers for a room's path (GET /ice on the lobby's host: STUN, and TURN with credentials of hours), as the
 // WebRTC API takes them: [{urls: [...], username, credential}]. Blocks; empty on failure.

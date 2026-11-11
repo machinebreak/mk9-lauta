@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -18,6 +19,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "mk9_brand.h"
 #include "mk9_controls.h"
 #include "mk9_hardware.h"
 #include "mk9_overlay_input.h"
@@ -43,6 +45,7 @@ using mk9::i18n::T;
 const ImVec4 kGold(1.00f, 0.80f, 0.30f, 1.0f);
 const ImVec4 kGrey(0.68f, 0.66f, 0.66f, 1.0f);
 const ImVec4 kGreen(0.45f, 0.85f, 0.45f, 1.0f);
+const ImVec4 kText(0.93f, 0.91f, 0.89f, 1.0f);
 
 enum Step { kWelcome, kLanguage, kName, kQuality, kController, kDone };
 
@@ -102,7 +105,10 @@ class FirstRunWindow : public renut::gpu::overlay::Dialog {
     ImGuiIO& io = ImGui::GetIO();
     // the game behind, dimmed
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 150));
-    const ImVec2 size(std::min(700.0f * scale, io.DisplaySize.x - 24), std::min(470.0f * scale, io.DisplaySize.y - 24));
+    // mk9-lauta (2026-11-11): the welcome has the logo and the networks' buttons: taller
+    const bool welcome = step_ == kWelcome;
+    const ImVec2 size(std::min((welcome ? 760.0f : 700.0f) * scale, io.DisplaySize.x - 24),
+                      std::min((welcome ? 640.0f : 470.0f) * scale, io.DisplaySize.y - 24));
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always,
                             ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(size, ImGuiCond_Always);
@@ -116,7 +122,7 @@ class FirstRunWindow : public renut::gpu::overlay::Dialog {
     if (step_ == kController) flags |= ImGuiWindowFlags_NoNavInputs;
     ImGui::SetNextWindowBgAlpha(1.0f);  // the game's own texts and logos showed through
     ImGui::PushFont(renut::gpu::overlay::TitleFont(), 0.0f);
-    const bool open = ImGui::Begin("mk9-lauta###first_run", nullptr, flags);
+    const bool open = ImGui::Begin("MK9 Online by Lauta###first_run", nullptr, flags);
     ImGui::PopFont();
     if (open) {
       const bool back = step_ != kController && overlay_input::ClosePressed();
@@ -170,6 +176,36 @@ class FirstRunWindow : public renut::gpu::overlay::Dialog {
     if (color) ImGui::PopStyleColor();
   }
 
+  // A text centered on the window: broken into the lines that fit, each one centered. font / size: nullptr / 0 keep
+  // the current ones.
+  void Centered(const std::string& text, const ImVec4& color, ImFont* font = nullptr, float size = 0.0f) {
+    const bool push = font || size > 0.0f;
+    if (push) ImGui::PushFont(font, size);
+    const float avail = ImGui::GetContentRegionAvail().x;
+    std::vector<std::string> lines;
+    std::string line;
+    size_t at = 0;
+    while (at <= text.size()) {
+      const size_t space = std::min(text.find(' ', at), text.size());
+      const std::string word = text.substr(at, space - at);
+      const std::string longer = line.empty() ? word : line + " " + word;
+      if (!line.empty() && ImGui::CalcTextSize(longer.c_str()).x > avail) {
+        lines.push_back(line);
+        line = word;
+      } else {
+        line = longer;
+      }
+      at = space + 1;
+    }
+    if (!line.empty()) lines.push_back(line);
+    const float left = ImGui::GetCursorPosX();
+    for (const std::string& l : lines) {
+      ImGui::SetCursorPosX(left + std::max(0.0f, (avail - ImGui::CalcTextSize(l.c_str()).x) * 0.5f));
+      ImGui::TextColored(color, "%s", l.c_str());
+    }
+    if (push) ImGui::PopFont();
+  }
+
   // The buttons at the bottom: back (none on the first step) and the main one, which the controller's A gets first.
   // Returns 1 for the main one, -1 for back, 0 for none.
   int Buttons(const char* main, const char* back = nullptr, const char* other = nullptr, bool* other_pressed = nullptr) {
@@ -207,13 +243,27 @@ class FirstRunWindow : public renut::gpu::overlay::Dialog {
     return pressed;
   }
 
+  // mk9-lauta (2026-11-11): the release's logo at the top, its welcome, the four steps, and Lauta's networks.
   void DrawWelcome() {
-    Title(T("¡Bienvenido a mk9-lauta!"), 0);
-    Paragraph(T("Mortal Kombat Komplete Edition en tu PC, con online y rollback."));
+    const float scale = options_ui::UiScale();
+    const float width = ImGui::GetContentRegionAvail().x;
+    brand::Logo(std::min(width * 0.70f, 470.0f * scale));
+    ImGui::Dummy(ImVec2(0, 2.0f * scale));
+    Centered(T("¡Bienvenido a MK9 By Lauta!"), kGold, renut::gpu::overlay::TitleFont(), 36.0f);
+    Centered(T("Disfrutá la experiencia de MK9 con online. Hecho por y para la comunidad."), kText);
+    Centered(T("ATT: Lauta"), kGold, renut::gpu::overlay::StrongFont(), 0.0f);
     ImGui::Spacing();
-    Paragraph(T("Cuatro pasos y a jugar: el idioma, tu nombre para el online, la calidad de los gráficos y el mando. "
-                "Todo se puede cambiar después: F2 abre las opciones y F1 el online (con el mando, BACK + START y "
-                "BACK + Y)."));
+    ImGui::Separator();
+    ImGui::Spacing();
+    Paragraph(T("Cuatro pasos antes de empezar a jugar: el idioma, tu nombre para el online, la calidad de los "
+                "gráficos y una prueba del mando. Todo se puede cambiar después: F2 abre las opciones y F1 el online "
+                "(con el mando, BACK + START y BACK + Y)."),
+              &kGrey);
+    ImGui::Spacing();
+    ImGui::PushFont(renut::gpu::overlay::StrongFont(), 15.0f);
+    ImGui::TextColored(kGrey, "%s", T("SUMATE A LA COMUNIDAD"));
+    ImGui::PopFont();
+    brand::SocialButtons(width, 3, std::round(40.0f * scale));
     bool skip = false;
     const int pressed = Buttons(T("Empezar"), nullptr, T("Saltar"), &skip);
     if (skip) Finish(false);

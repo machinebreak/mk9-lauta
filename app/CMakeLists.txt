@@ -85,6 +85,8 @@ set(MK9_SOURCES
     # player, the pads), the screen and the language, the online fights' input delay.
     src/options_ui.cpp
     src/first_run_ui.cpp
+    # The release's logo and Lauta's networks: the welcome, F2, the main menu's corner (mk9_brand.h).
+    src/mk9_brand.cpp
     src/mk9_input_display.cpp
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
@@ -119,6 +121,8 @@ set(MK9_SOURCES
     src/online/session.cpp
     src/online/online_ui.cpp
     src/online/flags.cpp
+    src/online/avatars.cpp
+    src/online/profiles.cpp
     src/online/notify.cpp
     src/online/i18n.cpp
     src/online/discord.cpp

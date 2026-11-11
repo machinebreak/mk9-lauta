@@ -1,6 +1,7 @@
 // MK9 online: the lobby (lobby.h).
 
 #include "online/lobby.h"
+#include "online/profiles.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -107,6 +108,18 @@ class Client {
     return state_;
   }
 
+  // mutex_ held: a message for the sending thread.
+  void PushLocked(const json& message) {
+    outbox_.push_back(message.dump());
+    if (outbox_.size() > 64) outbox_.pop_front();
+  }
+
+  // mutex_ held: the join of the room this game is a guest of: the one joined, else its profile room's guest "pf".
+  json JoinLocked() const {
+    if (!guest_room_.empty()) return {{"t", "join"}, {"room", guest_room_}, {"id", guest_id_}};
+    return {{"t", "join"}, {"room", pf_room_}, {"id", pf_room_.empty() ? "" : "pf"}};
+  }
+
   void Send(const json& message) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -144,6 +157,28 @@ class Client {
     *event = std::move(ice_.front());
     ice_.pop_front();
     return true;
+  }
+
+  // mk9-lauta (2026-11-11): the profiles' messages (profiles.h), apart.
+  bool PollProfile(Event* event) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (profiles_.empty()) return false;
+    *event = std::move(profiles_.front());
+    profiles_.pop_front();
+    return true;
+  }
+
+  // The room this game is a guest of (the room's flow: "" leaves it). mk9-lauta (2026-11-11): kept, so a link that
+  // comes back joins it again, and with none the game is the guest of its own profile room (profiles.h).
+  void Join(const std::string& room, const std::string& id) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      guest_room_ = room;
+      guest_id_ = id;
+      if (!running_) return;
+      PushLocked(JoinLocked());
+    }
+    send_cv_.notify_one();
   }
 
   json IceServers() {
@@ -195,6 +230,14 @@ class Client {
         json hello = {{"t", "hello"}, {"v", 2}, {"sub", true}, {"name", name}};
         if (!country.empty()) hello["country"] = country;
         SendNow(hello);
+        // mk9-lauta (2026-11-11): a new link is nobody's guest: the room's join again (the profile room's comes with
+        // the lobby's "me", once it has said the name)
+        json join;
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (!guest_room_.empty()) join = JoinLocked();
+        }
+        if (!join.is_null()) SendNow(join);
         ReceiveLoop();
         CloseSocket();
       }
@@ -393,7 +436,9 @@ class Client {
     if (t == "pong") return;
     if (t == "sig") {
       json data = m.value("data", json());
-      auto& queue = data.is_object() && data.contains("ice") ? ice_ : events_;
+      auto& queue = data.is_object() && data.contains("ice") ? ice_
+                    : data.is_object() && data.contains("pf") ? profiles_
+                                                               : events_;
       queue.push_back({Event::Kind::kSig, Str(m, "room"), std::move(data)});
       if (queue.size() > 256) queue.pop_front();
       return;
@@ -417,6 +462,15 @@ class Client {
       state_.name = Str(m, "name");
       state_.named = m.value("ok", false);
       state_.name_error = state_.named ? std::string() : Str(m, "error");
+      // mk9-lauta (2026-11-11): the name the lobby gave: its profile room (profiles.h), joined while in no room
+      if (const std::string room = profiles::RoomOf(state_.name); room != pf_room_) {
+        pf_room_ = room;
+        REXLOG_INFO("[lobby] the profile asks for {} come to room {}", state_.name, pf_room_);
+      }
+      if (guest_room_.empty() && !pf_room_.empty()) {
+        PushLocked(JoinLocked());
+        send_cv_.notify_one();
+      }
     } else if (t == "rooms") {
       state_.rooms = Rooms(m.value("rooms", json::array()));
       state_.online = int(Int(m, "online"));
@@ -453,7 +507,9 @@ class Client {
   std::string country_;  // this player's, two letters (SetCountry)
   State state_;
   std::deque<std::string> outbox_;
-  std::deque<Event> events_, ice_;
+  std::deque<Event> events_, ice_, profiles_;
+  std::string guest_room_, guest_id_;  // the room this game joined as its guest ("" none: Join)
+  std::string pf_room_;                // this game's profile room (profiles.h; "" until the lobby says the name)
   Clock::time_point last_ping_{};
   std::thread worker_, sender_;
 
@@ -489,9 +545,7 @@ void Host(const std::string& room, const std::string& title, bool open, bool pla
                     {"status", playing ? "playing" : "waiting"}});
 }
 void Unhost() { TheClient().Send({{"t", "unhost"}}); }
-void Join(const std::string& room, const std::string& id) {
-  TheClient().Send({{"t", "join"}, {"room", room}, {"id", id}});
-}
+void Join(const std::string& room, const std::string& id) { TheClient().Join(room, id); }
 void Quick() { TheClient().Send({{"t", "quick"}, {"mode", "fight"}}); }
 void SigToHost(const std::string& room, const nlohmann::json& data) {
   TheClient().Send({{"t", "sig"}, {"room", room}, {"to", "host"}, {"data", data}});
@@ -501,6 +555,7 @@ void SigToGuest(const std::string& room, const std::string& id, const nlohmann::
 }
 bool PollEvent(Event* event) { return TheClient().PollEvent(event); }
 bool PollIce(Event* event) { return TheClient().PollIce(event); }
+bool PollProfile(Event* event) { return TheClient().PollProfile(event); }
 nlohmann::json IceServers() { return TheClient().IceServers(); }
 
 }  // namespace mk9::lobby

@@ -21,8 +21,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr auto kEvery = std::chrono::milliseconds(60);  // the messages go out at most this often
-constexpr size_t kBudget = 2048;   // recording bytes a turn, the spectators' together (~34 KB/s)
 constexpr size_t kLeast = 256;     // a spectator's share at least
+constexpr size_t kReserve = 16u << 20;  // the host's recording
 constexpr auto kSilent = std::chrono::seconds(20);  // a spectator not heard from this long is gone
 
 const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -80,6 +80,9 @@ bool g_ended = false;
 
 void Append(const void* data, size_t size) {
   std::lock_guard<std::mutex> lock(g_mutex);
+  // mk9-lauta (2026-11-11): room for about 90 minutes of session at once (the game thread appends: no copy of a
+  // growing recording in the middle of a fight)
+  if (g_recording.capacity() < kReserve) g_recording.reserve(kReserve);
   g_recording.append(static_cast<const char*>(data), size);
 }
 
@@ -111,7 +114,7 @@ int Watchers() {
   return int(g_watchers.size());
 }
 
-void Pump(const std::string& room, bool ended) {
+void Pump(const std::string& room, bool ended, size_t budget) {
   std::lock_guard<std::mutex> lock(g_mutex);
   const auto now = Clock::now();
   if (now - g_turn < kEvery) return;
@@ -125,7 +128,7 @@ void Pump(const std::string& room, bool ended) {
   }
   size_t behind = 0;
   for (const Watcher& w : g_watchers) behind += w.sent < g_recording.size() ? 1 : 0;
-  const size_t share = behind ? std::max(kLeast, kBudget / behind) : 0;
+  const size_t share = behind ? std::max(kLeast, budget / behind) : 0;
   for (Watcher& w : g_watchers) {
     if (w.sent < g_recording.size()) {
       const size_t n = std::min(share, g_recording.size() - size_t(w.sent));

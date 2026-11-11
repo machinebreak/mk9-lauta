@@ -62,6 +62,7 @@
 #include "online/loading.h"
 #include "online/netplay.h"
 #include "first_run_ui.h"
+#include "mk9_brand.h"
 #include "mk9_input_display.h"
 #include "online/online_ui.h"
 #include "options_ui.h"
@@ -543,6 +544,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::virtual_time::BoundaryStart(base);  // the frame before's logic is over (its clock reads, virtual_time.h)
   mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
+  mk9::brand::Install();         // once: the main menu's corner (mk9_brand.h), under the windows
   mk9::first_run_ui::Install();  // once: the first start's steps (before the online window, which waits for them)
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)

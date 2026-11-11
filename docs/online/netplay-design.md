@@ -379,11 +379,20 @@ experimental).
    Con 45 ± 25 ms y 3 % de pérdida, cuatro sesiones de ~4 min con X-Rays seguidos: entradas iguales cuadro por cuadro,
    ningún hash distinto, ningún cierre (antes, un desync a los 10-40 s y a veces un cierre del renderer, que venía de
    ahí: dos juegos distintos dibujando lo que el otro ya no tiene).
-2. **Las sesiones grabadas** (`mk9_net_record`, activado): cada sesión escribe sus cuadros finales en
+2. **Las sesiones grabadas** (`mk9_net_record`): cada sesión escribe sus cuadros finales en
    `logs/session_<fecha>_p1|p2.mk9net` (las entradas de los dos y el hash de sincronía de cada cuadro; quedan las 10
    últimas). `tools/online/session_report.py <p1> <p2>` dice si las entradas coinciden y en qué cuadro se separaron
    los hashes, con los botones de los cuadros de alrededor; con un archivo, sus épocas. Al detectar un desync el log
    dice dónde está el archivo, para que los jugadores lo manden.
+   **Desde 2026-11-11 viene apagado** (F1 > Replays o F2 > Online lo activan). El hilo del juego nunca toca el disco:
+   arma los registros de cada cuadro en un buffer y los pasa de una vez (al feed de los espectadores y a la grabación);
+   con la opción activada, un hilo propio los escribe cada 2 s. Apagada, quedan en memoria (unos 3 KB por segundo de
+   sesión, en pedazos de 1 MB que no se vuelven a copiar; 64 MB como máximo) sólo para el reporte de un desync, que
+   los escribe a su lado (`logs/desync_.../session.mk9net`). Probado con un desync forzado
+   (`mk9_net_test_desync_frame`): con la opción, las dos grabaciones se leen enteras (7801 cuadros) y el reporte
+   apunta a ellas; sin ella, no se escribe ninguna y el reporte trae su `session.mk9net` (6601 cuadros, hasta el
+   desync). El feed de los espectadores sube menos durante una pelea con rollback (`feed::kBudgetFight`, 17 KB/s; con
+   más de 150 ms o pérdida, 8,5 KB/s): ponerse al día no le quita subida al jugador.
 3. **El sonido de la pelea**: con las entradas arregladas no apareció ningún desync en las pruebas, así que los avisos
    de FMOD a destiempo no rompen la pelea (el juego no decide nada con ellos en las peleas probadas). El sonido puede
    empezar un cuadro o dos aparte en las dos máquinas; `mk9_sound_sync_fights` sigue experimental y apagado.

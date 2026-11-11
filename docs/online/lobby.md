@@ -43,6 +43,26 @@ de 6 caracteres sin I, O, 0 ni 1. Partida rápida: el lobby da la sala que más 
 Cuando los dos están listos, el host manda `start`: el invitado se vuelve a abrir a los 300 ms y el host a los
 1200 ms (que el invitado reciba el arranque antes).
 
+## Fotos de perfil y perfiles (2026-11-11)
+
+Sin servidores nuevos ni nada guardado en el lobby: el lobby sólo reenvía, como los mensajes de una sala.
+
+- **La foto** (`avatars.h`): un JPEG de 128×128 de pocos KB (20 KB como máximo), con nombre = FNV-1a 64 de sus bytes.
+  La propia es `online_avatar.jpg` junto al ejecutable (F1 > Perfil: cualquier imagen que abra Windows, recortada al
+  cuadrado del medio y achicada, o la de Discord bajada de los servidores de Discord); las ajenas quedan en `avatars\`
+  (las 300 más nuevas). Las lee y escribe WIC (el de Windows) en un hilo propio; la de otro jugador se revisa (hash,
+  JPEG de 128×128) antes de guardarla o mostrarla. La textura (64 KB) se hace antes de la pelea; dibujarla es un quad.
+- **En la sala**: `hi`, `welcome` y `ping` llevan `av` (el hash). El que no lo tiene pide `av?` {h} y recibe `av`
+  {h, d: base64}, una vez (cada uno a lo sumo cada 15 s). El espectador recibe `av1`/`av2` con `watching` y le pide
+  las fotos al host (`av?` con su `id`). Silenciados: ni se piden ni se muestran.
+- **Ver perfil desde el chat** (`profiles.h`): cada juego es además el invitado `pf` de una sala propia cuyo código
+  sale de su nombre (`profiles::RoomOf`: 8 letras/dígitos; los códigos de sala reales tienen 6), mientras no sea
+  invitado de una sala real (`lobby.cpp` la vuelve a unir al reconectarse y al salir de una sala). El que pregunta
+  manda `{pf: "ask", back, from, n}` a esa sala; la respuesta es `{pf: "card"}` (récord, 3 personajes, 8 partidas,
+  hash de la foto, versión) a la sala `back`; la foto sólo si falta (`av?` / `av`). Cada juego contesta a cada uno a
+  lo sumo cada 10 s y 20 por minuto, y manda su foto a cada uno a lo sumo una vez por minuto. Un jugador que es
+  invitado de una sala (o de una sesión) no contesta mientras tanto: el que pregunta lo dice a los 6 s.
+
 ## La sesión
 
 `session::Launch` vuelve a abrir el mismo ejecutable con sus opciones (menos las de una sesión anterior y las de

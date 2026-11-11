@@ -3,14 +3,17 @@
 #include "online/room.h"
 
 #include <chrono>
+#include <initializer_list>
 #include <mutex>
 #include <random>
+#include <unordered_map>
 #include <utility>
 
 #include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "online/avatars.h"
 #include "online/feed.h"
 #include "online/flags.h"
 #include "online/i18n.h"
@@ -77,12 +80,52 @@ std::string Normalize(const std::string& code) {
 }
 
 // This player's country and record, for the other player (with the hello, the welcome and the keepalives).
+// mk9-lauta (2026-11-11): and its picture's hash (avatars.h; "" none): the picture itself only if the other lacks it.
 json AboutMe(json message) {
   const stats::Summary s = stats::Totals();
   message["cc"] = flags::Mine();
   message["won"] = s.won;
   message["lost"] = s.lost;
+  message["av"] = avatars::MineHash();
   return message;
+}
+
+// A text field of the other game's message ("" when missing or not a text).
+std::string Text(const json& d, const char* key) {
+  const auto it = d.find(key);
+  return it != d.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+// mk9-lauta (2026-11-11): the pictures in a room (avatars.h). A hash this game lacks is asked for ("av?", with the
+// asker's id when a spectator asks the host); the picture goes as "av" {h, d: base64}, each asker's at most every 15 s.
+std::unordered_map<std::string, Clock::time_point> g_pictures_sent;
+
+bool PictureDue(const std::string& who) {
+  const auto now = Clock::now();
+  auto& at = g_pictures_sent[who];
+  if (at != Clock::time_point{} && now - at < std::chrono::seconds(15)) return false;
+  at = now;
+  return true;
+}
+
+// The picture of a hash this game has (its own, or the rival's for a spectator), as the relay's message; null if none.
+json PictureMessage(const std::string& hash) {
+  const std::string data = avatars::Read(hash);
+  if (data.empty()) return nullptr;
+  return {{"room", "av"}, {"h", hash}, {"d", avatars::Base64(data)}};
+}
+
+// A picture that came: kept if it is one of the expected hashes.
+void TakePicture(const json& d, std::initializer_list<const std::string*> expected) {
+  const std::string hash = avatars::CleanHash(Text(d, "h"));
+  if (hash.empty()) return;
+  for (const std::string* e : expected) {
+    if (*e == hash) {
+      const std::string data = Text(d, "d");
+      if (data.size() <= (avatars::kMaxBytes + 2) / 3 * 4) avatars::Store(hash, avatars::Unbase64(data));
+      return;
+    }
+  }
 }
 
 std::string MyName() {
@@ -154,6 +197,7 @@ void OtherGoneLocked(const char* why) {
     g.s.phase = Phase::kHosting;
     g.s.other.clear();
     g.s.other_country.clear();
+    g.s.other_avatar.clear();
     g.s.my_ready = g.s.other_ready = false;
     g.guest_id.clear();
     g.s.status = T("Esperando un rival");
@@ -191,6 +235,16 @@ void OnMessageLocked(const json& d) {
     g.s.other_won = d.value("won", -1);
     g.s.other_lost = d.value("lost", -1);
   }
+  if (d.contains("av") && g.s.phase == Phase::kTogether) {
+    const std::string hash = avatars::CleanHash(Text(d, "av"));
+    if (hash != g.s.other_avatar) {
+      g.s.other_avatar = hash;
+      Touch();
+    }
+    if (!hash.empty() && avatars::ShowOthers() && !session::IsBlocked(g.s.other) && avatars::Wanted(hash)) {
+      SendOther({{"room", "av?"}, {"h", hash}});
+    }
+  }
   if (g.s.host) {
     // mk9-lauta (2026-11-10): someone watching the session (its own id): the two players, then the match (feed.h)
     if (kind == "watch") {
@@ -204,10 +258,18 @@ void OnMessageLocked(const json& d) {
       // the players' names and flags as this side has them now (the other's may come later)
       lobby::SigToGuest(g.s.code, id,
                         {{"room", "watching"}, {"p1", g.s.me}, {"p2", g.s.other}, {"cc1", flags::Mine()},
-                         {"cc2", g.s.other_country}});
+                         {"cc2", g.s.other_country}, {"av1", avatars::MineHash()}, {"av2", g.s.other_avatar}});
       if (g.s.watchers != feed::Watchers()) {
         g.s.watchers = feed::Watchers();
         Touch();
+      }
+      return;
+    }
+    // mk9-lauta (2026-11-11): a spectator asks for a player's picture (this one's, or the rival's kept here)
+    if (kind == "av?" && !Text(d, "id").empty()) {
+      const std::string id = Text(d, "id"), hash = avatars::CleanHash(Text(d, "h"));
+      if (!hash.empty() && (hash == avatars::MineHash() || hash == g.s.other_avatar) && PictureDue(id + hash)) {
+        if (json picture = PictureMessage(hash); !picture.is_null()) lobby::SigToGuest(g.s.code, id, picture);
       }
       return;
     }
@@ -226,8 +288,12 @@ void OnMessageLocked(const json& d) {
         g.s.other_country = d.value("cc", "");
         g.s.other_won = d.value("won", -1);
         g.s.other_lost = d.value("lost", -1);
+        g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
         g.s.phase = Phase::kTogether;
         lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}}));
+        if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
+          lobby::SigToGuest(g.s.code, id, {{"room", "av?"}, {"h", g.s.other_avatar}});
+        }
         if (fresh) {
           g.s.my_ready = g.s.other_ready = false;
           g.s.status = T("Rival en la sala");
@@ -245,16 +311,28 @@ void OnMessageLocked(const json& d) {
       if (kind == "watching") {
         const std::string p1 = d.value("p1", ""), p2 = d.value("p2", ""), cc1 = d.value("cc1", ""),
                           cc2 = d.value("cc2", "");
-        if (!g.s.watching || p1 != g.s.p1 || p2 != g.s.p2 || cc1 != g.s.p1_country || cc2 != g.s.p2_country) {
+        const std::string av1 = avatars::CleanHash(Text(d, "av1")), av2 = avatars::CleanHash(Text(d, "av2"));
+        if (!g.s.watching || p1 != g.s.p1 || p2 != g.s.p2 || cc1 != g.s.p1_country || cc2 != g.s.p2_country ||
+            av1 != g.s.p1_avatar || av2 != g.s.p2_avatar) {
           g.s.watching = true;
           g.s.p1 = p1;
           g.s.p2 = p2;
           g.s.p1_country = cc1;
           g.s.p2_country = cc2;
+          g.s.p1_avatar = av1;
+          g.s.p2_avatar = av2;
           Touch();
+        }
+        // the players' pictures this game lacks, from the host (mk9-lauta, 2026-11-11)
+        for (const std::string& hash : {av1, av2}) {
+          if (!hash.empty() && avatars::ShowOthers() && avatars::Wanted(hash)) {
+            lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", hash}, {"id", g.guest_id}});
+          }
         }
       } else if (kind == "feed") {
         feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
+      } else if (kind == "av") {
+        TakePicture(d, {&g.s.p1_avatar, &g.s.p2_avatar});
       } else if (kind == "feed_end") {
         feed::ReceivedEnd();
       } else if (kind == "watch_full") {
@@ -269,8 +347,12 @@ void OnMessageLocked(const json& d) {
       g.s.other_country = d.value("cc", "");
       g.s.other_won = d.value("won", -1);
       g.s.other_lost = d.value("lost", -1);
+      g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
       g.s.phase = Phase::kTogether;
       g.s.status = Tf("En la sala de {}", g.s.other);
+      if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
+        lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", g.s.other_avatar}});
+      }
       AddLine("", Tf("Entraste a la sala de {}", g.s.other), true);
       if (!g.s.in_session) notify::Attention(true);
       return;
@@ -291,6 +373,17 @@ void OnMessageLocked(const json& d) {
     }
   }
   if (g.s.phase != Phase::kTogether) return;
+  if (kind == "av?") {  // mk9-lauta (2026-11-11): the other lacks this one's picture
+    const std::string hash = avatars::CleanHash(Text(d, "h"));
+    if (!hash.empty() && hash == avatars::MineHash() && PictureDue("other")) {
+      if (json picture = PictureMessage(hash); !picture.is_null()) SendOther(picture);
+    }
+    return;
+  }
+  if (kind == "av") {
+    TakePicture(d, {&g.s.other_avatar});
+    return;
+  }
   if (kind == "chat") {
     AddLine(g.s.other, d.value("text", ""), false);
     notify::Attention(false);
@@ -512,7 +605,11 @@ void Pump() {
       room_code = g.s.code;
     }
     if (feeding) {
-      feed::Pump(room_code, netplay::Info().ended);
+      const netplay::SessionInfo info = netplay::Info();
+      const size_t budget = !info.rollback ? feed::kBudgetMenus
+                            : info.rtt_ms > 150 || info.loss_pct > 2 ? feed::kBudgetFightSlow
+                                                                     : feed::kBudgetFight;
+      feed::Pump(room_code, info.ended, budget);
       std::lock_guard<std::mutex> lock(g.mutex);
       if (g.s.watchers != feed::Watchers()) {
         g.s.watchers = feed::Watchers();  // one that stopped asking is gone

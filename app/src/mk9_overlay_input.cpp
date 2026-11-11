@@ -115,6 +115,8 @@ void OnFrame() {
   g_combo_frame.store(have && (buttons & kBack) && (buttons & (kStart | kY)), std::memory_order_relaxed);
 }
 
+bool AnyOpen() { return g_open.load(std::memory_order_relaxed) != 0; }
+
 void SetOpen(Window window, bool open) {
   const uint32_t bit = 1u << uint32_t(window);
   if (open) {
