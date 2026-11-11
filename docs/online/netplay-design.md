@@ -929,6 +929,9 @@ sin dibujar sólo cambia el actor `+0xac` en cada re-corrida (la hora del últim
 otra no) y lo que el dibujo ya dejaba aparte (`+0xc8`, `+0x1b4`); dibujando, las re-corridas además tenían palabras del
 actor de `+0x2c0` a `+0x2dc` y de `+0x580` a `+0x59c` distintas (el hilo de render escribiéndolas a su tiempo), sin
 dibujar ninguna. Una grabación de 800 cuadros de esa pelea con B2 (`flash_scan.py`): ningún cuadro negro ni con basura
-y ningún destello de un cuadro. **Falta** para encenderlo por defecto: el hunt entre dos juegos y peleas con X-Ray y
-fatality (el plan: "Prueba"); quedó para cuando la PC tenga memoria (la regresión 5 la cortó Claude Code por falta de
-memoria: el juego del usuario, Discord, Chrome y los dos juegos de prueba).
+y ningún destello de un cuadro. Después, el SyncTest con B2 en cinco peleas de la Escalera con otro luchador del
+jugador 1 cada una (1, 2, 3, 4 y 6 de la selección; el rival y el escenario, los de la Escalera; la CPU peleando contra
+un jugador quieto; D3D12): 875-925 rollbacks de 6 cuadros en cada una, ~4500 en total, **0 cuadros distintos**.
+**Falta** para encenderlo por defecto: el hunt entre dos juegos y peleas con X-Ray y fatality (el plan: "Prueba");
+quedó para cuando la PC tenga memoria (la regresión 5 la cortó Claude Code por falta de memoria: el juego del
+usuario, Discord, Chrome y los dos juegos de prueba).
