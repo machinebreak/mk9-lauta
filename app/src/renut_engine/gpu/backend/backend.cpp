@@ -1,6 +1,7 @@
 /**
  * @file    gpu/backend/backend.cpp
  */
+#include "mk9_renderer_start.h"  // mk9-lauta (2026-11-11): the renderer's start, watched
 #include "renut_engine/gpu/backend/backend.h"
 
 #include <algorithm>
@@ -273,6 +274,7 @@ Backend LatchBackend() {
 }  // namespace detail
 
 void FallBackToVulkan() { detail::g_backend_plus1 = uint8_t(uint8_t(Backend::Vulkan) + 1); }
+void ForceBackend(Backend backend) { detail::g_backend_plus1 = uint8_t(uint8_t(backend) + 1); }
 
 const char *BackendName(Backend backend) {
   return backend == Backend::Vulkan ? "Vulkan" : backend == Backend::Deko3D ? "deko3d" : "D3D12";
@@ -372,6 +374,7 @@ bool ReportDeviceLost(plume::RenderDevice *device) {
       return lost.load();
     RGPU_ERROR("Vulkan device lost: the GPU faulted or hung executing an earlier frame; nothing "
                "is drawn from here on (plume's messages are in the stderr log)");
+    mk9::renderer_start::DeviceLost();
     return true;
   }
 #if defined(_WIN32)
@@ -383,6 +386,7 @@ bool ReportDeviceLost(plume::RenderDevice *device) {
     return lost.load();
   RGPU_ERROR("D3D12 device removed (reason {:08X})", uint32_t(reason));
   LogDeviceRemovedData(d3d);
+  mk9::renderer_start::DeviceLost();
   return true;
 #else
   return false;

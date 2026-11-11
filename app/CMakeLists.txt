@@ -93,6 +93,7 @@ set(MK9_SOURCES
     src/mk9_hardware.cpp
     # mk9-lauta's updater: a newer release from GitHub, signed, installed at a restart (mk9_updater.h).
     src/mk9_updater.cpp
+    src/mk9_renderer_start.cpp
     # F1 and F2 with a controller; the game's input held while one is open; the close asked first.
     src/mk9_overlay_input.cpp
     src/mk9_native_bones.cpp

@@ -160,6 +160,18 @@ personajes de la Komplete (Skarlet, Kenshi, Rain, Freddy Krueger, en la fila ext
 Los pipelines nuevos aparecen con lo que no se vio antes (la Kripta construyó 82, la Torre 32, la Historia 23, una
 pelea ya vista 1): `pipeline_list.bin` los anota y los construye por adelantado en el próximo arranque.
 
+### El arranque de la API gráfica y las notebooks con dos placas (2026-11-11)
+
+`mk9_renderer_start.h`: cada arranque anota en `logs\renderer_start.txt` la API (`d3d12`/`vulkan`), los arranques
+fallidos seguidos y cómo terminó (`pending` al crear el dispositivo, `ok` cuando la GPU terminó 120 cuadros, se vean o
+no: un juego minimizado no presenta nada, `lost` si se perdió el dispositivo). La segunda vez seguida que una API no
+llega a `ok` (el driver se cuelga o se cierra creando el dispositivo, sus primeros pipelines, la swap chain), el
+arranque siguiente usa la otra, la guarda en `mk9.toml` y lo dice arriba de la pantalla 20 s. Un dispositivo perdido
+lo dice en un mensaje (antes la imagen quedaba congelada) y cuenta como arranque fallido. Probado simulando la segunda
+falla: pasa a Vulkan y lo muestra. La ejecutable exporta `NvOptimusEnablement` y `AmdPowerXpressRequestHighPerformance`
+(los drivers de NVIDIA y AMD los buscan en el `.exe`; el DLL del SDK los tenía, sin efecto): una notebook con dos
+placas usa la dedicada. plume ya elegía, en D3D12, el adaptador con más memoria dedicada y, en Vulkan, la discreta.
+
 ## Estado
 
 | Fase | Estado |

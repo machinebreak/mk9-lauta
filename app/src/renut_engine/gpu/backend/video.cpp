@@ -3,6 +3,7 @@
  * @brief   Device creation, bindless tables, resource retirement and command
  *          list management for the native renderer.
  */
+#include "mk9_renderer_start.h"  // mk9-lauta (2026-11-11): the renderer's start, watched
 #include "renut_engine/gpu/backend/video.h"
 
 #include <cstdio>
@@ -854,6 +855,10 @@ void SubmitAndAdvance(VideoState &s, plume::RenderCommandSemaphore *wait,
   // Record into the other slot next; the GPU keeps working on this one.
   s.frame = (cur + 1) % kFramesInFlight;
   WaitSlotLocked(s, s.frame);
+  // mk9-lauta (2026-11-11): the GPU has finished frames (the slot's fence waited for), shown or not (a game started
+  // minimized presents nothing): this start's API works (mk9_renderer_start.h)
+  static uint32_t done = 0;
+  if (done < 120 && ++done == 120) mk9::renderer_start::FramesDone();
 #if defined(PLUME_DEKO3D)
   g_trim.kick_submits[s.frame] = 0;  // banjo-nx (2026-10-20, banjo_deko3d_latency_trim): the slot's new frame
   g_trim.last_kick[s.frame] = {};
@@ -896,6 +901,8 @@ bool Video::CreateHostDevice() {
 #endif
 
   banjo::renut_gpu::BeforeDeviceCreated();  // banjo-nx: plume's pipeline cache and barriers (banjo_renut_tuning.h)
+  // mk9-lauta (2026-11-11): an API that twice in a row got no image on screen: the other one (mk9_renderer_start.h)
+  mk9::renderer_start::BeforeDevice();
   s.render_interface = CreateRenderInterface();
   if (s.render_interface)
     s.device = s.render_interface->createDevice();
@@ -927,6 +934,7 @@ bool Video::CreateHostDevice() {
     return false;
   }
   banjo::renut_gpu::OnDeviceCreated(s.device.get());
+  mk9::renderer_start::DeviceReady(IsVulkan() ? "vulkan" : "d3d12");
   s.backend_description =
       std::string(BackendName(ActiveBackend())) + " on " + s.device->getDescription().name;
   RGPU_INFO("Renderer: {}", s.backend_description);

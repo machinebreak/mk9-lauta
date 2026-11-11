@@ -69,6 +69,7 @@
 #include "online/virtual_time.h"
 #include "mk9_frame_budget.h"
 #include "mk9_overlay_input.h"
+#include "mk9_renderer_start.h"
 #include "mk9_updater.h"
 
 #define XXH_INLINE_ALL
@@ -543,6 +544,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)
   mk9::updater::Install();     // and the updater's banner (a newer release on GitHub)
+  mk9::renderer_start::Install();  // and the notice of a graphics API swapped at this start
   mk9::online::FrameBegin(base);
   mk9::quiesce::Observe(base, mk9::online::CurrentFrame());
   mk9::snapshot::OnFrame(ctx, base, mk9::online::CurrentFrame());
