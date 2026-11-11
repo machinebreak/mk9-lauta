@@ -44,7 +44,13 @@ En la pestaña **Perfil** está tu récord online: partidas, ganadas, perdidas, 
 - En la selección de personajes y debajo de las barras de vida aparece el nombre y la bandera de cada jugador.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
   el ping y, en la pelea, el retraso ("vs Rival - 180 ms - retraso 2"). Si la conexión pierde paquetes o varía mucho
-  lo dice, y también si va directa o por el relay. Si alguien mira tu partida, dice cuántos ("1 mirando").
+  lo dice, y también si va directa o por el relay. Si alguien mira tu partida, dice cuántos ("1 mirando"). En
+  **F2 > Online > Cartel de la conexión en las peleas** se elige verlo completo, sólo la señal u oculto (los avisos
+  aparecen siempre).
+- Con un ping muy alto los menús responden con retraso (esperan los botones del otro): el cartel lo dice ("Conexión
+  lenta"), no es que el juego se trabó.
+- Si el otro deja de responder, a los 10 s aparece un aviso en el medio de la pantalla con la cuenta regresiva: si no
+  vuelve en 20 s, la sesión termina y volvés al lobby.
 - Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los menús y la
   intro de cada pelea van sincronizados con un retraso según el ping, así no se traban.
 - En la pelea online **no hay pausa** (START no pausa).

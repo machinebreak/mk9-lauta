@@ -847,3 +847,20 @@ espectador (`session::Replay`), desde **F1 > Replays** (las grabaciones por fech
 partidas del perfil que terminaron en ella). Probado con la grabación del host y la del invitado de la misma sesión:
 8922 y 8859 cuadros comparados, ninguno distinto. Una grabación de otra versión (su protocolo en la cabecera) se
 rechaza con su motivo.
+
+### Avisos de la sesión y el cartel en la pelea (tareas C4, C5 y F4, 2026-11-11)
+
+- **Menús lentos** (C4): en lockstep con 8 cuadros de retraso o más (~130 ms de ida y vuelta), el cartel dice "Conexión
+  lenta: los menús responden con retraso": los menús esperan los botones del otro, el juego no se trabó.
+- **Sin noticias del otro** (C5): `SessionInfo` lleva los segundos desde la última palabra del otro y los del corte
+  (`mk9_net_timeout_s`, 20). A los 10 s un aviso en el medio de la pantalla dice cuántos quedan antes de que la sesión
+  termine (el log lo anota una vez). Probado matando al invitado: aviso a los 10 s, fin a los 20.
+- **El cartel en la pelea** (F4, `mk9_online_badge`: F2 > Online): completo, sólo la señal u oculto; los avisos
+  (conexión inestable, esperando al otro, desync) se ven siempre, y en los menús completo.
+- Los tres se prueban con `tools/online/dev/silent_peer.ps1` (una sala del lobby local: el cartel es de las sesiones de
+  sala, no de las de UDP directo).
+
+**El hash de la pelea, otra vez** (la segunda regresión): la info de cada jugador tiene de `+0x24` a `+0x238` un arreglo
+de entradas de 12 bytes {vtable `0x82003cb0`, un tiempo ~7,01 s, un id `0x1000xxxx`} cuyos tiempos salieron 0,1875 s
+distintos en el primer cuadro de una pelea (`+0x148`, después de `+0x118`) y cuyas entradas se mueven: el rango entero
+queda afuera (`fighter_diff.py` `EXCLUDED_RANGES`), 324 tramos.

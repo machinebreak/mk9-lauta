@@ -26,6 +26,7 @@
 
 #include <fmt/format.h>
 #include <rex/cvar.h>
+#include <rex/logging.h>
 
 #include "online/discord.h"
 #include "online/fight_state.h"
@@ -38,6 +39,10 @@
 #include "online/stats.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
+REXCVAR_DEFINE_STRING(mk9_online_badge, "full", "MK9 Online",
+                      "The connection's badge in a fight: full (the rival, the bars, the round trip and the delay), bars "
+                      "(the bars alone) or off (nothing but its warnings); the menus always show it whole")
+    .allowed({"full", "bars", "off"});
 REXCVAR_DEFINE_BOOL(mk9_online_show, false, "MK9 Online",
                     "The online screens open at start (the game started again back from a room's session)");
 REXCVAR_DEFINE_STRING(mk9_online_test_tab, "", "MK9 Online",
@@ -607,6 +612,37 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   // In a session, a corner of the screen says who the rival is and the ping (and when the game waits for the rival).
   // mk9-lauta (2026-11-10): a session's corner, the top right; in a fight the bottom center, between the two super
   // meters (the top right is player 2's health bar and name).
+  // mk9-lauta (2026-11-11, PLAN-0.4 C5): 10 s without a word from the other player: a warning in the middle of the
+  // screen with the seconds left before the session ends (the badge's "waiting for" said it from the start).
+  void DrawPeerSilent(const room::State& room, const netplay::SessionInfo& info) {
+    constexpr double kWarnAfter = 10.0;
+    if (info.silent_s < kWarnAfter || info.timeout_s <= kWarnAfter) {
+      silent_told_ = false;
+      return;
+    }
+    if (!silent_told_) {
+      silent_told_ = true;
+      REXLOG_WARN("[online] {:.0f} s without a word from {}: the warning is up (the session ends at {:.0f} s)",
+                  info.silent_s, Other(room), info.timeout_s);
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.4f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs;
+    if (ImGui::Begin("##peer_silent", nullptr, flags)) {
+      ImGui::PushFont(nullptr, 24.0f);
+      ImGui::TextColored(kGold, T("Sin noticias de %s"), Other(room).c_str());
+      ImGui::PopFont();
+      const int left = std::max(0, int(info.timeout_s - info.silent_s + 0.5));
+      ImGui::Text(T("Si no vuelve, la sesión termina en %d s."), left);
+      ImGui::TextColored(kGrey, "%s", T("Puede ser su conexión o la tuya: el juego sigue en cuanto llegue."));
+    }
+    ImGui::End();
+  }
+
   static void PlaceBadge(const netplay::SessionInfo& info) {
     const ImGuiIO& io = ImGui::GetIO();
     if (info.in_fight) {
@@ -624,29 +660,46 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       DrawWatchBadge(room, info);
       return;
     }
+    DrawPeerSilent(room, info);
     PlaceBadge(info);
     ImGui::SetNextWindowBgAlpha(0.45f);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+    // mk9-lauta (2026-11-11, PLAN-0.4 F4): in a fight, the player's choice (F2 > Online): the whole badge, the bars
+    // alone, or only its warnings
+    const std::string mode = info.in_fight ? REXCVAR_GET(mk9_online_badge) : std::string("full");
+    const bool unstable = info.loss_pct >= 3 || info.jitter_ms >= 30;
+    const bool slow_menus = !info.rollback && info.delay >= 8;
+    const bool warnings = info.active && (unstable || slow_menus || info.waiting || info.desynced);
+    if (mode == "off" && !warnings) return;
     if (ImGui::Begin("##session_badge", nullptr, flags)) {
       if (info.active) {
-        ImGui::Text("vs");
-        ImGui::SameLine();
-        FlagInline(room.other_country);
-        ImGui::Text("%s", Other(room).c_str());
-        ImGui::SameLine();
-        SignalBars(info);
-        ImGui::SameLine();
-        std::string line = fmt::format("{:.0f} ms", info.rtt_ms);
-        if (info.rollback && info.speculating) line += Tf(" - retraso {}", info.delay);
-        if (info.relayed) line += " - relay";
-        ImGui::Text("%s", line.c_str());
-        if (info.loss_pct >= 3 || info.jitter_ms >= 30) {
+        if (mode == "full") {
+          ImGui::Text("vs");
+          ImGui::SameLine();
+          FlagInline(room.other_country);
+          ImGui::Text("%s", Other(room).c_str());
+          ImGui::SameLine();
+        }
+        if (mode != "off") SignalBars(info);
+        if (mode == "full") {
+          ImGui::SameLine();
+          std::string line = fmt::format("{:.0f} ms", info.rtt_ms);
+          if (info.rollback && info.speculating) line += Tf(" - retraso {}", info.delay);
+          if (info.relayed) line += " - relay";
+          ImGui::Text("%s", line.c_str());
+        }
+        if (unstable) {
           ImGui::TextColored(kGold, T("Conexión inestable (%.0f%% perdidos, variación %.0f ms)"), info.loss_pct,
                              info.jitter_ms);
         }
-        if (room.host && room.watchers > 0) ImGui::TextColored(kGrey, T("%d mirando"), room.watchers);
+        if (mode == "full" && room.host && room.watchers > 0) ImGui::TextColored(kGrey, T("%d mirando"), room.watchers);
+        // mk9-lauta (2026-11-11, PLAN-0.4 C4): the menus wait the round trip's frames for the other's buttons: with a
+        // long one they answer late, which is not the game hanging
+        if (slow_menus) {
+          ImGui::TextColored(kGold, "%s", T("Conexión lenta: los menús responden con retraso"));
+        }
         if (info.waiting) ImGui::TextColored(kGold, T("Esperando a %s... %.0f s"), Other(room).c_str(), info.waiting_s);
         // mk9-lauta (2026-11-10): the two games apart (the session goes on): each player sees a different fight, so
         // they know it and can send their logs (logs/session_*.mk9net)
@@ -956,6 +1009,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
   }
   std::vector<Replay> replays_;
+  bool silent_told_ = false;  // DrawPeerSilent's log, once a silence
   Clock::time_point replays_listed_{};
 
   // The session is over: why, and back to the lobby (by itself after a few seconds).

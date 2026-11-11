@@ -174,6 +174,10 @@ const std::vector<Option>& OnlineOptions() {
        "Cuadros que espera cada golpe tuyo antes de verse. Con menos retraso tus golpes salen antes pero el rollback "
        "corrige más (los personajes \"saltan\"); con más, al revés. Automático: 1 cuadro con ping bajo y más con ping "
        "alto, ajustándose durante toda la pelea. Cada jugador elige el suyo."},
+      {"mk9_online_badge", "Cartel de la conexión en las peleas",
+       {{"full", "Completo (rival, señal, ping y retraso)"}, {"bars", "Sólo la señal"}, {"off", "Oculto"}},
+       "Lo que se ve abajo durante una pelea online. Los avisos (conexión inestable, esperando al rival) aparecen "
+       "siempre; en los menús se ve completo."},
   };
   return options;
 }

@@ -81,6 +81,16 @@ EXCLUDED = {(0, 0x118): 'match info +0x118: a load time (seconds)', (1, 0x240): 
             (2, 0x1B4): 'actor +0x1b4: a count (15 first, 14 run again)'}
 
 
+# Whole ranges out, by what they hold: each player's match info has, from +0x24 to +0x238, an array of 12-byte entries
+# {vtable 0x82003cb0, a time ~7.01 s, a handle 0x1000xxxx} whose times came out 0.1875 s apart on the two machines in
+# a fight's first frame (+0x118, +0x148: 2026-11-11), and whose entries move during the fight.
+EXCLUDED_RANGES = [(0, 0x24, 0x238, 'match info +0x24-0x238: timed entries (vtable 0x82003cb0, a time, a handle)')]
+
+
+def excluded(kind, offset):
+    return (kind, offset) in EXCLUDED or any(k == kind and lo <= offset < hi for k, lo, hi, _ in EXCLUDED_RANGES)
+
+
 def looks_like_handle(v):
     # handles numbered from a counter (0x1000xxxx: in a session's second fight the guest's ran 2 ahead of the host's,
     # 2026-11-11), never a float of the fight (2.5e-29 to 6e-29): out even when both machines had them alike
@@ -156,7 +166,7 @@ for kind in (0, 1, 2):
     if not s:
         continue
     same = [o for o, e in s.items() if e[1] == 0 and e[4] == 0 and e[5] == 0 and (e[6] > 0 or not hash_moment) and
-            (kind, o) not in EXCLUDED]
+            not excluded(kind, o)]
     moved = [o for o, e in s.items() if e[5] > 0]
     if moved:
         print(f"  moved between the boundary's start and the hash's moment: {len(moved)} words: " +

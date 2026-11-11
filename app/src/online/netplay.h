@@ -96,6 +96,9 @@ struct SessionInfo {
   bool desynced = false;
   bool waiting = false;     // the game is waiting for the other player's inputs (for longer than a moment)
   double waiting_s = 0;     // ... this long so far
+  // mk9-lauta (2026-11-11, PLAN-0.4 C5): seconds since the last word from the other player, and the ones after which
+  // the session ends (mk9_net_timeout_s)
+  double silent_s = 0, timeout_s = 0;
   std::string peer_release; // the other player's release ("0.2.1"; empty: not said, 0.2.0 and older say nothing)
   // mk9-lauta (2026-11-10): the connection's indicator: how much the round trip moves (the last pongs' standard
   // deviation), the share of pings that got no answer (the last ~12 s), and a path through a relay (TURN)

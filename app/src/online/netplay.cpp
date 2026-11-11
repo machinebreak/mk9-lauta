@@ -2321,6 +2321,11 @@ SessionInfo Info() {
     info.waiting_s = now > since ? double(now - since) / 1e6 : 0.0;
     info.waiting = info.waiting_s >= 0.5;
   }
+  if (info.active && !g.watching && g.last_heard_us) {
+    const uint64_t now = NowUs();
+    info.silent_s = now > g.last_heard_us ? double(now - g.last_heard_us) / 1e6 : 0.0;
+    info.timeout_s = double(TimeoutUs()) / 1e6;
+  }
   info.player = g.player;
   info.rtt_ms = g.rtt_ms;
   info.delay = g.delay;
