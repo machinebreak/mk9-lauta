@@ -898,3 +898,37 @@ Dos cambios:
   falsos positivos ya no molestan a los jugadores. El espectador no lo calcula (adelanta con otros tiempos de carga que
   los jugadores). `hunt.ps1` y `regress.ps1` cuentan esas líneas aparte, sin fallar (y buscan "DESYNC in" distinguiendo
   mayúsculas: `Select-String` no lo hace solo, y encontraba "desync" en la carpeta de un reporte).
+
+### Los cuadros re-corridos sin dibujar la escena (tareas B1 y B2, 2026-11-11: el mecanismo, apagado hasta el hunt)
+
+**B1, la medida**: `[frame]` agrega una segunda línea con los cuadros que el rollback corre otra vez (los ocultos):
+su trabajo, sus esperas al render y el borde que sigue a cada uno (el que vacía el trabajo del hilo de render de ese
+cuadro y guarda su foto; un cuadro oculto no espera el vblank, así que ese borde es trabajo puro).
+
+**B2**: `FViewport::Draw` es `sub_828BBEC0`. Se encontró por los nombres de sus comandos de render: los
+`DescribeCommand` `sub_828A9170` y `sub_828A9180` devuelven "BeginDrawingCommand" y "EndDrawingCommand" (0x82133848,
+0x8213385C); sus vtables de 3 entradas {destructor, Execute, DescribeCommand} están en 0x82133B90 y 0x82133B9C/0x82133BCC
+y las construyen `sub_828BBEC0` y `sub_828BB750`. Encola el comienzo del dibujo, llama al `Draw` del cliente del viewport
+(la escena y el HUD, vtable +12) y encola el final (el Present: el Swap que cuenta `g_mk9_game_frames`). La llaman los
+redibujados de `UGameEngine` (`sub_82869CA0`, `sub_82869E20`; `sub_82875358` salta a ella). Con
+`mk9_hidden_frames_draw = false`, un cuadro que el rollback corre otra vez (de un jugador o del SyncTest) no la llama:
+el hilo de render de UE3 no tiene escena que recorrer y Renut nada que tirar. Un espectador o un replay que alcanza
+sigue dibujando: corre oculto muchos segundos seguidos, y lo que el juego haga con "dibujado hace mucho" (un esqueleto
+que sólo se actualiza si se ve...) no es lo que hicieron las máquinas de los jugadores. Hook nuevo: el generador llama
+por el nombre a lo enganchado sólo tras `python tools/direct_calls.py --redo` (reescribe los 3 archivos que la llaman).
+
+Medido (SyncTest 4700,12,6, 325 rollbacks de 6 cuadros cada uno, con la PC más tranquila):
+
+| cuadro re-corrido | trabajo del juego | borde después (vacía su render) | total |
+|---|---|---|---|
+| dibujando (como hasta ahora) | 1,85 ms | 1,39 ms (p99 3,56) | 3,24 ms |
+| sin dibujar (`mk9_hidden_frames_draw=false`) | 1,76 ms | 0,44 ms (p99 0,80) | 2,20 ms |
+
+El SyncTest: 0 cuadros distintos en las dos maneras (más de 600 rollbacks en total). De los bloques de los luchadores,
+sin dibujar sólo cambia el actor `+0xac` en cada re-corrida (la hora del último dibujo: la primera corrida dibujó, la
+otra no) y lo que el dibujo ya dejaba aparte (`+0xc8`, `+0x1b4`); dibujando, las re-corridas además tenían palabras del
+actor de `+0x2c0` a `+0x2dc` y de `+0x580` a `+0x59c` distintas (el hilo de render escribiéndolas a su tiempo), sin
+dibujar ninguna. Una grabación de 800 cuadros de esa pelea con B2 (`flash_scan.py`): ningún cuadro negro ni con basura
+y ningún destello de un cuadro. **Falta** para encenderlo por defecto: el hunt entre dos juegos y peleas con X-Ray y
+fatality (el plan: "Prueba"); quedó para cuando la PC tenga memoria (la regresión 5 la cortó Claude Code por falta de
+memoria: el juego del usuario, Discord, Chrome y los dos juegos de prueba).

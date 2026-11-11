@@ -126,6 +126,7 @@ set(MK9_SOURCES
     src/online/feed.cpp
     src/online/virtual_time.cpp
     src/online/sound_replay.cpp
+    src/online/hidden_draw.cpp
     src/online/sound_sync.cpp
     src/online/sound_stream.cpp
     src/online/host_stack.cpp

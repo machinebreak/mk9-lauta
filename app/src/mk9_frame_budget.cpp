@@ -3,6 +3,10 @@
 // tick's render command fence: the game thread may run one frame ahead of the render thread and no more), and the
 // frame boundary before it (the pad read's hook in online/mk9_capture.cpp: an online session's work there, the loads
 // finished at the frame's start). With percentiles: the online plan's gates read them (docs/online/baseline-0.3.0.md).
+// mk9-lauta (2026-11-11, PLAN-0.4 B1): the frames a rollback runs again (hidden, sa2_renut_pacing.h FrameHidden) apart
+// too: their work, their waits and the boundary after each (it flushes the render thread's work of that frame and
+// keeps its snapshot; a hidden frame is not paced, so no vertical blank is in it). What B2 (online/hidden_draw.cpp)
+// saves shows there.
 
 #include "mk9_frame_budget.h"
 
@@ -16,6 +20,7 @@
 #include <rex/logging.h>
 
 #include "online/virtual_time.h"
+#include "renut_engine/gpu/sa2_renut_pacing.h"
 
 REXCVAR_DEFINE_BOOL(mk9_frame_budget_log, true, "MK9", "Log where the game thread's frames go every 10 s ([frame])");
 
@@ -58,7 +63,9 @@ struct State {
   Clock::time_point tick_start{};
   bool in_tick = false;
   double tick_wait_ms = 0.0;  // the tick's waits for the render thread so far
+  bool tick_hidden = false;   // the last tick was a hidden frame's (the next boundary flushes its render work)
   Histogram work, wait, boundary;
+  Histogram hidden_work, hidden_wait, hidden_boundary;  // the hidden frames' share of the three
 };
 State g;
 
@@ -74,16 +81,30 @@ void MaybeReport(Clock::time_point now) {
                 Ms(now - g.since) / 1000.0, g.work.total, g.work.Mean(), g.work.Percentile(0.5),
                 g.work.Percentile(0.99), g.work.max_ms, g.wait.Mean(), g.wait.Percentile(0.99), g.wait.max_ms,
                 g.boundary.Mean(), g.boundary.Percentile(0.99), g.boundary.max_ms);
+    if (g.hidden_work.total) {
+      REXLOG_INFO("[frame] of them run again (hidden): {} frames; their work {:.2f} ms (p99 {:.1f}, most {:.1f}); "
+                  "waiting for the render thread {:.2f} ms (p99 {:.1f}); the boundary after each {:.2f} ms (p99 {:.1f}, "
+                  "most {:.1f})",
+                  g.hidden_work.total, g.hidden_work.Mean(), g.hidden_work.Percentile(0.99), g.hidden_work.max_ms,
+                  g.hidden_wait.Mean(), g.hidden_wait.Percentile(0.99), g.hidden_boundary.Mean(),
+                  g.hidden_boundary.Percentile(0.99), g.hidden_boundary.max_ms);
+    }
   }
   g.since = now;
   g.work.Clear();
   g.wait.Clear();
   g.boundary.Clear();
+  g.hidden_work.Clear();
+  g.hidden_wait.Clear();
+  g.hidden_boundary.Clear();
 }
 
 }  // namespace
 
-void NoteBoundary(double ms) { g.boundary.Add(ms); }
+void NoteBoundary(double ms) {
+  g.boundary.Add(ms);
+  if (g.tick_hidden) g.hidden_boundary.Add(ms);
+}
 
 }  // namespace mk9::frame_budget
 
@@ -95,12 +116,17 @@ REX_HOOK_RAW(sub_823621F8) {
   g.game = std::this_thread::get_id();
   g.in_tick = true;
   g.tick_wait_ms = 0.0;
+  g.tick_hidden = sa2::renut::FrameHidden();  // set at the frame's start (the boundary before it)
   __imp__sub_823621F8(ctx, base);
   g.in_tick = false;
   const auto end = mk9::frame_budget::Clock::now();
   const double total = mk9::frame_budget::Ms(end - start);
   g.work.Add(std::max(0.0, total - g.tick_wait_ms));
   g.wait.Add(g.tick_wait_ms);
+  if (g.tick_hidden) {
+    g.hidden_work.Add(std::max(0.0, total - g.tick_wait_ms));
+    g.hidden_wait.Add(g.tick_wait_ms);
+  }
   mk9::frame_budget::MaybeReport(end);
 }
 
