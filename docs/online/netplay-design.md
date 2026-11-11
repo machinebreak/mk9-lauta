@@ -635,3 +635,51 @@ tiempo real de los cuadros de los jugadores), se miran a velocidad normal; los m
 Herramientas: `mk9_net_input_replay=<grabación>` (los botones de un jugador desde su `session_*.mk9net`, cuadro por
 cuadro: una sesión otra vez por el mismo camino; con `mk9_seed` igual al de la grabación), el log de cada cambio del
 estado del juego (`GS_`), y los cuadros que un espectador comparó y difirieron ("N of M frames so far").
+
+### El reloj del hilo del juego, hecho de cuadros (`virtual_time.h`, 2026-11-11)
+
+Todas las lecturas del reloj del invitado pasan por `REX_QUERY_TIMEBASE()` = `Clock::QueryGuestTickCount()` del SDK
+(`mftb`); las del hilo del juego, por `appCycles` de UE3 (`sub_82366BF8`, muchas veces en línea). Cada máquina tiene
+su reloj, así que cualquier cosa que el juego haga con el tiempo puede caer en cuadros distintos en las dos: ya
+aparecieron dos (la nativa `824b75f8` y la tarea del motor, arriba). Ahora, en un juego de sesión (jugador o
+espectador; `mk9_virtual_time`), el hilo del juego lee un reloj hecho de sus cuadros, desde la primera instrucción de
+`main` (`sub_823669D8`): un solo reloj todo el tiempo. Los demás hilos (render de UE3, FMOD, XAudio2, streaming)
+siguen con el de la PC. El SDK tiene un filtro (`rex/chrono/guest_tick_filter.h`, `SetGuestTickFilter`) que
+`QueryGuestTickCount` aplica si está puesto; el filtro es de la app y decide por hilo.
+
+**Por qué no el de Tekken 6** (`t6_determinism.cpp`: +10 µs por lectura). Se auditó antes de prender
+(`mk9_clock_audit`: en cada cuadro, las lecturas del cuadro anterior por llamador, con la pila del host;
+`tools/online/dev/clock_audit.py` compara dos máquinas). En ~12.000 cuadros de una sesión con 45 ms por lado, la
+cantidad de lecturas de la lógica de un cuadro difería entre las dos máquinas en 7766:
+
+1. Las esperas al hilo de render de UE3 (`sub_82741630`, la cerca de comandos del tick; `sub_82360480`, que mientras
+   espera hace carga asíncrona en tajadas de 10 ms) leen el reloj sólo cuando esperan: hasta 20.017 lecturas en un
+   cuadro.
+2. La primera pasada de la purga incremental de basura (`sub_82568540`, llamada por `IncrementalPurgeGarbage`
+   `sub_826D3CD8` con su presupuesto de tiempo) pregunta a cada objeto si el render ya lo soltó (vtable +44) y vuelve a
+   preguntarle al mismo hasta que sí, leyendo el reloj cada 10 preguntas: cuánto gira depende del render.
+3. La zona de PhysX lee una vez por cuadro sólo cuando su hilo viene atrasado (`sub_8301AF20`, `sub_8301AF80`,
+   `sub_8312B940`, …: presente en una máquina y no en la otra en ~4500 cuadros).
+
+Con +10 µs por lectura, las dos máquinas leerían horas distintas.
+
+**El modelo**: cada lectura de un cuadro da la misma hora, `1000 s + cuadro × 1/60`, con `cuadro` = el contador de
+`GuardedMain` (`[0x833848D4]+108`: memoria del juego, igual en las dos y vuelve atrás con un rollback, así que un
+cuadro re-corrido lee la hora de su primera corrida). Que la cantidad de lecturas difiera no importa. Las esperas a otro
+hilo (`WaitZone`: las dos de la cerca y la pasada de la purga) avanzan 10 µs por lectura desde la hora del cuadro (sus
+presupuestos y las tajadas de la carga terminan como con el reloj de la PC) y después vuelve la hora del cuadro. Válvula:
+más de 20.000 lecturas fuera de las esperas en un cuadro (lo más visto con el modelo: 128) avanzan 10 µs por lectura,
+con aviso en el log. Cada 600 cuadros el log dice cuántas lecturas hace el hilo del juego (`[time]`). El reloj de los
+scripts (`mk9_script_clock`) se hace a un lado cuando esto está prendido: la nativa contesta `appSeconds` de este mismo
+reloj.
+
+**Lo que el reloj no arregla**: qué destruye la purga en cada cuadro sigue dependiendo del render (es lo que corre los
+heaps de las dos máquinas, el corrimiento de `0x60000` visto antes); el avance de la carga asíncrona depende del disco
+(las cargas ya son barreras). Ninguno de los dos llega a la lógica de la pelea.
+
+**Probado** (prendido por defecto): `hunt.ps1 -Runs 6` con 60 ± 40 ms, las 6 juntas (la pelea y los modos empiezan en
+el mismo cuadro en las dos, ningún desync); dos sesiones auditadas, ningún cuadro pasó la válvula: lo más fuera de las
+esperas, 128 lecturas en un cuadro, y hasta 212.744 dentro de ellas. Antes de meter la pasada de la purga en una espera
+llegaba a 17.162 en una sola máquina (la otra, 2): la válvula se habría abierto de un solo lado. Los dos juegos de una
+sesión tienen que tener el mismo valor de `mk9_virtual_time`; desde el protocolo 10 el HELLO lo dice y el log avisa si
+difiere.

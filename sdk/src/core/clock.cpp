@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include <rex/chrono/clock.h>
+#include <rex/chrono/guest_tick_filter.h>
 #include <rex/cvar.h>
 #include <rex/math.h>
 #include <rex/sys_counters.h>
@@ -41,6 +42,9 @@ uint64_t guest_system_time_base_ = Clock::QueryHostSystemTime();
 // Split in numerator (first) and denominator (second).
 // Computed by RecomputeGuestTickScalar.
 std::pair<uint64_t, uint64_t> guest_tick_ratio_ = std::make_pair(1, 1);
+
+// mk9-lauta (2026-11-10): the filter of QueryGuestTickCount (guest_tick_filter.h), when one is set.
+std::atomic<GuestTickFilter> guest_tick_filter_{nullptr};
 
 // Native guest ticks. Atomic so that a contended reader can take it without the mutex.
 std::atomic<uint64_t> last_guest_tick_count_{0};
@@ -173,8 +177,13 @@ void Clock::set_guest_system_time_base(uint64_t time_base) {
 
 uint64_t Clock::QueryGuestTickCount() {
   auto guest_tick_count = UpdateGuestClock();
+  if (const GuestTickFilter filter = guest_tick_filter_.load(std::memory_order_acquire)) {
+    return filter(guest_tick_count);
+  }
   return guest_tick_count;
 }
+
+void SetGuestTickFilter(GuestTickFilter filter) { guest_tick_filter_.store(filter, std::memory_order_release); }
 
 uint64_t Clock::QueryGuestSystemTime() {
   if (REXCVAR_GET(clock_no_scaling)) {

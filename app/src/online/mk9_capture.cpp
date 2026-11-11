@@ -65,6 +65,7 @@
 #include "online/quiesce.h"
 #include "online/seed.h"
 #include "online/snapshot.h"
+#include "online/virtual_time.h"
 #include "mk9_frame_budget.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
@@ -535,6 +536,7 @@ uint64_t CurrentFrame() { return g_frame; }
 extern "C" REX_FUNC(__imp__sub_829D5230);
 REX_HOOK_RAW(sub_829D5230) {
   const auto boundary_start = std::chrono::steady_clock::now();
+  mk9::virtual_time::BoundaryStart(base);  // the frame before's logic is over (its clock reads, virtual_time.h)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::online_ui::Install();   // once: the online screens (F1)
   mk9::options_ui::Install();  // and the options (F2)
@@ -551,6 +553,7 @@ REX_HOOK_RAW(sub_829D5230) {
   if (mk9::loading::Enabled() || mk9::netplay::Active()) mk9::loading::FlushPending(ctx, base);
   mk9::frame_budget::NoteBoundary(
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - boundary_start).count());
+  mk9::virtual_time::FrameStart(base);  // the frame's clock reads count from here (after the boundary's own)
   __imp__sub_829D5230(ctx, base);
 }
 
@@ -648,10 +651,12 @@ void AgreeOnNativeResult(uint8_t* base, netplay::ReadyFlag flag, bool busy_style
 // after the players. In a session's game it answers the game's frame count over 60 (GuardedMain's counter at
 // [0x833848D4]+108, the sync checks' tag 9): the same on both machines and a spectator, and gone back with a
 // rollback's memory. From the game's first frame, not the session's: a time a script kept from before the session
-// started (each machine's own clock then) made the VS screen's wait end a frame apart on the two machines.
+// started (each machine's own clock then) made the VS screen's wait end a frame apart on the two machines. With the
+// game thread's clock made of its frames (virtual_time.h) the native's own answer is the same already: kept, so the
+// scripts and the engine read one clock.
 void ScriptClock(uint8_t* base) {
   static const bool on = REXCVAR_GET(mk9_script_clock);
-  if (!on || !netplay::SessionGame()) return;
+  if (!on || !netplay::SessionGame() || virtual_time::On()) return;
   const uint32_t vm = Load32(base, kScriptVm), game = Load32(base, 0x833848D4);
   if (!GuestPointer(vm) || !GuestPointer(game)) return;
   const float seconds = float(double(Load32(base, game + 108)) / 60.0);

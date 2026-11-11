@@ -20,6 +20,7 @@ Nunca apuntan al lobby real.
 | `replay_hunt.ps1 [-Runs 6]` | Repite la sesión que se separó el 2026-11-09 (`out\f3\desync_menu_20261109`) con los botones de cada jugador desde su grabación (`mk9_net_input_replay` + `mk9_seed`) hasta que las dos máquinas se separen |
 | `cmdlines.ps1 [-Seconds 90]` | Anota la línea de comandos de cada `mk9.exe` que aparece (los juegos relanzados por una sala) |
 | `cmp_checks.py a b [contexto]` | La primera línea en que difieren dos `mk9_check_log` |
+| `clock_audit.py host.txt guest.txt [--show 10]` | Las lecturas del reloj del hilo del juego de dos máquinas (`mk9_clock_audit`, `virtual_time.h`), por cuadro y por llamador: cuántas hace la lógica fuera de las esperas a otro hilo, cuántas dentro, y si algún cuadro pasó la válvula |
 | `cmp_sound.py host.frames guest.frames` | Las entregas de sonido de la pelea y las palabras de los avisos, comparadas entre las dos máquinas |
 | `handoff_report.py host.frames guest.frames [--depth 8]` | Las entregas de sonido que hizo una sola máquina, por cadena de llamadas del juego (con `mk9_sound_log`) |
 | `rec_frames.py grabación.mk9net época desde hasta` | Los cuadros de una grabación: busy, ready, aviso de sonido, botones y hash de cada jugador |

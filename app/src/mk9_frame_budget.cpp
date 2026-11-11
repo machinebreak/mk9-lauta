@@ -15,6 +15,8 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 
+#include "online/virtual_time.h"
+
 REXCVAR_DEFINE_BOOL(mk9_frame_budget_log, true, "MK9", "Log where the game thread's frames go every 10 s ([frame])");
 
 namespace mk9::frame_budget {
@@ -104,6 +106,7 @@ REX_HOOK_RAW(sub_823621F8) {
 
 extern "C" REX_FUNC(__imp__sub_82741630);
 REX_HOOK_RAW(sub_82741630) {
+  mk9::virtual_time::WaitZone wait;  // a wait for another thread: its clock reads are not the frame's
   if (!g.in_tick || std::this_thread::get_id() != g.game) {
     __imp__sub_82741630(ctx, base);
     return;

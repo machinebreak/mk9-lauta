@@ -122,6 +122,7 @@ set(MK9_SOURCES
     src/online/fight_state.cpp
     src/online/stats.cpp
     src/online/feed.cpp
+    src/online/virtual_time.cpp
     src/online/sound_replay.cpp
     src/online/sound_sync.cpp
     src/online/sound_stream.cpp
