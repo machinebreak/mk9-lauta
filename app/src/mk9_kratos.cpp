@@ -607,19 +607,24 @@ bool ZipGood(const fs::path& zip) {
   return fs::file_size(zip, ec) == kZipSize && !ec && ShaOf(zip) == kZipSha;
 }
 
+// He is in these game files already (installed at an earlier start, or a game root that had him): his packages, his
+// DLC package and the Coalesced.ini that registers him.
+bool InGameRoot() {
+  if (g_game_root.empty()) return false;
+  std::error_code ec;
+  for (const char* name : kPackages) {
+    if (!fs::is_regular_file(g_game_root / "Asset" / name, ec)) return false;
+  }
+  return fs::is_regular_file(PackageFolder(g_game_root) / "Kratos__Xe-MK9Game.ini", ec) &&
+         ShaOf(g_game_root / "Config" / "Coalesced.ini") == kKratosCoalescedSha;
+}
+
 void InstallDownloaded() {
   std::error_code ec;
   const fs::path zip = ZipPath();
   if (!fs::exists(zip, ec)) return;
-  // already here (a game root that had him): the zip is not needed any more
-  const bool complete = g_game_root.empty() ? false : [&] {
-    for (const char* name : kPackages) {
-      if (!fs::is_regular_file(g_game_root / "Asset" / name, ec)) return false;
-    }
-    return fs::is_regular_file(PackageFolder(g_game_root) / "Kratos__Xe-MK9Game.ini", ec) &&
-           ShaOf(g_game_root / "Config" / "Coalesced.ini") == kKratosCoalescedSha;
-  }();
-  if (!complete) {
+  // already here: the zip is not needed any more
+  if (!InGameRoot()) {
     if (!ZipGood(zip)) {
       REXLOG_WARN("[kratos] {} is not the port's release (size or SHA-256): deleted, downloaded again",
                   rex::path_to_utf8(zip));
@@ -687,7 +692,10 @@ bool FetchWanted() {
     return false;
   }
   std::error_code ec;
-  return !fs::exists(ZipPath(), ec);  // downloaded already: installed at the start (or its failure logged)
+  if (fs::exists(ZipPath(), ec)) return false;  // downloaded already: installed at the start (or its failure logged)
+  // in the game files already: the zip is deleted once he is in, and AtStart asks this before it counts his files
+  // (mk9-lauta 0.5.1-0.6.0 downloaded him again at every start)
+  return !InGameRoot();
 }
 
 bool StartFetchLocked() {
