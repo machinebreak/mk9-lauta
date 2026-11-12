@@ -13,7 +13,7 @@ project(mk9 VERSION 1.0.4 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 # mk9-lauta: the PC port's own version (the window's title, the release's zip); MK9_VERSION stays mk9-nx's
-set(MK9_LAUTA_VERSION "0.5.1")
+set(MK9_LAUTA_VERSION "0.5.2")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -198,7 +198,7 @@ if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
-    target_link_libraries(mk9 PRIVATE mk9_juice winhttp shell32 bcrypt comctl32 ole32 winmm)
+    target_link_libraries(mk9 PRIVATE mk9_juice winhttp ws2_32 shell32 bcrypt comctl32 ole32 winmm)
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
 endif()

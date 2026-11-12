@@ -5,6 +5,8 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
 
@@ -69,10 +71,6 @@ Url Parse(const std::string& text) {
   return url;
 }
 
-#ifndef WINHTTP_OPTION_RESOLUTION_HOSTNAME
-#define WINHTTP_OPTION_RESOLUTION_HOSTNAME 165
-#endif
-
 // mk9-lauta (2026-11-11): the address a name like the lobby's carries ("107-172-143-35.sslip.io" -> "107.172.143.35");
 // "" for any other name. Some providers' DNS (Claro's, a player's diagnosis: WinHTTP 12007) does not answer for
 // sslip.io: the game then goes to that address without asking the DNS.
@@ -98,12 +96,148 @@ std::wstring AddressInName(const std::wstring& host) {
 // Once the DNS failed for the lobby's name, every connection after goes straight to its address (no 8 s wait first).
 std::atomic<bool> g_by_address{false};
 
-// The request connects to 'address' and keeps the URL's name for everything else: the TLS handshake's server name
-// (the lobby's server answers no handshake without it), the certificate's check and the Host header. Windows 10 2004
-// and later; false where WinHTTP does not know the option.
-bool ConnectByAddress(HINTERNET request, const std::wstring& address) {
-  return !address.empty() && WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
-                                              const_cast<wchar_t*>(address.c_str()), DWORD(address.size()));
+// mk9-lauta (2026-11-12): the lobby at its address with the name kept, on every Windows. A player on 0.5.0 still had
+// "dns" (12007): WINHTTP_OPTION_RESOLUTION_HOSTNAME is not in every Windows. Instead WinHTTP goes through a proxy of
+// this game's own on 127.0.0.1: it asks it for the name (CONNECT name:443, or an absolute http:// URL), so it never
+// asks the DNS; the proxy connects to the address the name carries (AddressInName; no other name) and passes the
+// bytes as they are. TLS stays WinHTTP's, end to end: the server name (SNI), the certificate's check and Host.
+std::string Narrow(const std::wstring& w) { return std::string(w.begin(), w.end()); }  // ASCII names and numbers
+
+bool SendAll(SOCKET socket, const char* data, size_t size) {
+  while (size) {
+    const int n = send(socket, data, int(std::min<size_t>(size, 1 << 16)), 0);
+    if (n <= 0) return false;
+    data += n;
+    size -= size_t(n);
+  }
+  return true;
+}
+
+// One way of a tunnel: what 'from' sends goes to 'to'; at the end 'to' is told nothing more comes.
+void Pass(SOCKET from, SOCKET to) {
+  char buffer[16384];
+  for (;;) {
+    const int n = recv(from, buffer, int(sizeof(buffer)), 0);
+    if (n <= 0 || !SendAll(to, buffer, size_t(n))) break;
+  }
+  shutdown(to, SD_SEND);
+}
+
+void Refuse(SOCKET client, const char* why) {
+  REXLOG_WARN("[lobby] the local proxy refused a request: {}", why);
+  static const char kAnswer[] = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+  SendAll(client, kAnswer, sizeof(kAnswer) - 1);
+  closesocket(client);
+}
+
+void ServeProxy(SOCKET client) {
+  std::string head;
+  char buffer[4096];
+  while (head.find("\r\n\r\n") == std::string::npos && head.size() < 16384) {
+    const int n = recv(client, buffer, int(sizeof(buffer)), 0);
+    if (n <= 0) {
+      closesocket(client);
+      return;
+    }
+    head.append(buffer, size_t(n));
+  }
+  const size_t line_end = head.find("\r\n");
+  if (head.find("\r\n\r\n") == std::string::npos || line_end == std::string::npos) return Refuse(client, "no header");
+  const std::string line = head.substr(0, line_end);
+  const size_t a = line.find(' '), b = a == std::string::npos ? a : line.find(' ', a + 1);
+  if (b == std::string::npos) return Refuse(client, "a request line without a target");
+  const std::string method = line.substr(0, a), target = line.substr(a + 1, b - a - 1), version = line.substr(b + 1);
+  const bool tunnel = method == "CONNECT";
+  std::string authority = target, path = "/";
+  uint16_t port = tunnel ? 443 : 80;
+  if (!tunnel) {
+    if (target.rfind("http://", 0) != 0) return Refuse(client, "not an http:// URL");
+    authority = target.substr(7);
+    if (const size_t slash = authority.find('/'); slash != std::string::npos) {
+      path = authority.substr(slash);
+      authority.resize(slash);
+    }
+  }
+  if (const size_t colon = authority.rfind(':'); colon != std::string::npos) {
+    port = uint16_t(std::strtoul(authority.c_str() + colon + 1, nullptr, 10));
+    authority.resize(colon);
+  }
+  const std::string address = Narrow(AddressInName(std::wstring(authority.begin(), authority.end())));
+  if (address.empty() || port == 0) return Refuse(client, "a name with no address in it");
+  sockaddr_in to{};
+  to.sin_family = AF_INET;
+  to.sin_port = htons(port);
+  SOCKET server = INVALID_SOCKET;
+  if (inet_pton(AF_INET, address.c_str(), &to.sin_addr) != 1 ||
+      (server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == INVALID_SOCKET ||
+      connect(server, reinterpret_cast<const sockaddr*>(&to), int(sizeof(to))) != 0) {
+    const int error = WSAGetLastError();
+    if (server != INVALID_SOCKET) closesocket(server);
+    REXLOG_WARN("[lobby] the local proxy could not reach {}:{} (Winsock error {})", address, port, error);
+    return Refuse(client, "the address did not answer");
+  }
+  bool ok;
+  if (tunnel) {
+    static const char kOpen[] = "HTTP/1.1 200 Connection established\r\n\r\n";
+    const std::string rest = head.substr(head.find("\r\n\r\n") + 4);
+    ok = SendAll(client, kOpen, sizeof(kOpen) - 1) && SendAll(server, rest.data(), rest.size());
+  } else {
+    const std::string request = method + " " + path + " " + version + head.substr(line_end);
+    ok = SendAll(server, request.data(), request.size());
+  }
+  if (ok) {
+    std::thread up([client, server] { Pass(client, server); });
+    Pass(server, client);
+    up.join();
+  }
+  closesocket(server);
+  closesocket(client);
+}
+
+// The proxy's "127.0.0.1:<port>" (started the first time), or "" when it could not start.
+std::wstring LocalProxy() {
+  static std::mutex mutex;
+  static uint16_t port = 0;
+  static bool failed = false;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (!port && !failed) {
+    WSADATA data;
+    SOCKET listener = WSAStartup(MAKEWORD(2, 2), &data) == 0 ? socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+                                                               : INVALID_SOCKET;
+    sockaddr_in at{};
+    at.sin_family = AF_INET;
+    at.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    int size = int(sizeof(at));
+    if (listener == INVALID_SOCKET || bind(listener, reinterpret_cast<const sockaddr*>(&at), size) != 0 ||
+        listen(listener, 8) != 0 || getsockname(listener, reinterpret_cast<sockaddr*>(&at), &size) != 0) {
+      REXLOG_ERROR("[lobby] the local proxy could not start (Winsock error {})", WSAGetLastError());
+      if (listener != INVALID_SOCKET) closesocket(listener);
+      failed = true;
+    } else {
+      port = ntohs(at.sin_port);
+      std::thread([listener] {
+        for (;;) {
+          const SOCKET client = accept(listener, nullptr, nullptr);
+          if (client == INVALID_SOCKET) return;
+          std::thread(ServeProxy, client).detach();
+        }
+      }).detach();
+      REXLOG_INFO("[lobby] local proxy on 127.0.0.1:{}: the lobby's connections go to its address (no DNS)", port);
+    }
+  }
+  return port ? L"127.0.0.1:" + std::to_wstring(port) : std::wstring();
+}
+
+// A WinHTTP session: as always, or (by_address) through the local proxy.
+HINTERNET OpenSession(bool by_address) {
+  if (by_address) {
+    const std::wstring proxy = LocalProxy();
+    if (!proxy.empty()) {
+      return WinHttpOpen(L"mk9-online/1.0", WINHTTP_ACCESS_TYPE_NAMED_PROXY, proxy.c_str(), WINHTTP_NO_PROXY_BYPASS, 0);
+    }
+  }
+  return WinHttpOpen(L"mk9-online/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                     WINHTTP_NO_PROXY_BYPASS, 0);
 }
 
 // What a failed connection was, for the screens: "dns" (the name not found), "connect" (no answer, refused: a firewall,
@@ -245,15 +379,13 @@ class Client {
   json IceServers() {
     const Url url = Parse(REXCVAR_GET(mk9_lobby_url));
     if (!url.ok) return json::array();
-    HINTERNET session = WinHttpOpen(L"mk9-online/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                    WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET session = OpenSession(g_by_address);
     if (!session) return json::array();
     WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
     json out = json::array();
     if (HINTERNET connect = WinHttpConnect(session, url.host.c_str(), url.port, 0)) {
       if (HINTERNET request = WinHttpOpenRequest(connect, L"GET", L"/ice", nullptr, WINHTTP_NO_REFERER,
                                                  WINHTTP_DEFAULT_ACCEPT_TYPES, url.secure ? WINHTTP_FLAG_SECURE : 0)) {
-        if (g_by_address) ConnectByAddress(request, AddressInName(url.host));
         if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
             WinHttpReceiveResponse(request, nullptr)) {
           std::string body;
@@ -338,8 +470,7 @@ class Client {
 
   // One try at the lobby: by name, or (by_address) at the name's address with the name kept for TLS and Host.
   bool Attempt(const std::string& text, const Url& url, const std::wstring& address, bool by_address) {
-    HINTERNET session = WinHttpOpen(L"mk9-online/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                    WINHTTP_NO_PROXY_BYPASS, 0);
+    HINTERNET session = OpenSession(by_address && !address.empty());
     if (!session) return false;
     WinHttpSetTimeouts(session, 8000, 8000, 8000, 0);  // receiving waits as long as it takes (the pings keep it alive)
     HINTERNET connect = WinHttpConnect(session, url.host.c_str(), url.port, 0);
@@ -348,11 +479,7 @@ class Client {
                                                      url.secure ? WINHTTP_FLAG_SECURE : 0)
                                 : nullptr;
     HINTERNET socket = nullptr;
-    const bool address_set = request && by_address && ConnectByAddress(request, address);
-    if (request && by_address && !address_set) {
-      REXLOG_WARN("[lobby] this Windows cannot connect to an address with the name kept (WinHTTP error {})",
-                  GetLastError());
-    }
+    const bool address_set = by_address && !address.empty();
     // mk9-lauta (2026-11-11): the failing call's error, taken at once (closing a handle may change it), and why in
     // words for the screens (a player with no lobby sees the cause and what to try)
     DWORD error = connect ? 0 : GetLastError(), status = 0;
