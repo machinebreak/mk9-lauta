@@ -69,6 +69,43 @@ Url Parse(const std::string& text) {
   return url;
 }
 
+#ifndef WINHTTP_OPTION_RESOLUTION_HOSTNAME
+#define WINHTTP_OPTION_RESOLUTION_HOSTNAME 165
+#endif
+
+// mk9-lauta (2026-11-11): the address a name like the lobby's carries ("107-172-143-35.sslip.io" -> "107.172.143.35");
+// "" for any other name. Some providers' DNS (Claro's, a player's diagnosis: WinHTTP 12007) does not answer for
+// sslip.io: the game then goes to that address without asking the DNS.
+std::wstring AddressInName(const std::wstring& host) {
+  std::wstring out;
+  size_t i = 0;
+  for (int part = 0; part < 4; ++part) {
+    size_t digits = 0;
+    unsigned value = 0;
+    while (i < host.size() && host[i] >= L'0' && host[i] <= L'9' && digits < 3) {
+      value = value * 10 + unsigned(host[i] - L'0');
+      ++i;
+      ++digits;
+    }
+    if (digits == 0 || value > 255 || i >= host.size() || host[i] != (part < 3 ? L'-' : L'.')) return {};
+    ++i;
+    out += std::to_wstring(value);
+    if (part < 3) out += L'.';
+  }
+  return out;
+}
+
+// Once the DNS failed for the lobby's name, every connection after goes straight to its address (no 8 s wait first).
+std::atomic<bool> g_by_address{false};
+
+// The request connects to 'address' and keeps the URL's name for everything else: the TLS handshake's server name
+// (the lobby's server answers no handshake without it), the certificate's check and the Host header. Windows 10 2004
+// and later; false where WinHTTP does not know the option.
+bool ConnectByAddress(HINTERNET request, const std::wstring& address) {
+  return !address.empty() && WinHttpSetOption(request, WINHTTP_OPTION_RESOLUTION_HOSTNAME,
+                                              const_cast<wchar_t*>(address.c_str()), DWORD(address.size()));
+}
+
 // What a failed connection was, for the screens: "dns" (the name not found), "connect" (no answer, refused: a firewall,
 // an antivirus, the provider), "timeout", "tls" (the secure connection: the PC's date, its certificates), "http" (the
 // server answered something else), "other".
@@ -216,6 +253,7 @@ class Client {
     if (HINTERNET connect = WinHttpConnect(session, url.host.c_str(), url.port, 0)) {
       if (HINTERNET request = WinHttpOpenRequest(connect, L"GET", L"/ice", nullptr, WINHTTP_NO_REFERER,
                                                  WINHTTP_DEFAULT_ACCEPT_TYPES, url.secure ? WINHTTP_FLAG_SECURE : 0)) {
+        if (g_by_address) ConnectByAddress(request, AddressInName(url.host));
         if (WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
             WinHttpReceiveResponse(request, nullptr)) {
           std::string body;
@@ -281,6 +319,25 @@ class Client {
       warned = true;
       return false;
     }
+    const std::wstring address = AddressInName(url.host);
+    if (Attempt(text, url, address, g_by_address)) return true;
+    // the name not found: its address straight away (the provider's DNS), and from now on
+    if (!g_by_address && !address.empty() && LastWhy() == "dns" && Attempt(text, url, address, true)) {
+      g_by_address = true;
+      REXLOG_WARN("[lobby] this connection's DNS does not find {}: connected to its address, {}", text,
+                  std::string(address.begin(), address.end()));
+      return true;
+    }
+    return false;
+  }
+
+  std::string LastWhy() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_.link_error;
+  }
+
+  // One try at the lobby: by name, or (by_address) at the name's address with the name kept for TLS and Host.
+  bool Attempt(const std::string& text, const Url& url, const std::wstring& address, bool by_address) {
     HINTERNET session = WinHttpOpen(L"mk9-online/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                     WINHTTP_NO_PROXY_BYPASS, 0);
     if (!session) return false;
@@ -291,6 +348,11 @@ class Client {
                                                      url.secure ? WINHTTP_FLAG_SECURE : 0)
                                 : nullptr;
     HINTERNET socket = nullptr;
+    const bool address_set = request && by_address && ConnectByAddress(request, address);
+    if (request && by_address && !address_set) {
+      REXLOG_WARN("[lobby] this Windows cannot connect to an address with the name kept (WinHTTP error {})",
+                  GetLastError());
+    }
     // mk9-lauta (2026-11-11): the failing call's error, taken at once (closing a handle may change it), and why in
     // words for the screens (a player with no lobby sees the cause and what to try)
     DWORD error = connect ? 0 : GetLastError(), status = 0;
@@ -315,8 +377,8 @@ class Client {
           state_.link_code = error;
           state_.link_status = status;
           ++state_.version;
-          REXLOG_WARN("[lobby] could not reach {} ({}: WinHTTP error {}, HTTP status {}): trying again", text, why,
-                      error, status);
+          REXLOG_WARN("[lobby] could not reach {}{} ({}: WinHTTP error {}, HTTP status {}): trying again", text,
+                      address_set ? " at its address" : "", why, error, status);
         }
       }
       if (connect) WinHttpCloseHandle(connect);
@@ -335,7 +397,7 @@ class Client {
       state_.link_error.clear();
       state_.link_code = state_.link_status = 0;
     }
-    REXLOG_INFO("[lobby] connected to {}", text);
+    REXLOG_INFO("[lobby] connected to {}{}", text, address_set ? " (at its address: no DNS)" : "");
     send_cv_.notify_one();
     return true;
   }
