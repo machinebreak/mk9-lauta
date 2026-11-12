@@ -1,0 +1,24 @@
+# mk9-lauta: Kratos, the PS3 version's guest fighter, from the community's Xbox 360 port
+# (github.com/eLGatoRDV/mk9-kratos-xbox360; src/mk9_kratos.cpp). Included by mk9_manifest.toml.
+#
+# That port changes three things in default.xex (13 bytes); this build's code is translated from the original one,
+# so the same two changes are made here, each only while Kratos is installed in the game files (Mk9Kratos* return
+# false otherwise: the game runs as it always did).
+
+# 0x829AFDA8 (beq cr6,0x829afdd8): the port makes it an unconditional branch (b +0x30), past a check that ends in
+# the game's deliberate crash loop (stw 13 to address 3 while a global is not 0). true: straight to loc_829AFDD8
+# (cr6: the compare before it, for the log the first time the skip makes a difference).
+[[midasm_hook]]
+address = 0x829AFDA8
+name = "Mk9KratosSkipCheck"
+registers = ["cr6"]
+jump_address_on_true = 0x829AFDD8
+
+# 0x82A3B86C (bl 0x8278e900, in sub_82A3B6C0): the port calls a wrapper instead (cmpwi r3,0 / beqlr / b 0x8278e900)
+# that skips the call when its first argument is NULL, as it is for one of Kratos' entries. true (r3 == 0): past the
+# call to loc_82A3B870 (stw r3,92(r29) then keeps the 0, as with the wrapper).
+[[midasm_hook]]
+address = 0x82A3B86C
+name = "Mk9KratosNullGuard"
+registers = ["r3"]
+jump_address_on_true = 0x82A3B870

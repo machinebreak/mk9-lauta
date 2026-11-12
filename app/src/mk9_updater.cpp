@@ -700,4 +700,8 @@ void Open(const std::string& what) {
 
 std::string LogsFolder() { return Utf8((ExeFolder() / L"logs").wstring()); }
 
+bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to) { return Unpack(zip, to); }
+
+bool FileSha256(const std::filesystem::path& file, uint8_t out[32]) { return Sha256(file, out); }
+
 }  // namespace mk9::updater

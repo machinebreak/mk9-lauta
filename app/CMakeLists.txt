@@ -53,6 +53,8 @@ set(MK9_SOURCES
     src/mk9_frame_budget.cpp
     # The job system: a parent job waiting for its children keeps popping them (jobs.toml; the Krypt hang).
     src/mk9_jobs.cpp
+    # mk9-lauta: Kratos from the community's Xbox 360 port, when the player installed it (kratos.toml).
+    src/mk9_kratos.cpp
     src/mk9_movie.cpp
     # Switch: every thread's stack in logs/rex/rex_crash.log when no frame is presented for a while (mk9_hang_dump_s).
     src/mk9_hang_watch.cpp

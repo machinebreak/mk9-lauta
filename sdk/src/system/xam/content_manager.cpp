@@ -51,6 +51,13 @@ REXCVAR_DEFINE_STRING(content_backup_root, "", "Kernel",
                       "Folder where a copy of each save is left, with one subfolder per profile. "
                       "Empty = nothing is copied");
 
+// mk9-lauta (2026-11-11): DLC (marketplace content) from one folder for every user data folder: a game started with a
+// fresh user data root (an online session's) still finds it. Laid out as on the console's drive:
+// <dlc_root>/0000000000000000/<title id>/00000002/<package>/ (and Headers/ beside, as under the user data root).
+REXCVAR_DEFINE_STRING(dlc_root, "", "Kernel",
+                      "Folder of the game's DLC (marketplace content), laid out as "
+                      "<folder>/0000000000000000/<title id>/00000002/<package>/. Empty = the user data folder");
+
 namespace rex {
 namespace system {
 namespace xam {
@@ -250,6 +257,18 @@ ContentManager::ContentManager(KernelState* kernel_state, const std::filesystem:
 
 ContentManager::~ContentManager() = default;
 
+std::filesystem::path ContentManager::RootFor(XContentType content_type) const {
+  if (content_type == XContentType::kMarketplaceContent) {
+    const std::string& dlc = REXCVAR_GET(dlc_root);
+    if (!dlc.empty()) {
+      std::error_code ec;
+      const std::filesystem::path root = std::filesystem::absolute(rex::to_path(dlc), ec);
+      return ec ? rex::to_path(dlc) : root;
+    }
+  }
+  return root_path_;
+}
+
 std::filesystem::path ContentManager::ResolvePackageRoot(uint64_t xuid, XContentType content_type,
                                                          uint32_t title_id) {
   if (title_id == kCurrentlyRunningTitleId) {
@@ -260,8 +279,8 @@ std::filesystem::path ContentManager::ResolvePackageRoot(uint64_t xuid, XContent
   auto content_type_str = fmt::format("{:08X}", uint32_t(content_type));
 
   // Package root path:
-  // content_root/xuid/title_id/content_type/
-  return root_path_ / xuid_str / title_id_str / content_type_str;
+  // content_root/xuid/title_id/content_type/ (DLC: dlc_root's, when it is set)
+  return RootFor(content_type) / xuid_str / title_id_str / content_type_str;
 }
 
 std::filesystem::path ContentManager::ResolvePackagePath(uint64_t xuid,
@@ -297,7 +316,7 @@ std::filesystem::path ContentManager::ResolvePackageHeaderPath(const std::string
 
   // Header root path:
   // content_root/xuid/title_id/Headers/content_type/filename.header
-  return root_path_ / xuid_str / title_id_str / kGameContentHeaderDirName / content_type_str /
+  return RootFor(content_type) / xuid_str / title_id_str / kGameContentHeaderDirName / content_type_str /
          final_name;
 }
 
@@ -320,9 +339,12 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device
       continue;
     }
 
-    XCONTENT_AGGREGATE_DATA content_data;
-    if (XSUCCEEDED(ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id,
-                                         content_type, content_data))) {
+    // mk9-lauta (2026-11-11): X_ERROR_FILE_NOT_FOUND (2) passes XSUCCEEDED (it only looks at the top bits), so a
+    // package without a .header (DLC put in place by hand) came to the game as uninitialized bytes: its name and type
+    // garbage, and the game could not open it. Only a header really read is taken.
+    XCONTENT_AGGREGATE_DATA content_data{};
+    if (ReadContentHeaderFile(rex::path_to_utf8(file_info.name), xuid, title_id, content_type,
+                              content_data) == X_ERROR_SUCCESS) {
       result.emplace_back(std::move(content_data));
     } else {
       content_data.device_id = device_id;

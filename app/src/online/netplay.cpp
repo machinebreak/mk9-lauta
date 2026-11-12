@@ -76,6 +76,7 @@
 // is chosen from dumps (2026-11-11: a load's time it had kept differed by 0.1875 s between two machines whose fights
 // went on alike).
 
+#include "mk9_kratos.h"
 #include "online/netplay.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -907,7 +908,8 @@ bool SendHello() {
   const std::string_view release = MK9_LAUTA_VERSION;
   p.push_back(uint8_t(std::min<size_t>(release.size(), 15)));
   p.insert(p.end(), release.begin(), release.begin() + std::min<size_t>(release.size(), 15));
-  p.push_back(uint8_t(virtual_time::Enabled() ? 1 : 0));  // the settings both games must share
+  // the settings both games must share; bit 1 (mk9-lauta 2026-11-11): Kratos installed (mk9_kratos.h)
+  p.push_back(uint8_t((virtual_time::Enabled() ? 1 : 0) | (mk9::kratos::Installed() ? 2 : 0)));
   const bool sent = g.link->Send(p.data(), p.size());
   g.last_sent_us = NowUs();
   return sent;
@@ -1011,6 +1013,11 @@ void Receive() {
         g.peer_release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
         REXLOG_INFO("[net] the other player has mk9-lauta {}", g.peer_release);
         // the settings both games must share (a test switch changed on one side)
+        if (left >= 14 + p[12] && ((p[13 + p[12]] >> 1) & 1) != (mk9::kratos::Installed() ? 1 : 0)) {
+          REXLOG_ERROR("[net] the other player's game {} Kratos and this one {}: the games will go apart (the rooms "
+                       "keep such a fight from starting)",
+                       ((p[13 + p[12]] >> 1) & 1) ? "has" : "does not have", mk9::kratos::Installed() ? "has" : "does not");
+        }
         if (left >= 14 + p[12] && (p[13 + p[12]] & 1) != (virtual_time::Enabled() ? 1 : 0)) {
           REXLOG_ERROR("[net] the other player's game {} the game thread's clock made of frames and this one {} "
                        "(mk9_virtual_time): their clocks differ, the games may go apart",

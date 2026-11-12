@@ -384,6 +384,7 @@ void TestAfterIntroStarted() {
 #include <rex/system.h>
 
 #include "mk9_builtin_config.h"
+#include "mk9_kratos.h"
 
 namespace mk9::file_check {
 namespace {
@@ -452,7 +453,8 @@ void AtStart(const std::filesystem::path& game_root) {
     const auto found = it->second.find(name);
     if (found == it->second.end()) {
       problems.push_back(f.path + ": falta");
-    } else if (found->second != f.size) {
+    } else if (found->second != f.size && !mk9::kratos::PatchedSize(f.path, found->second)) {
+      // (mk9-lauta: the two files the Kratos port changes may have its sizes, mk9_kratos.h)
       problems.push_back(f.path + ": tiene " + Bytes(found->second) + " bytes y tendría que tener " + Bytes(f.size));
     }
   }

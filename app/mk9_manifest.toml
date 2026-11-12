@@ -20,4 +20,5 @@ out_directory_path = "generated/default"
 #   overrides.toml       written by hand: code the automatic function discovery misses, each with its evidence
 #   codegen_flavor.toml  written by tools/codegen.sh --flavor: empty (classic) or a copy of perf_overrides.toml
 #   jobs.toml            the job helper that retries its pops (src/mk9_jobs.cpp; the Krypt hang)
-includes = ["overrides.toml", "codegen_flavor.toml", "jobs.toml"]
+#   kratos.toml          the Kratos port's two code changes, on while he is installed (src/mk9_kratos.cpp)
+includes = ["overrides.toml", "codegen_flavor.toml", "jobs.toml", "kratos.toml"]

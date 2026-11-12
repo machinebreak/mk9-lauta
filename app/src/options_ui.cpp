@@ -36,6 +36,7 @@
 #include "mk9_controls.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
+#include "mk9_kratos.h"
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
@@ -388,12 +389,13 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       StopCapture();
     }
     if (const int step = overlay_input::TabStep(); step && capturing_ < 0) {
-      static const char* const kTabs[] = {"Gráficos", "Controles", "Pantalla e idioma", "Online", "Acerca de"};
+      static const char* const kTabs[] = {"Gráficos", "Controles", "Pantalla e idioma", "Online", "Kratos",
+                                          "Acerca de"};
       int current = 0;
-      for (int i = 0; i < 5; ++i) {
+      for (int i = 0; i < 6; ++i) {
         if (tab_ == kTabs[i]) current = i;
       }
-      tab_ = kTabs[(current + step + 5) % 5];
+      tab_ = kTabs[(current + step + 6) % 6];
       select_tab_ = true;
     }
     if (ImGui::BeginTabBar("options_tabs")) {
@@ -422,6 +424,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem("Online", nullptr, TabFlags("Online"))) {
         if (!select_tab_) tab_ = "Online";
         for (const Option& o : OnlineOptions()) DrawOption(o);
+        ImGui::EndTabItem();
+      }
+      if (ImGui::BeginTabItem("Kratos", nullptr, TabFlags("Kratos"))) {
+        if (!select_tab_) tab_ = "Kratos";
+        DrawKratos();
         ImGui::EndTabItem();
       }
       if (ImGui::BeginTabItem("Acerca de", nullptr, TabFlags("Acerca de"))) {
@@ -524,6 +531,51 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
 
   // mk9-lauta: the version, the updater, the logs folder and the project's page; mk9-lauta (2026-11-11): the logo and
   // Lauta's networks.
+  // mk9-lauta (2026-11-11): Kratos from the community's Xbox 360 port (mk9_kratos.h): what is installed, the installer
+  // (the player's own download of the port's zip) and the removal; both take effect at a restart.
+  void DrawKratos() {
+    const kratos::InstallStatus st = kratos::Status();
+    const ImVec4 good(0.45f, 0.9f, 0.5f, 1), bad(1, 0.45f, 0.4f, 1), dim(0.65f, 0.65f, 0.7f, 1);
+    ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
+    ImGui::Text("Kratos (el invitado de la versión de PS3)");
+    ImGui::PopFont();
+    ImGui::TextWrapped("Kratos llega con el port de la comunidad para Xbox 360 (eLGatoRDV/mk9-kratos-xbox360): su "
+                       "modelo, combos, especiales, X-Ray, las dos Fatalities, Babality, los dos trajes y su sonido. "
+                       "No viene con este juego: bajás el zip del port (Kratos-MK9-360-Share.zip) y acá se instala en "
+                       "tus archivos del juego.");
+    ImGui::Separator();
+    if (kratos::RemovePending()) {
+      ImGui::TextColored(dim, "Se va a desinstalar al reiniciar el juego.");
+    } else if (kratos::Installed()) {
+      ImGui::TextColored(good, "Instalado: Kratos está en la selección de personajes.");
+    } else if (kratos::Partial()) {
+      ImGui::TextColored(bad, "Instalado a medias (falta algo: está en el log). Instalalo de nuevo.");
+    } else {
+      ImGui::TextColored(dim, "No instalado.");
+    }
+    ImGui::TextWrapped("Para jugar online con Kratos, tu rival también tiene que tenerlo instalado (y para jugar sin "
+                       "él, ninguno de los dos). La sala avisa si no coinciden.");
+    const bool busy = st.busy;
+    if (busy) ImGui::BeginDisabled();
+    if (ImGui::Button("Bajar el port (GitHub)")) {
+      updater::Open("https://github.com/eLGatoRDV/mk9-kratos-xbox360/releases");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(kratos::Installed() ? "Instalar de nuevo desde el zip…" : "Instalar desde el zip…")) {
+      kratos::ChooseAndInstall();
+    }
+    if ((kratos::Installed() || kratos::Partial()) && !kratos::RemovePending()) {
+      ImGui::SameLine();
+      if (ImGui::Button("Desinstalar")) kratos::RemoveAtNextStart();
+    }
+    if (busy) ImGui::EndDisabled();
+    if (busy) ImGui::ProgressBar(st.progress, ImVec2(-1, 0));
+    if (!st.step.empty()) ImGui::TextColored(st.failed ? bad : st.done ? good : dim, "%s", st.step.c_str());
+    if (st.done || kratos::RemovePending()) {
+      if (ImGui::Button("Reiniciar ahora")) updater::Restart();
+    }
+  }
+
   void DrawAbout() {
     const updater::Status st = updater::GetStatus();
     const float scale = UiScale();

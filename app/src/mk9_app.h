@@ -31,6 +31,7 @@
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
+#include "mk9_kratos.h"
 #include "mk9_old_nro.h"
 #include "profiler/sa2_cpu_profile_pc.h"
 #include "thorhax_intro.h"  // app/thorhax_intro (from usf4-nx)
@@ -149,6 +150,9 @@ class Mk9App : public rex::ReXApp {
     // Switch (1.0.4): an older mk9.nro beside mk9-nx.nro made this game (or, started as that one, a newer mk9-nx.nro
     // started instead).
     mk9::old_nro::AtStart();
+    // mk9-lauta: Kratos in these game files (mk9_kratos.h): his DLC folder for the content manager, the port's code
+    // changes on; before the file check, which then takes the two files the port changes.
+    mk9::kratos::AtStart(game_data_root());
     // Switch (1.0.1): the game files against the release's list; a bad one is named on screen and the game ends here.
     mk9::file_check::AtStart(game_data_root());
     // The Thorhax intro video, while the game boots behind it (nothing has the window or the audio device yet).

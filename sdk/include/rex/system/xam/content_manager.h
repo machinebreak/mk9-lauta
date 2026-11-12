@@ -183,6 +183,8 @@ class ContentManager {
   X_RESULT InstallContent(const std::filesystem::path& package_path);
 
  private:
+  // The folder a content type's packages are under: the user data root, or dlc_root's for DLC when it is set.
+  std::filesystem::path RootFor(XContentType content_type) const;
   std::filesystem::path ResolvePackageRoot(uint64_t xuid, XContentType content_type,
                                            uint32_t title_id = -1);
   std::filesystem::path ResolvePackagePath(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data);

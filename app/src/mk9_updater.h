@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace mk9::updater {
@@ -39,5 +41,9 @@ void Restart();
 void Open(const std::string& what);
 // The folder of this program's logs.
 std::string LogsFolder();
+// mk9-lauta (2026-11-11): for the Kratos installer (mk9_kratos.h): a zip unpacked into a folder made anew (Windows'
+// tar, else PowerShell), and a file's SHA-256.
+bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to);
+bool FileSha256(const std::filesystem::path& file, uint8_t out[32]);
 
 }  // namespace mk9::updater

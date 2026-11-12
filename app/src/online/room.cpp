@@ -13,6 +13,7 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "mk9_kratos.h"
 #include "online/avatars.h"
 #include "online/feed.h"
 #include "online/flags.h"
@@ -79,6 +80,9 @@ std::string Normalize(const std::string& code) {
   return out.substr(0, 8);
 }
 
+// mk9-lauta (2026-11-11): this game's content beyond the disc, as the rooms say it ("kratos"; "" none).
+std::string Mods() { return mk9::kratos::Installed() ? "kratos" : ""; }
+
 // This player's country and record, for the other player (with the hello, the welcome and the keepalives).
 // mk9-lauta (2026-11-11): and its picture's hash (avatars.h; "" none): the picture itself only if the other lacks it.
 json AboutMe(json message) {
@@ -87,6 +91,7 @@ json AboutMe(json message) {
   message["won"] = s.won;
   message["lost"] = s.lost;
   message["av"] = avatars::MineHash();
+  message["mods"] = Mods();
   return message;
 }
 
@@ -141,6 +146,30 @@ void AddLine(const std::string& name, const std::string& text, bool system) {
   while (g.s.chat.size() > kMaxLines) g.s.chat.erase(g.s.chat.begin());
   Touch();
 }
+
+// The other's content (a hello, a welcome, a keepalive; none from an older release): when it differs from this game's
+// the room says so once and the fight does not start.
+void TakeMods(const json& d) {
+  const std::string mods = Text(d, "mods");
+  const bool differs = mods != Mods();
+  if (mods == g.s.other_mods && differs == g.s.content_differs) return;
+  g.s.other_mods = mods;
+  g.s.content_differs = differs;
+  Touch();
+  if (!differs) return;
+  const std::string other = g.s.other.empty() ? T("El rival") : g.s.other;
+  const std::string line = Mods() == "kratos"
+                               ? Tf("Vos tenés Kratos instalado y {} no: para pelear online tienen que tener los dos "
+                                    "lo mismo (F2 > Kratos).",
+                                    other)
+                               : Tf("{} tiene Kratos instalado y vos no: para pelear online tienen que tener los dos lo "
+                                    "mismo (F2 > Kratos).",
+                                    other);
+  AddLine("", line, true);
+  g.s.status = line;
+  REXLOG_WARN("[room] the other game has content \"{}\", this one \"{}\": the fight cannot start", mods, Mods());
+}
+
 
 void SendOther(const json& data) {
   if (g.s.host) {
@@ -212,6 +241,7 @@ void OtherGoneLocked(const char* why) {
 
 void MaybeStartLocked() {
   if (!g.s.host || g.s.in_session || g.s.phase != Phase::kTogether || !g.s.my_ready || !g.s.other_ready) return;
+  if (g.s.content_differs) return;  // one has Kratos and the other not (TakeMods said so)
   SendOther({{"room", "start"}});
   g.s.phase = Phase::kStarting;
   g.s.status = T("Arranca la pelea");
@@ -235,6 +265,7 @@ void OnMessageLocked(const json& d) {
     g.s.other_won = d.value("won", -1);
     g.s.other_lost = d.value("lost", -1);
   }
+  if (d.contains("won") && g.s.phase == Phase::kTogether) TakeMods(d);
   if (d.contains("av") && g.s.phase == Phase::kTogether) {
     const std::string hash = avatars::CleanHash(Text(d, "av"));
     if (hash != g.s.other_avatar) {
@@ -253,6 +284,11 @@ void OnMessageLocked(const json& d) {
       // a player this one silenced does not watch either (session.h, IsBlocked)
       if (session::IsBlocked(d.value("name", "")) || !feed::Heard(id, d.value("have", uint64_t(0)))) {
         lobby::SigToGuest(g.s.code, id, {{"room", "watch_full"}});
+        return;
+      }
+      // mk9-lauta (2026-11-11): the match plays with this game's content: a spectator needs the same (mk9_kratos.h)
+      if (Text(d, "mods") != Mods()) {
+        lobby::SigToGuest(g.s.code, id, {{"room", "watch_mods"}, {"mods", Mods()}});
         return;
       }
       // the players' names and flags as this side has them now (the other's may come later)
@@ -290,6 +326,7 @@ void OnMessageLocked(const json& d) {
         g.s.other_lost = d.value("lost", -1);
         g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
         g.s.phase = Phase::kTogether;
+        TakeMods(d);
         lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}}));
         if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
           lobby::SigToGuest(g.s.code, id, {{"room", "av?"}, {"h", g.s.other_avatar}});
@@ -339,6 +376,11 @@ void OnMessageLocked(const json& d) {
         g.s.watch_full = true;
         feed::ReceivedEnd();
         Touch();
+      } else if (kind == "watch_mods") {  // mk9-lauta (2026-11-11): the match has other content than this game
+        g.s.watch_full = true;            // no more asking
+        g.s.watch_mods = Text(d, "mods").empty() ? "none" : Text(d, "mods");
+        feed::ReceivedEnd();
+        Touch();
       }
       return;
     }
@@ -350,6 +392,7 @@ void OnMessageLocked(const json& d) {
       g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
       g.s.phase = Phase::kTogether;
       g.s.status = Tf("En la sala de {}", g.s.other);
+      TakeMods(d);
       if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
         lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", g.s.other_avatar}});
       }
@@ -571,7 +614,11 @@ void Pump() {
       // every 2 s: still here, with this much of the match (the host answers with the players' names)
       if (!g.s.watch_full && now - g.hi_at > std::chrono::seconds(2)) {
         g.hi_at = now;
-        lobby::SigToHost(g.s.code, {{"room", "watch"}, {"id", g.guest_id}, {"name", g.s.me}, {"have", feed::Size()}});
+        lobby::SigToHost(g.s.code, {{"room", "watch"},
+                                    {"id", g.guest_id},
+                                    {"name", g.s.me},
+                                    {"have", feed::Size()},
+                                    {"mods", Mods()}});
       }
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {
