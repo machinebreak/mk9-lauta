@@ -45,6 +45,10 @@ struct State {
   std::deque<ChatLine> chat;
   std::string notice;       // the staff's notice for every page
   std::string error;        // the last refusal: "slow", "links", "muted", "banned"
+  // mk9-lauta (2026-11-11): why the link is down ("" while up): "dns", "connect", "timeout", "tls", "http", "other";
+  // the WinHTTP error and the HTTP status it came with
+  std::string link_error;
+  uint32_t link_code = 0, link_status = 0;
   uint64_t version = 0;     // bumped on every change
 };
 

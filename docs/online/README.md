@@ -272,6 +272,20 @@ quien reporta.
   Online by Lauta" sobre él y dos botones (descargar, la comunidad). El título "Jugando a ..." es el nombre de la
   aplicación de Discord: se cambia en el portal de desarrolladores, no desde el juego.
 
+- **Arreglos de la prueba del 2026-11-11 (noche)**:
+  - *La foto salía azul*: los escaladores de WIC dan su formato canónico (32bppPBGRA) y se leía como RGBA; ahora la
+    conversión a BGRA es explícita (probado con una imagen de cuatro colores: cada uno en su lugar).
+  - *Elegir Vulkan en F2 y que el juego no abra más*: el arranque se marca "pendiente" antes de crear el dispositivo
+    (`mk9_renderer_start.cpp`), así cuenta también uno que muere antes; una API recién elegida que falla una vez vuelve
+    sola a la que funcionaba y arregla mk9.toml. Probado con `mk9_renderer_test_fail=vulkan`.
+  - *Sin conexión con el lobby*: el error de WinHTTP se toma en el momento (cerrar el handle lo podía pisar) y la
+    ventana online dice la causa (DNS, conexión, certificado, servidor) con qué probar y "Copiar diagnóstico".
+  - *El espectador que llega tarde*: mientras se pone al día muestra un cuadro cada 0,7 s (`mk9_watch_peek_ms`; le
+    cuesta 6-13 % de velocidad) en vez de quedar quieto hasta 30 s, y el cartel dice cuánta partida falta y cuánto
+    tarda; la lista de salas dice hace cuánto está abierta cada una. Un espectador que entró 120 s tarde alcanzó el
+    vivo en ~40 s sin diferencias; un replay con los cuadros mostrados: 0 de 7800 cuadros distintos.
+  - F1 > Perfil muestra el cartel de la pelea con tu foto ("Así te ven en la pelea"); `mk9_plates_test` acepta `me`.
+
 ## Estado
 
 | Fase | Estado |

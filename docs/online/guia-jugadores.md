@@ -76,6 +76,18 @@ en la pelea.
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
 
+## Si no te conecta al online
+
+Si arriba de la ventana online dice **"Sin conexión con el lobby: reintentando"**, debajo explica la causa y qué
+probar:
+
+- **Falla el DNS** (tu conexión no encuentra el servidor): cambiá el DNS de Windows a 1.1.1.1 y 8.8.8.8, o probá con
+  otra red (los datos del celular).
+- **La conexión no llega** (firewall, antivirus o el proveedor de internet): probá con otra red o una VPN.
+- **La conexión segura no se pudo verificar**: revisá la fecha y la hora de la PC y que Windows esté actualizado.
+
+**"Copiar diagnóstico"** copia los datos del error para mandarlos en el Discord.
+
 ## Mirar una partida
 
 En la lista de salas, las públicas que están jugando tienen el botón **Mirar**. El juego se vuelve a abrir mirando esa
@@ -83,6 +95,10 @@ partida desde el principio: la juega igual que los jugadores, con sus botones. S
 (sin imagen ni sonido un momento), en los menús y también en medio de una pelea, y después la seguís unos dos segundos
 detrás. Mientras carga una pelea va a velocidad normal. Arriba a la derecha dice a quién mirás y cuánto vas detrás del
 vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4 espectadores.
+
+Si la sesión ya lleva mucho tiempo, alcanzar el vivo tarda unos minutos (se juega todo desde el principio, más
+rápido): mientras tanto la imagen avanza a saltos y el cartel dice cuánta partida falta y cuánto tarda más o menos. La
+lista de salas muestra hace cuánto está abierta cada una.
 
 ## Replays
 

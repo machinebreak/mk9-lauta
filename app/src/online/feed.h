@@ -27,10 +27,10 @@ bool Heard(const std::string& id, uint64_t have);
 int Watchers();
 // What each spectator lacks, a little at a time (the room's pump, UI thread); ended: the session is over (once).
 // budget: the recording's bytes a turn (60 ms), the spectators' together: kBudgetMenus (~34 KB/s); mk9-lauta
-// (2026-11-11): in a fight with rollback less (kBudgetFight, kBudgetFightSlow with a long or lossy round trip), so a
-// spectator catching up never takes the player's upload from the fight. Each spectator gets 256 bytes a turn at least
-// (~4 KB/s: the match's own pace is ~3 KB/s).
-constexpr size_t kBudgetMenus = 2048, kBudgetFight = 1024, kBudgetFightSlow = 512;
+// (2026-11-11): in a fight with rollback less (kBudgetFight ~25 KB/s, kBudgetFightSlow ~8.5 KB/s with a long or lossy
+// round trip), so a spectator catching up never takes the player's upload from the fight. Each spectator gets 256
+// bytes a turn at least (~4 KB/s: the match's own pace is ~3 KB/s).
+constexpr size_t kBudgetMenus = 2048, kBudgetFight = 1536, kBudgetFightSlow = 512;
 void Pump(const std::string& room, bool ended, size_t budget = kBudgetMenus);
 
 // --- the spectator ---

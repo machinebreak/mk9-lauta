@@ -281,7 +281,7 @@ ComPtr<IWICBitmapScaler> Scaler(IWICImagingFactory* wic, IWICBitmapSource* sourc
 std::string MakeAvatar(IWICImagingFactory* wic, IWICBitmapSource* source, UINT orientation) {
   ComPtr<IWICFormatConverter> premultiplied;
   if (FAILED(wic->CreateFormatConverter(&premultiplied)) ||
-      FAILED(premultiplied->Initialize(source, GUID_WICPixelFormat32bppPRGBA, WICBitmapDitherTypeNone, nullptr, 0.0,
+      FAILED(premultiplied->Initialize(source, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
                                        WICBitmapPaletteTypeCustom))) {
     return {};
   }
@@ -326,16 +326,25 @@ std::string MakeAvatar(IWICImagingFactory* wic, IWICBitmapSource* source, UINT o
       Scaler(wic, clipper.Get(), kSize, kSize, WICBitmapInterpolationMode(4));  // HighQualityCubic: Windows 10 on
   if (!scaler) scaler = Scaler(wic, clipper.Get(), kSize, kSize, WICBitmapInterpolationModeFant);
   if (!scaler) return {};
-  std::vector<uint8_t> rgba(size_t(kSize) * kSize * 4);
-  if (FAILED(scaler->CopyPixels(nullptr, kSize * 4, UINT(rgba.size()), rgba.data()))) return {};
+  // mk9-lauta (2026-11-11): the pixels in a layout said here, not taken from the scaler: WIC's scalers give their
+  // own canonical format (32bppPBGRA) for some sources, and reading those bytes as RGBA swapped red and blue (a
+  // player's brown picture came out blue)
+  ComPtr<IWICFormatConverter> bgra;
+  if (FAILED(wic->CreateFormatConverter(&bgra)) ||
+      FAILED(bgra->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                              WICBitmapPaletteTypeCustom))) {
+    return {};
+  }
+  std::vector<uint8_t> pixels(size_t(kSize) * kSize * 4);  // B, G, R, A, premultiplied
+  if (FAILED(bgra->CopyPixels(nullptr, kSize * 4, UINT(pixels.size()), pixels.data()))) return {};
   // over the screens' dark (premultiplied: color + dark x (1 - alpha)), as the JPEG's BGR
   constexpr int kBackR = 24, kBackG = 18, kBackB = 20;
   std::vector<uint8_t> bgr(size_t(kSize) * kSize * 3);
   for (size_t i = 0; i < size_t(kSize) * kSize; ++i) {
-    const int a = rgba[i * 4 + 3];
-    bgr[i * 3 + 0] = uint8_t(std::min(255, rgba[i * 4 + 2] + kBackB * (255 - a) / 255));
-    bgr[i * 3 + 1] = uint8_t(std::min(255, rgba[i * 4 + 1] + kBackG * (255 - a) / 255));
-    bgr[i * 3 + 2] = uint8_t(std::min(255, rgba[i * 4 + 0] + kBackR * (255 - a) / 255));
+    const int a = pixels[i * 4 + 3];
+    bgr[i * 3 + 0] = uint8_t(std::min(255, pixels[i * 4 + 0] + kBackB * (255 - a) / 255));
+    bgr[i * 3 + 1] = uint8_t(std::min(255, pixels[i * 4 + 1] + kBackG * (255 - a) / 255));
+    bgr[i * 3 + 2] = uint8_t(std::min(255, pixels[i * 4 + 2] + kBackR * (255 - a) / 255));
   }
   for (float quality = 0.88f; quality > 0.35f; quality -= 0.12f) {
     std::string jpeg = EncodeJpeg(wic, bgr, quality);
@@ -634,6 +643,12 @@ void ChooseFile() {
     }
     Pictures().Post([path](IWICImagingFactory* wic) { FromFile(wic, path); });
   }).detach();
+}
+
+void UseFile(const std::string& path) {
+  if (path.empty() || g_busy.exchange(true)) return;
+  const std::wstring wide = Wide(path);
+  Pictures().Post([wide](IWICImagingFactory* wic) { FromFile(wic, wide); });
 }
 
 void UseDiscord() {

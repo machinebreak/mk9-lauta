@@ -180,6 +180,9 @@ REXCVAR_DEFINE_STRING(mk9_net_replay, "", "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_watch_catch_up_mode, "", "MK9 Online",
                       "Tests: how a spectator catches up: \"\" hidden and unpaced; \"drawn\" drawn and shown but unpaced "
                       "(with renut_vsync=false); \"paced\" hidden at the players' speed (it never catches up)");
+REXCVAR_DEFINE_INT32(mk9_watch_peek_ms, 700, "MK9 Online",
+                     "A spectator or a replay catching up shows a frame this often (ms; 0: none, the screen still until "
+                     "it catches up)");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up_fights, true, "MK9 Online",
                     "A spectator far behind the match catches up in the fights too (until 2026-11-11 a fight's playback "
                     "parted from the match ~430 frames in: a stage's script read FMOD's position of a sound, now made "
@@ -334,6 +337,8 @@ struct Session {
   uint64_t watch_read = 0;            // the recording's bytes parsed
   bool watch_header = false;
   bool watch_other_release = false;  // the recording is of another release's match (its header's protocol)
+  bool watch_peeking = false;         // mk9-lauta (2026-11-11): catching up, this frame is one shown (SpectatorFrame)
+  uint64_t watch_peek_us = 0;         // ... the last one's time
   bool watch_hidden = false;          // catching up: frames hidden, unpaced and muted
   std::atomic<int64_t> watch_behind{0};  // frames of the match beyond this one's (the game thread's count, for Info)
   std::atomic<bool> watch_in_fight{false};  // it plays a fight back (for Info)
@@ -2211,11 +2216,11 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   const bool hide = g.replay ? !fight && !loading  // a replay: the menus fast, the fights at their pace
                              : (!fight || REXCVAR_GET(mk9_watch_catch_up_fights)) && !loading &&
                                    REXCVAR_GET(mk9_watch_catch_up) && (g.watch_hidden ? behind > 90 : behind > 300);
+  // (tests, mk9_watch_catch_up_mode: "drawn", the frames drawn and shown but not paced, run with renut_vsync off;
+  // "paced", hidden at the players' speed: which of the two a fight's catching up goes apart by)
+  static const std::string mode = REXCVAR_GET(mk9_watch_catch_up_mode);
   if (hide != g.watch_hidden) {
     snapshot::FlushRendering(ctx, base);
-    // (tests, mk9_watch_catch_up_mode: "drawn", the frames drawn and shown but not paced, run with renut_vsync off;
-    // "paced", hidden at the players' speed: which of the two a fight's catching up goes apart by)
-    static const std::string mode = REXCVAR_GET(mk9_watch_catch_up_mode);
     if (mode == "drawn") {
       sa2::renut::SetUnpaced(hide);
     } else {
@@ -2224,8 +2229,29 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     }
     rex::cvar::SetFlagByName("audio_mute", hide ? "true" : "false");
     g.watch_hidden = hide;
-    REXLOG_INFO("[watch] {} at frame {} of epoch {} ({} frames behind the match)", hide ? "catching up" : "caught up",
+    g.watch_peeking = false;
+    g.watch_peek_us = NowUs();
+    REXLOG_INFO("[watch] {} at frame {} of epoch {} ({} frames behind the match)",
+                hide        ? "catching up"
+                : loading   ? "at the match's pace while a fight loads"
+                : fight && !REXCVAR_GET(mk9_watch_catch_up_fights) ? "at the match's pace in a fight"
+                : behind <= 90 ? "caught up"
+                               : "at the match's pace",
                 g.frame, g.epoch, behind);
+  } else if (hide && mode.empty()) {
+    // mk9-lauta (2026-11-11): catching up, a frame drawn and shown every half second, muted: the screen and the
+    // badge's progress move. A spectator far behind a long session saw one still picture for 30-45 s at a time (its
+    // frames run hidden until a fight loads), and took it for a hang. Drawing changes nothing the game decides (the
+    // catching up was found the same drawn or hidden: mk9_watch_catch_up_mode).
+    const uint64_t now = NowUs();
+    static const int64_t every_us = int64_t(REXCVAR_GET(mk9_watch_peek_ms)) * 1000;
+    const bool peek = every_us > 0 && !g.watch_peeking && now - g.watch_peek_us >= uint64_t(every_us);
+    if (peek != g.watch_peeking) {
+      snapshot::FlushRendering(ctx, base);
+      sa2::renut::SetFrameHidden(!peek);
+      g.watch_peeking = peek;
+      if (peek) g.watch_peek_us = now;
+    }
   }
   Ensure(g.frame + 2);
   WatchCompareLast();

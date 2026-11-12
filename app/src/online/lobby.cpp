@@ -69,6 +69,30 @@ Url Parse(const std::string& text) {
   return url;
 }
 
+// What a failed connection was, for the screens: "dns" (the name not found), "connect" (no answer, refused: a firewall,
+// an antivirus, the provider), "timeout", "tls" (the secure connection: the PC's date, its certificates), "http" (the
+// server answered something else), "other".
+std::string Why(DWORD error, DWORD status) {
+  switch (error) {
+    case ERROR_WINHTTP_NAME_NOT_RESOLVED: return "dns";
+    case ERROR_WINHTTP_CANNOT_CONNECT:
+    case ERROR_WINHTTP_CONNECTION_ERROR: return "connect";
+    case ERROR_WINHTTP_TIMEOUT: return "timeout";
+    case ERROR_WINHTTP_SECURE_FAILURE:
+    case ERROR_WINHTTP_SECURE_INVALID_CA:
+    case ERROR_WINHTTP_SECURE_CERT_DATE_INVALID:
+    case ERROR_WINHTTP_SECURE_CERT_CN_INVALID:
+    case ERROR_WINHTTP_SECURE_CERT_REV_FAILED:
+    case ERROR_WINHTTP_SECURE_CHANNEL_ERROR:
+    case ERROR_WINHTTP_SECURE_INVALID_CERT:
+    case ERROR_WINHTTP_SECURE_CERT_REVOKED:
+    case ERROR_WINHTTP_SECURE_CERT_WRONG_USAGE: return "tls";
+    default: break;
+  }
+  if (status && status != 101) return "http";
+  return "other";
+}
+
 class Client {
  public:
   void Start(const std::string& name) {
@@ -267,19 +291,34 @@ class Client {
                                                      url.secure ? WINHTTP_FLAG_SECURE : 0)
                                 : nullptr;
     HINTERNET socket = nullptr;
+    // mk9-lauta (2026-11-11): the failing call's error, taken at once (closing a handle may change it), and why in
+    // words for the screens (a player with no lobby sees the cause and what to try)
+    DWORD error = connect ? 0 : GetLastError(), status = 0;
     if (request && WinHttpSetOption(request, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, nullptr, 0) &&
         WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
         WinHttpReceiveResponse(request, nullptr)) {
-      DWORD status = 0, size = sizeof(status);
+      DWORD size = sizeof(status);
       WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                           &status, &size, WINHTTP_NO_HEADER_INDEX);
       if (status == 101) socket = WinHttpWebSocketCompleteUpgrade(request, 0);
+      if (!socket && status == 101) error = GetLastError();
+    } else if (!error) {
+      error = GetLastError();
     }
     if (request) WinHttpCloseHandle(request);
     if (!socket) {
-      const DWORD error = GetLastError();
-      static int warned = 0;
-      if (warned++ < 3) REXLOG_WARN("[lobby] could not reach {} (WinHTTP error {}): trying again", text, error);
+      const std::string why = Why(error, status);
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_.link_error != why || state_.link_code != error) {
+          state_.link_error = why;
+          state_.link_code = error;
+          state_.link_status = status;
+          ++state_.version;
+          REXLOG_WARN("[lobby] could not reach {} ({}: WinHTTP error {}, HTTP status {}): trying again", text, why,
+                      error, status);
+        }
+      }
       if (connect) WinHttpCloseHandle(connect);
       WinHttpCloseHandle(session);
       return false;
@@ -291,6 +330,11 @@ class Client {
       socket_ = socket;
     }
     last_ping_ = Clock::now();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state_.link_error.clear();
+      state_.link_code = state_.link_status = 0;
+    }
     REXLOG_INFO("[lobby] connected to {}", text);
     send_cv_.notify_one();
     return true;

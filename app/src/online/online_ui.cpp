@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -62,6 +63,8 @@ REXCVAR_DEFINE_BOOL(mk9_online_show, false, "MK9 Online",
                     "The online screens open at start (the game started again back from a room's session)");
 REXCVAR_DEFINE_STRING(mk9_online_test_tab, "", "MK9 Online",
                       "Tests: the online window opens on this tab (Sala, Salas, Chat global, Perfil)");
+REXCVAR_DEFINE_STRING(mk9_avatar_test_file, "", "MK9 Online",
+                      "Tests: at start, this picture file becomes the player's profile picture (avatars.h UseFile)");
 REXCVAR_DEFINE_STRING(mk9_online_test_profile, "", "MK9 Online",
                       "Tests: 8 s after the start, with the lobby's name said, the online window shows this player's "
                       "profile (profiles.h)");
@@ -172,6 +175,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     name_ = session::LoadName();
     std::snprintf(name_buf_, sizeof(name_buf_), "%s", name_.c_str());
     flags::Detect();  // this player's country, for the lobby and the rival (a thread: Cloudflare's trace)
+    avatars::UseFile(REXCVAR_GET(mk9_avatar_test_file));  // tests (empty: nothing)
     if (!name_.empty() && lobby::Configured()) lobby::Start(name_);
     // with no name yet the window opens by itself (it has to be chosen to play online), and so it does back from a
     // room's session: the player is in the lobby again
@@ -378,6 +382,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         break;
       case lobby::Link::kRetrying:
         ImGui::TextColored(kRed, "%s", T("Sin conexión con el lobby: reintentando"));
+        DrawLinkHelp(lobby);
         break;
       default:
         ImGui::TextColored(kGrey, "%s", T("Desconectado"));
@@ -396,6 +401,34 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (!lobby.name_error.empty()) ImGui::TextColored(kRed, "%s", ErrorText(lobby.name_error).c_str());
     if (!lobby.notice.empty()) ImGui::TextColored(kGold, T("Aviso: %s"), lobby.notice.c_str());
     ImGui::Separator();
+  }
+
+  // mk9-lauta (2026-11-11): why the lobby cannot be reached, in words, with what to try, and the details to send
+  // (players behind some providers could not connect and saw only "reintentando").
+  void DrawLinkHelp(const lobby::State& lobby) {
+    if (lobby.link_error.empty()) return;
+    const char* help =
+        lobby.link_error == "dns"
+            ? T("Tu conexión no encuentra el servidor del online (falla el DNS). Probá cambiar el DNS de Windows a 1.1.1.1 "
+                "y 8.8.8.8, o conectarte con otra red (por ejemplo, los datos del celular).")
+        : lobby.link_error == "connect" || lobby.link_error == "timeout"
+            ? T("Tu conexión no llega al servidor del online: puede ser un firewall, un antivirus o tu proveedor de "
+                "internet. Probá con otra red (por ejemplo, los datos del celular) o una VPN, y contanos qué proveedor "
+                "tenés.")
+        : lobby.link_error == "tls"
+            ? T("No se pudo verificar la conexión segura con el servidor. Revisá que la fecha y la hora de la PC estén "
+                "bien y que Windows esté actualizado (sus certificados). Un antivirus que revisa las conexiones también "
+                "puede causarlo.")
+        : lobby.link_error == "http" ? T("El servidor del online respondió con un error: probá de nuevo en un rato.")
+                                     : T("No se pudo conectar con el servidor del online.");
+    ImGui::PushStyleColor(ImGuiCol_Text, kGrey);
+    ImGui::TextWrapped("%s", help);
+    ImGui::PopStyleColor();
+    const std::string details =
+        fmt::format("mk9-lauta {} - lobby {} - {} (WinHTTP {}, HTTP {})", MK9_LAUTA_VERSION_TEXT,
+                    rex::cvar::GetFlagByName("mk9_lobby_url"), lobby.link_error, lobby.link_code, lobby.link_status);
+    if (ImGui::SmallButton(Label("Copiar diagnóstico").c_str())) ImGui::SetClipboardText(details.c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", details.c_str());
   }
 
   void DrawRooms(const lobby::State& lobby, const room::State& room) {
@@ -446,6 +479,14 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         }
         ImGui::TableNextColumn();
         ImGui::TextColored(r.playing ? kGrey : kGreen, "%s", T(r.playing ? "jugando" : "esperando"));
+        // mk9-lauta (2026-11-11): how long the room has been open (a playing one is watched from its session's start)
+        if (r.since > 0) {
+          const int64_t minutes = (int64_t(std::time(nullptr)) * 1000 - r.since) / 60000;
+          if (minutes >= 1) {
+            ImGui::SameLine(0, 4);
+            ImGui::TextColored(kGrey, "%s", fmt::format("· {} min", minutes).c_str());
+          }
+        }
         ImGui::TableNextColumn();
         if (!r.playing && room.phase == room::Phase::kNone && online) {
           ImGui::PushID(r.code.c_str());
@@ -455,6 +496,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
           // mk9-lauta (2026-11-10): a playing room can be watched (the game starts again watching it: feed.h)
           ImGui::PushID(r.code.c_str());
           if (ImGui::SmallButton(T("Mirar"))) room::Watch(r.code);
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", T("La mirás desde el principio de la sesión, más rápido hasta alcanzar el vivo: si "
+                                      "lleva mucho tiempo, eso tarda unos minutos."));
+          }
           ImGui::PopID();
         }
       }
@@ -806,8 +851,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::Text("%s", room.p2.empty() ? "-" : room.p2.c_str());
       if (!info.active) {
         ImGui::TextColored(kGold, "%s", T("Pidiendo la partida al host..."));
-      } else if (info.catching_up) {
-        ImGui::TextColored(kGold, T("Alcanzando el vivo... (%.0f s)"), info.behind_s);
+      } else if (info.behind_s >= 20.0) {
+        // mk9-lauta (2026-11-11): far behind (a long session watched from its start): how much match is left to reach
+        // and, once it is seen going down, about how long that takes
+        const double eta = CatchUpEta(info.behind_s);
+        if (eta > 0) {
+          ImGui::TextColored(kGold, "%s", Tf("Alcanzando el vivo: faltan {} de partida (unos {})", Duration(info.behind_s),
+                                             Duration(eta)).c_str());
+        } else {
+          ImGui::TextColored(kGold, "%s", Tf("Alcanzando el vivo: faltan {} de partida", Duration(info.behind_s)).c_str());
+        }
+        ImGui::TextColored(kGrey, "%s", T("Mirás la sesión desde el principio, más rápido hasta alcanzarla."));
       } else {
         ImGui::TextColored(kGrey, T("%.1f s detrás del vivo"), info.behind_s);
       }
@@ -815,6 +869,30 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     ImGui::End();
   }
+
+  // "1:05", "12:30", "1:02:03" for seconds.
+  static std::string Duration(double seconds) {
+    const int64_t t = std::max<int64_t>(0, int64_t(seconds + 0.5));
+    if (t >= 3600) return fmt::format("{}:{:02}:{:02}", t / 3600, (t / 60) % 60, t % 60);
+    return fmt::format("{}:{:02}", t / 60, t % 60);
+  }
+
+  // A spectator's time left to reach the live match, from how fast its distance went down in the last 20 s (0: not
+  // known yet, or not going down).
+  double CatchUpEta(double behind_s) {
+    const auto now = Clock::now();
+    if (behind_samples_.empty() || now - behind_samples_.back().first >= std::chrono::seconds(1)) {
+      behind_samples_.emplace_back(now, behind_s);
+    }
+    while (behind_samples_.size() > 2 && now - behind_samples_.front().first > std::chrono::seconds(20)) {
+      behind_samples_.pop_front();
+    }
+    const double span = std::chrono::duration<double>(now - behind_samples_.front().first).count();
+    if (span < 8.0) return 0.0;
+    const double gained = (behind_samples_.front().second - behind_s) / span;  // match seconds a second
+    return gained > 0.05 ? behind_s / gained : 0.0;
+  }
+  std::deque<std::pair<Clock::time_point, double>> behind_samples_;
 
   // mk9-lauta (2026-11-10): in a session's fight, each player's name and flag under their health bar (player 1, the
   // room's host, on the left), as the game's own online showed its gamertags; and in the character select, over each
@@ -844,6 +922,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         p.name = part.substr(0, c1);
         if (c1 != std::string::npos) p.country = part.substr(c1 + 1, c2 == std::string::npos ? c2 : c2 - c1 - 1);
         if (c2 != std::string::npos) p.picture = part.substr(c2 + 1);
+        if (p.picture == "me") p.picture = avatars::MineHash();  // this player's own, as it is now
       }
     } else {
       if (!room.in_session) return;
@@ -883,49 +962,54 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (frame_h <= 0) return;
     }
     ImDrawList* list = ImGui::GetBackgroundDrawList();
+    const float h = std::round(frame_h * (select ? 0.042f : 0.039f));  // the picture's side: the plate's height
+    DrawPlate(list, plates[0].name, plates[0].country, plates[0].picture, lx, ly, h, false);
+    DrawPlate(list, plates[1].name, plates[1].country, plates[1].picture, rx, ry, h, true);
+  }
+
+  // One player's plate: the picture (none, or not decoded yet: the pill alone) at the outer side, then the flag and the
+  // name on a dark pill; from x rightward (right: leftward from x), h high from y. The width it took.
+  static float DrawPlate(ImDrawList* list, const std::string& name, const std::string& country,
+                         const std::string& picture, float x, float y, float h, bool right) {
+    if (name.empty() || !list) return 0.0f;
     ImFont* font = renut::gpu::overlay::StrongFont();
     if (!font) font = ImGui::GetFont();
-    const float h = std::round(frame_h * (select ? 0.042f : 0.039f));  // the picture's side: the plate's height
     const float pill_h = std::round(h * 0.80f), size = std::round(pill_h * 0.64f);
     const float pad = std::round(pill_h * 0.42f), gap = std::round(h * 0.20f), inner = std::round(pill_h * 0.26f);
     const float flag_h = std::round(pill_h * 0.54f), flag_w = std::round(flag_h * 40.0f / 30.0f);
-    const float line = std::max(1.0f, std::round(frame_h / 720.0f));
+    const float line = std::max(1.0f, std::round(h / 28.0f));
     const ImU32 gold = IM_COL32(255, 196, 64, 215);
-    auto plate = [&](const Plate& p, float x, float y, bool right) {
-      if (p.name.empty()) return;
-      const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, p.name.c_str());
-      const bool has_flag = flags::Known(p.country);
-      const float pill_w = pad * 2.0f + extent.x + (has_flag ? flag_w + inner : 0.0f);
-      // the picture first, at the outer side (none, or not decoded yet: the pill alone, from the same edge)
-      float px = x;
-      if (!right) {
-        if (!p.picture.empty() && avatars::Draw(list, p.picture, ImVec2(x, y), h, std::round(h * 0.22f), gold, line * 1.5f)) {
-          px = x + h + gap;
-        }
-      } else {
-        float end = x;
-        if (!p.picture.empty() &&
-            avatars::Draw(list, p.picture, ImVec2(x - h, y), h, std::round(h * 0.22f), gold, line * 1.5f)) {
-          end = x - h - gap;
-        }
-        px = end - pill_w;
+    const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, name.c_str());
+    const bool has_flag = flags::Known(country);
+    const float pill_w = pad * 2.0f + extent.x + (has_flag ? flag_w + inner : 0.0f);
+    float px = x, used = pill_w;
+    if (!right) {
+      if (!picture.empty() && avatars::Draw(list, picture, ImVec2(x, y), h, std::round(h * 0.22f), gold, line * 1.5f)) {
+        px = x + h + gap;
+        used += h + gap;
       }
-      const float py = std::round(y + (h - pill_h) * 0.5f);
-      list->AddRectFilled(ImVec2(px, py), ImVec2(px + pill_w, py + pill_h), IM_COL32(8, 5, 5, 172), pill_h * 0.5f);
-      list->AddRect(ImVec2(px, py), ImVec2(px + pill_w, py + pill_h), IM_COL32(255, 190, 90, 84), pill_h * 0.5f, 0, line);
-      float cx = px + pad;
-      const float ty = std::round(py + (pill_h - extent.y) * 0.5f), fy = std::round(py + (pill_h - flag_h) * 0.5f);
-      if (has_flag && !right) {
-        flags::DrawAt(list, p.country, ImVec2(cx, fy), flag_h);
-        cx += flag_w + inner;
+    } else {
+      float end = x;
+      if (!picture.empty() && avatars::Draw(list, picture, ImVec2(x - h, y), h, std::round(h * 0.22f), gold, line * 1.5f)) {
+        end = x - h - gap;
+        used += h + gap;
       }
-      const float d = std::max(1.0f, std::round(size / 14.0f));
-      list->AddText(font, size, ImVec2(cx + d, ty + d), IM_COL32(0, 0, 0, 200), p.name.c_str());
-      list->AddText(font, size, ImVec2(cx, ty), IM_COL32(255, 238, 205, 255), p.name.c_str());
-      if (has_flag && right) flags::DrawAt(list, p.country, ImVec2(cx + extent.x + inner, fy), flag_h);
-    };
-    plate(plates[0], lx, ly, false);
-    plate(plates[1], rx, ry, true);
+      px = end - pill_w;
+    }
+    const float py = std::round(y + (h - pill_h) * 0.5f);
+    list->AddRectFilled(ImVec2(px, py), ImVec2(px + pill_w, py + pill_h), IM_COL32(8, 5, 5, 172), pill_h * 0.5f);
+    list->AddRect(ImVec2(px, py), ImVec2(px + pill_w, py + pill_h), IM_COL32(255, 190, 90, 84), pill_h * 0.5f, 0, line);
+    float cx = px + pad;
+    const float ty = std::round(py + (pill_h - extent.y) * 0.5f), fy = std::round(py + (pill_h - flag_h) * 0.5f);
+    if (has_flag && !right) {
+      flags::DrawAt(list, country, ImVec2(cx, fy), flag_h);
+      cx += flag_w + inner;
+    }
+    const float d = std::max(1.0f, std::round(size / 14.0f));
+    list->AddText(font, size, ImVec2(cx + d, ty + d), IM_COL32(0, 0, 0, 200), name.c_str());
+    list->AddText(font, size, ImVec2(cx, ty), IM_COL32(255, 238, 205, 255), name.c_str());
+    if (has_flag && right) flags::DrawAt(list, country, ImVec2(cx + extent.x + inner, fy), flag_h);
+    return used;
   }
 
   // mk9-lauta (2026-11-10): what Discord shows of the player (discord.h): the menus, the lobby, a room, a session's
@@ -1111,6 +1195,19 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::TextColored(kGrey, "%s", note.c_str());
     }
     ImGui::EndGroup();
+    // mk9-lauta (2026-11-11): how the fights show this player (the plate under the health bar), on a dark strip
+    ImGui::Spacing();
+    ImGui::TextColored(kGrey, "%s", T("Así te ven en la pelea:"));
+    {
+      const float plate_h = std::round(42.0f * scale);
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ImDrawList* list = ImGui::GetWindowDrawList();
+      const float strip_w = std::min(ImGui::GetContentRegionAvail().x, 420.0f * scale);
+      list->AddRectFilledMultiColor(at, ImVec2(at.x + strip_w, at.y + plate_h + 12.0f * scale), IM_COL32(70, 54, 60, 255),
+                                    IM_COL32(40, 46, 66, 255), IM_COL32(26, 30, 44, 255), IM_COL32(52, 38, 44, 255));
+      DrawPlate(list, me, flags::Mine(), mine, at.x + 10.0f * scale, at.y + 6.0f * scale, plate_h, false);
+      ImGui::Dummy(ImVec2(strip_w, plate_h + 12.0f * scale));
+    }
     ImGui::PushStyleColor(ImGuiCol_Text, kGrey);
     ImGui::TextWrapped("%s", T("Tu foto la ven tus rivales y quienes miran tus partidas. Viaja de tu juego al de ellos una "
                                "sola vez (unos pocos KB) y no queda en ningún servidor."));

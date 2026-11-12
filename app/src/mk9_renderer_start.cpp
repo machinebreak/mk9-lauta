@@ -25,6 +25,9 @@
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
 REXCVAR_DECLARE(std::string, renut_gpu_backend);
+REXCVAR_DEFINE_STRING(mk9_renderer_test_fail, "", "MK9",
+                      "Tests: a start with this graphics API (d3d12, vulkan) ends right before its device is made, as a "
+                      "start a driver kills (mk9_renderer_start.h: the next start goes back to the API that worked)");
 
 // A laptop with two GPUs runs the game on the dedicated one when the executable exports these (NVIDIA Optimus, AMD
 // PowerXpress): the drivers read the .exe's exports, not a DLL's (the SDK's rexgpu DLL has them, to no effect).
@@ -39,6 +42,7 @@ namespace {
 std::mutex g_mutex;
 std::string g_api;     // this start's API (DeviceReady)
 int g_failed = 0;      // failed starts in a row before this one, with g_api
+std::string g_ok_api;  // mk9-lauta (2026-11-11): the last API that got an image on screen ("" none yet)
 std::string g_notice;  // an API swapped at this start: shown once the overlay runs
 std::atomic<bool> g_presented{false};
 std::atomic<bool> g_lost{false};
@@ -49,11 +53,14 @@ std::filesystem::path MarkerPath() {
   return std::filesystem::path(exe).parent_path() / L"logs" / L"renderer_start.txt";
 }
 
-void Write(const std::string& api, int failed, const char* state) {
+// logs/renderer_start.txt: "<api> <failed starts in a row> <pending|ok|lost> [<the last API that showed an image>]"
+void Write(const std::string& api, int failed, const char* state, const std::string& ok_api) {
   std::error_code ec;
   std::filesystem::create_directories(MarkerPath().parent_path(), ec);
   std::ofstream out(MarkerPath(), std::ios::trunc);
-  out << api << ' ' << failed << ' ' << state << '\n';
+  out << api << ' ' << failed << ' ' << state;
+  if (!ok_api.empty()) out << ' ' << ok_api;
+  out << '\n';
 }
 
 const char* Name(const std::string& api) { return api == "vulkan" ? "Vulkan" : "DirectX 12"; }
@@ -91,42 +98,62 @@ class Notice : public renut::gpu::overlay::Dialog {
 
 }  // namespace
 
+// mk9-lauta (2026-11-11): this start is "pending" from here, before the device is made, so a start that dies or hangs
+// there (a driver's Vulkan, a layer of another program) counts too; it counted only past DeviceReady, and a player who
+// chose Vulkan in F2 and whose PC could not start it was left with a game that never opened until mk9.toml went. An
+// API chosen in F2 whose first start fails goes back at once to the one that last showed an image; any other, after
+// two failed starts in a row.
 void BeforeDevice() {
-  const std::string current = REXCVAR_GET(renut_gpu_backend) == "vulkan" ? "vulkan" : "d3d12";
-  std::string api, state;
+  std::string current = REXCVAR_GET(renut_gpu_backend) == "vulkan" ? "vulkan" : "d3d12";
+  std::string api, state, ok_api;
   int failed = 0;
   {
     std::ifstream in(MarkerPath());
-    in >> api >> failed >> state;
+    in >> api >> failed >> state >> ok_api;  // (older markers have three fields)
   }
-  failed = api == current && (state == "pending" || state == "lost") ? failed + 1 : 0;
+  if (ok_api.empty() && state == "ok") ok_api = api;
+  const bool failed_before = api == current && (state == "pending" || state == "lost");
+  failed = failed_before ? failed + 1 : 0;
+  const bool chosen_failed = failed_before && !ok_api.empty() && ok_api != current;  // F2's new choice, failed once
   std::lock_guard lock(g_mutex);
-  if (failed >= 2) {
-    const std::string other = current == "vulkan" ? "d3d12" : "vulkan";
-    REXLOG_WARN("[renderer] {} did not get an image on screen in the last {} starts (logs/renderer_start.txt): {} "
+  if (failed >= 2 || chosen_failed) {
+    const std::string other = chosen_failed ? ok_api : current == "vulkan" ? "d3d12" : "vulkan";
+    REXLOG_WARN("[renderer] {} did not get an image on screen in the last {} start(s) (logs/renderer_start.txt): {} "
                 "from now on (renut_gpu_backend, saved in mk9.toml)",
                 Name(current), failed, Name(other));
     rex::cvar::SetFlagByName("renut_gpu_backend", other);
     renut::gpu::ForceBackend(other == "vulkan" ? renut::gpu::Backend::Vulkan : renut::gpu::Backend::D3D12);
     options_ui::SaveToConfig({{"renut_gpu_backend", other}});
-    g_notice = fmt::format("El juego no llegó a mostrar imagen en los últimos {} arranques con {}: ahora usa {}. Si "
-                           "querés volver, está en F2 > Pantalla e idioma > API gráfica.",
-                           failed, Name(current), Name(other));
+    g_notice = chosen_failed
+                   ? fmt::format("El juego no pudo arrancar con {} en esta PC: volvió a {}, que sí anda. Si querés "
+                                 "probar de nuevo, está en F2 > Pantalla e idioma > API gráfica.",
+                                 Name(current), Name(other))
+                   : fmt::format("El juego no llegó a mostrar imagen en los últimos {} arranques con {}: ahora usa {}. "
+                                 "Si querés volver, está en F2 > Pantalla e idioma > API gráfica.",
+                                 failed, Name(current), Name(other));
     failed = 0;
+    current = other;
   }
   g_failed = failed;
+  g_ok_api = ok_api;
+  Write(current, failed, "pending", ok_api);
+  // tests (mk9_renderer_test_fail): a start of that API that dies here, as a driver's would
+  if (const std::string fail = REXCVAR_GET(mk9_renderer_test_fail); !fail.empty() && fail == current) {
+    REXLOG_WARN("[renderer] mk9_renderer_test_fail: this start of {} ends here", Name(current));
+    TerminateProcess(GetCurrentProcess(), 3);
+  }
 }
 
 void DeviceReady(const char* api) {
   std::lock_guard lock(g_mutex);
   g_api = api;
-  Write(g_api, g_failed, "pending");
+  Write(g_api, g_failed, "pending", g_ok_api);
 }
 
 void FramesDone() {
   if (g_presented.load(std::memory_order_relaxed) || g_presented.exchange(true)) return;
   std::lock_guard lock(g_mutex);
-  if (!g_api.empty()) Write(g_api, 0, "ok");
+  if (!g_api.empty()) Write(g_api, 0, "ok", g_api);
 }
 
 void DeviceLost() {
@@ -137,7 +164,7 @@ void DeviceLost() {
     std::lock_guard lock(g_mutex);
     api = g_api;
     failed = g_presented.load() ? 0 : g_failed;
-    if (!api.empty()) Write(api, failed, "lost");
+    if (!api.empty()) Write(api, failed, "lost", g_ok_api);
   }
   const std::string other = api == "vulkan" ? "DirectX 12" : "Vulkan";
   REXLOG_ERROR("[renderer] the {} device was lost: told the player; a second time in a row swaps to {} at the next "

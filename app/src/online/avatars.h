@@ -29,6 +29,8 @@ std::string MineHash();
 std::string MineData();
 // A picture from a file (Windows' dialog, then the work on a thread: MineHash changes when done). UI thread.
 void ChooseFile();
+// The same from a file named here (UTF-8; tests: mk9_avatar_test_file).
+void UseFile(const std::string& path);
 // The player's Discord picture (the Discord app open: discord.h), downloaded from Discord's servers and kept as above.
 void UseDiscord();
 void Remove();
