@@ -34,10 +34,11 @@
 #include "online/netplay.h"
 #include "renut_engine/gpu/sa2_renut_pacing.h"
 
-REXCVAR_DEFINE_BOOL(mk9_hidden_frames_draw, true, "MK9 Online",
+REXCVAR_DEFINE_BOOL(mk9_hidden_frames_draw, false, "MK9 Online",
                     "A rollback's frames run again (a player's, the SyncTest's) still draw their scene (UE3's render "
-                    "thread walks it; Renut throws it away). false: FViewport::Draw is skipped in them (PLAN-0.4 B2: "
-                    "3.2 -> 2.2 ms a frame run again, the SyncTest the same); a spectator's frames always draw");
+                    "thread walks it; Renut throws it away). false (the default since mk9-lauta 0.6.0, after a hunt with "
+                    "lag and Kratos' SyncTest: 0 frames apart, no broken frame): FViewport::Draw is skipped in them "
+                    "(PLAN-0.4 B2: 3.2 -> 2.2 ms a frame run again); a spectator's frames always draw");
 
 namespace {
 

@@ -398,20 +398,41 @@ void CaptureScriptCall(const uint8_t* base, uint32_t script, uint32_t index) {
 
 constexpr uint32_t kScriptVm = 0x8342CDF0;
 
-// The script native about to run (0 = none or outside mk9_native_log_frames).
+// The script native about to run (0 = none or outside mk9_native_log_frames), and its first argument: the bytecode's
+// word after the native's (the native reads it at [[vm + 60] + 4] once the call moved the pc past its own word).
+thread_local uint32_t t_native_arg = 0;
+
 uint32_t NativeAboutToRun(const uint8_t* base) {
   if (!g_native_file || g_frame < g_native_from || g_frame > g_native_to) return 0;
   const uint32_t vm = Load32(base, kScriptVm);
   const uint32_t pc = GuestPointer(vm) ? Load32(base, vm + 60) : 0;
+  t_native_arg = GuestPointer(pc) ? Load32(base, pc + 8) : 0;
   return GuestPointer(pc) ? Load32(base, pc + 4) : 0;
 }
 
-// A script native that ran (mk9_native_log), with the VM's result register after it.
+// Up to 40 printable characters at a guest address ("" when it is not text).
+std::string GuestText(const uint8_t* base, uint32_t addr) {
+  std::string out;
+  if (!GuestPointer(addr)) return out;
+  for (uint32_t i = 0; i < 40; ++i) {
+    const char c = char(base[addr + i]);
+    if (c == 0) break;
+    if (c < 32 || c > 126) return std::string();
+    out += c;
+  }
+  return out;
+}
+
+// A script native that ran (mk9_native_log), with the VM's result register after it, its first argument and the
+// text it points at (directly, or through one pointer: a script string variable).
 void CaptureNative(const uint8_t* base, uint32_t native) {
   const uint32_t vm = Load32(base, kScriptVm);
-  char line[48];
-  const int n = std::snprintf(line, sizeof(line), "%llu %08x %x\n", static_cast<unsigned long long>(g_frame), native,
-                              GuestPointer(vm) ? Load32(base, vm + 28) : 0u);
+  const uint32_t arg = t_native_arg;
+  std::string text = GuestText(base, arg);
+  if (text.empty() && GuestPointer(arg)) text = GuestText(base, Load32(base, arg));
+  char line[128];
+  const int n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s\n", static_cast<unsigned long long>(g_frame),
+                              native, GuestPointer(vm) ? Load32(base, vm + 28) : 0u, arg, text.c_str());
   std::lock_guard lock(g_mutex);
   std::fwrite(line, 1, size_t(n), g_native_file);
 }

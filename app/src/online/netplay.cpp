@@ -171,10 +171,11 @@ REXCVAR_DEFINE_STRING(mk9_net_input_replay, "", "MK9 Online",
                       "that parted run again on the same path");
 REXCVAR_DEFINE_BOOL(mk9_watch_catch_up, true, "MK9 Online",
                     "A spectator far behind the match catches up in the menus (frames hidden, fast and muted)");
-REXCVAR_DEFINE_BOOL(mk9_net_phase_align, false, "MK9 Online",
+REXCVAR_DEFINE_BOOL(mk9_net_phase_align, true, "MK9 Online",
                     "In a fight, a side whose frames start ahead of the other's by part of a frame (the two machines' "
                     "start of the same frame, from the packets) moves its 60 Hz grid back a little each second: the two "
-                    "see each other's inputs equally late (PLAN-0.4 C1; off until measured on a machine at 60 fps)");
+                    "see each other's inputs equally late (PLAN-0.4 C1; measured 2026-11-12 at 60 fps, RTT ~120 ms: the "
+                    "phase from +-13 to +-3.5 ms, the side with more frames run again 10-20 % fewer, the total the same)");
 REXCVAR_DEFINE_STRING(mk9_net_replay, "", "MK9 Online",
                       "A session recording (logs\\session_*.mk9net) played back from the game's start, as a spectator "
                       "watches a match: the menus fast and muted, the fights at their pace (F1 > Replays)");
