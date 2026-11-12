@@ -704,4 +704,8 @@ bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to
 
 bool FileSha256(const std::filesystem::path& file, uint8_t out[32]) { return Sha256(file, out); }
 
+bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error) {
+  return HttpGet(url, sink, nullptr, error);
+}
+
 }  // namespace mk9::updater

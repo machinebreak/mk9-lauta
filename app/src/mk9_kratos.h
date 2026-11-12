@@ -1,12 +1,14 @@
 // mk9-lauta: Kratos, the PS3 version's guest fighter, from the community's Xbox 360 port
-// (github.com/eLGatoRDV/mk9-kratos-xbox360, release v1.0). Nothing of his is distributed with this project: the player
-// installs the port's package into their own game files (tools/kratos/kratos_install.py), and this build then does
-// what the port's patched default.xex does (kratos.toml) and shows the game the port's DLC package.
+// (github.com/eLGatoRDV/mk9-kratos-xbox360, release v1.0). He comes with the game by himself: the first start without
+// him downloads the port's release zip from that repository in the background (StartFetch; checked by its SHA-256),
+// and the next start installs it into the player's game files before the game opens any file (AtStart, ~1.5 s). This
+// project hosts none of his files. Then this build does what the port's patched default.xex does (kratos.toml) and
+// shows the game the port's DLC package.
 //
 // Installed, the game files hold: Kratos' 12 packages and his 3 sound banks in Asset/, the Coalesced.ini that registers
-// him (and an Xbox360TOC.txt that lists his packages), and the DLC package's files in
+// him (and an Xbox360TOC.txt that lists his packages), the DLC package's files in
 // dlc/0000000000000000/575207FD/00000002/KRATOS/ (as on the console's drive; the SDK's content manager reads DLC from
-// the cvar dlc_root, set here to that dlc folder).
+// the cvar dlc_root, set here to that dlc folder), and the disc's Coalesced.ini and TOC in kratos_backup/.
 
 #pragma once
 
@@ -17,8 +19,9 @@
 
 namespace mk9::kratos {
 
-// At the start, before the game (and before the file check): whether Kratos is in these game files. If he is, the
-// content manager gets his DLC folder and the two code changes are on; a partial install is logged and left off.
+// At the start, before the game (and before the file check): the downloaded zip installed if he is not in these game
+// files yet (not in an online session's game: its rival checked what this one had), then whether he is. If he is,
+// the content manager gets his DLC folder and the two code changes are on; a partial install is logged and left off.
 void AtStart(const std::filesystem::path& game_root);
 
 // Kratos is in this game (fixed at the start). The online games compare it: both must have him or neither.
@@ -28,27 +31,16 @@ bool Installed();
 // files: the file check takes it as well as the disc's.
 bool PatchedSize(std::string_view path, uint64_t size);
 
-// Some of his files are in the game files but not all he needs (the start said what is missing in the log).
-bool Partial();
+// Once the game runs (the window exists): without him and without the zip, its download starts on a thread of its own
+// (not in an online session's game nor in a scripted test; mk9_kratos_auto).
+void StartFetch();
 
-// F2 > Kratos (mk9_kratos_install.cpp, PC). Install: the player picks the port's release zip
-// (Kratos-MK9-360-Share.zip) or its unpacked folder, and on a thread of its own the same steps as
-// tools/kratos/kratos_install.py are made in the game files, each checked; the disc's Coalesced.ini and Xbox360TOC.txt
-// are kept in game_root/kratos_backup. Remove: at the next start, before the game opens any file (AtStart), his files
-// go and the two kept ones come back. Both take effect at a restart.
-struct InstallStatus {
-  bool busy = false;
-  bool done = false;   // installed: restart to play with him
-  float progress = 0;  // 0-1 while busy
-  std::string step;    // what it is doing, or what failed
-  bool failed = false;
+// The download, for the main menu's corner: downloading (progress 0-1), or done (he comes at the next start).
+struct Fetch {
+  bool downloading = false;
+  bool ready = false;
+  float progress = 0;
 };
-void ChooseAndInstall();
-void InstallFrom(const std::filesystem::path& zip_or_folder);  // tests: mk9_kratos_install
-InstallStatus Status();
-void RemoveAtNextStart();
-bool RemovePending();
-// Called by AtStart: a removal asked for at the last run.
-void RemoveIfAsked(const std::filesystem::path& game_root);
+Fetch FetchStatus();
 
 }  // namespace mk9::kratos

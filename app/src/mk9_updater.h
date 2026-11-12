@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace mk9::updater {
@@ -45,5 +46,7 @@ std::string LogsFolder();
 // tar, else PowerShell), and a file's SHA-256.
 bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to);
 bool FileSha256(const std::filesystem::path& file, uint8_t out[32]);
+// A GET over HTTPS (redirects followed), its body to 'sink' as it comes (false from it stops); error: why it failed.
+bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error);
 
 }  // namespace mk9::updater

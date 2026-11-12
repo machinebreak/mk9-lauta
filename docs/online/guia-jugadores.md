@@ -175,23 +175,21 @@ al volver a abrir el juego.
   con 220 ms, 4 con 260 ms, hasta 7 con más de 340 ms) para que los personajes no "salten" cuando llegan los botones
   del otro, y lo sigue ajustando toda la pelea si el ping cambia. Con un número fijo tus golpes salen siempre con ese
   retraso.
-- **Kratos**: instalar o desinstalar a Kratos (ver abajo).
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 
 ## Kratos
 
-Kratos (el invitado de la versión de PS3) se puede agregar con el port de la comunidad para Xbox 360
+Kratos (el invitado de la versión de PS3) viene solo, con el port de la comunidad para Xbox 360
 ([eLGatoRDV/mk9-kratos-xbox360](https://github.com/eLGatoRDV/mk9-kratos-xbox360)): modelo, combos, especiales, X-Ray,
-las dos Fatalities, Babality, los dos trajes y su sonido. No viene con el juego:
+las dos Fatalities, Babality, los dos trajes y su sonido. No tenés que hacer nada:
 
-1. Bajá **Kratos-MK9-360-Share.zip** de la página del port (**F2 > Kratos > Bajar el port** te lleva).
-2. **F2 > Kratos > Instalar desde el zip…** y elegí ese zip. El juego lo instala en tus archivos del juego (guarda una
-   copia de los dos que cambia) y te pide reiniciar.
-3. Kratos aparece en la selección de personajes.
+1. La primera vez que abrís el juego se descarga (unos 96 MB, mientras jugás). Abajo a la derecha del menú principal
+   dice **"Descargando a Kratos…"** y después **"Kratos listo"**.
+2. La próxima vez que abrís el juego se instala solo (un par de segundos) y Kratos aparece en la selección de
+   personajes: en la fila de los extras (abajo a la izquierda, al lado de Freddy).
 
-**Desinstalar** lo saca al reiniciar y deja los archivos como estaban. Para jugar online con Kratos tu rival también
-tiene que tenerlo instalado (y si no lo tiene ninguno, igual): la sala avisa si no coinciden y la pelea no arranca. Lo
-mismo para mirar una partida.
+Para jugar online, los dos tienen que tener a Kratos (o ninguno de los dos): si a tu rival todavía no le terminó la
+descarga, la sala lo avisa y la pelea no arranca hasta que reinicie el juego. Lo mismo para mirar una partida.
 
 ## Actualizaciones
 

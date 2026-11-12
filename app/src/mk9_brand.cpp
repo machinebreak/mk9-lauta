@@ -11,10 +11,12 @@
 #include <iterator>
 #include <mutex>
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
 #include "first_run_ui.h"
+#include "mk9_kratos.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
 #include "online/fight_state.h"
@@ -343,6 +345,21 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
                     second);
       list->AddText(strong, second_size, ImVec2(row_x + first_size.x, second_y), Faded(IM_COL32(236, 232, 226, 255)),
                     second);
+      // mk9-lauta (2026-11-12): Kratos on his way (mk9_kratos.h), right-aligned above the caption
+      const kratos::Fetch fetch = kratos::FetchStatus();
+      if (fetch.downloading || fetch.ready) {
+        const std::string line =
+            fetch.ready ? std::string(T("Kratos listo: aparece la próxima vez que abras el juego"))
+                        : fmt::format(fmt::runtime(T("Descargando a Kratos… {}%")),
+                                      int(std::clamp(fetch.progress, 0.0f, 1.0f) * 100.0f));
+        const float size = std::round(caption * 0.62f);
+        const ImVec2 line_size = strong->CalcTextSizeA(size, FLT_MAX, 0.0f, line.c_str());
+        const ImVec2 at(right - line_size.x, caption_y - line_size.y - std::round(6.0f * s));
+        ImDrawList* front = ImGui::GetForegroundDrawList();
+        front->AddText(strong, size, ImVec2(at.x + d, at.y + d), Faded(IM_COL32(0, 0, 0, 200)), line.c_str());
+        front->AddText(strong, size, at, Faded(fetch.ready ? IM_COL32(120, 230, 130, 255) : IM_COL32(236, 232, 226, 255)),
+                       line.c_str());
+      }
       // the buttons: the networks' names alone
       const Social order[] = {Social::kDiscord, Social::kWhatsApp, Social::kInstagram,
                               Social::kKick,    Social::kYouTube,  Social::kX};

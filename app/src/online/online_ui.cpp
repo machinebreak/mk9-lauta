@@ -1478,10 +1478,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
             : info.end_reason == netplay::EndReason::kFailed ? T("No se pudo leer el replay.")
                                                              : T("El replay terminó.");
     } else if (info.watching) {
-      if (room.watch_mods == "kratos") why = T("La partida se juega con Kratos: para mirarla hay que instalarlo (F2 > Kratos).");
+      if (room.watch_mods == "kratos")
+        why = T("La partida se juega con Kratos y vos todavía no lo tenés: se descarga solo; cuando termine, reiniciá "
+                "el juego.");
       else if (!room.watch_mods.empty())
-        why = T("La partida se juega sin Kratos y vos lo tenés instalado: para mirarla hay que tener lo mismo que los "
-                "jugadores.");
+        why = T("Los jugadores de esta partida todavía no tienen a Kratos: para mirarla hay que tener lo mismo que "
+                "ellos.");
       else if (room.watch_full) why = T("La sala ya tiene el máximo de espectadores.");
       else if (info.end_reason == netplay::EndReason::kFailed) why = T("No se pudo traer la partida.");
       else if (info.end_reason == netplay::EndReason::kOtherVersion)

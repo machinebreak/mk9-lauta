@@ -15,6 +15,10 @@
 REXCVAR_DEFINE_STRING(mk9_kratos_install, "", "MK9 Online",
                       "Tests: the Kratos port's release zip (or its folder) installed into the game files at the start")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(mk9_kratos_auto, true, "MK9 Online",
+                    "Kratos comes by himself: the port's zip downloaded in the background and installed at the next "
+                    "start (false: never; tests)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace mk9::kratos {
 namespace {
@@ -38,16 +42,27 @@ std::atomic<uint64_t> g_checks_skipped{0};
 std::atomic<uint64_t> g_null_calls{0};
 
 bool InstallNow(const std::filesystem::path& from);
+void InstallDownloaded();
+
+// This game is an online session's (started again joined to a room, watching, or a replay): its content was what the
+// room compared, so nothing is installed nor downloaded in it.
+bool SessionGame() {
+  for (const char* name : {"mk9_net_room", "mk9_net_role", "mk9_net_replay"}) {
+    if (!rex::cvar::GetFlagByName(name).empty()) return true;
+  }
+  return false;
+}
 
 }  // namespace
 
 void AtStart(const std::filesystem::path& game_root) {
   if (game_root.empty()) return;
   g_game_root = game_root;
-  RemoveIfAsked(game_root);
   if (const std::string test = REXCVAR_GET(mk9_kratos_install); !test.empty()) {
     REXLOG_INFO("[kratos] installing {} (mk9_kratos_install)", test);
     InstallNow(rex::to_path(test));
+  } else if (!SessionGame()) {
+    InstallDownloaded();  // the zip a run before downloaded, when he is not here yet
   }
   std::error_code ec;
   std::vector<std::string> missing;
@@ -93,7 +108,6 @@ void AtStart(const std::filesystem::path& game_root) {
 
 bool Installed() { return g_installed.load(std::memory_order_relaxed); }
 
-bool Partial() { return g_packages.load(std::memory_order_relaxed) && !Installed(); }
 
 bool PatchedSize(std::string_view path, uint64_t size) {
   if (!g_packages.load(std::memory_order_relaxed)) return false;
@@ -198,14 +212,7 @@ const Edit kEdits[] = {
     {"Xe-MK9Game.ini", "[Player.DownloadContentUnlocked]", {"kratos=TRUE", "kratos_b=TRUE"}, {}},
 };
 
-std::mutex g_status_mutex;
-InstallStatus g_status;
-
-void SetStep(const std::string& step, float progress) {
-  std::lock_guard<std::mutex> lock(g_status_mutex);
-  g_status.step = step;
-  g_status.progress = progress;
-}
+void SetStep(const std::string& step, float) { REXLOG_INFO("[kratos] {}", step); }
 
 std::string Hex(const uint8_t digest[32]) {
   static const char* const kDigits = "0123456789abcdef";
@@ -564,16 +571,11 @@ bool InstallSteps(const fs::path& from, std::string& why) {
   // 6. the DLC package
   SetStep("Instalando el paquete DLC…", 0.72f);
   if (!ExtractDlc(dlc_package, PackageFolder(game), why)) return false;
-  SetStep("Kratos instalado: reiniciá el juego para jugar con él.", 1.0f);
+  SetStep("Kratos instalado.", 1.0f);
   return true;
 }
 
 bool InstallNow(const fs::path& from) {
-  {
-    std::lock_guard<std::mutex> lock(g_status_mutex);
-    g_status = InstallStatus{};
-    g_status.busy = true;
-  }
   std::string why;
   const bool ok = InstallSteps(from, why);
   if (ok) {
@@ -581,97 +583,119 @@ bool InstallNow(const fs::path& from) {
   } else {
     REXLOG_ERROR("[kratos] the install from {} failed: {}", rex::path_to_utf8(from), why);
   }
-  std::lock_guard<std::mutex> lock(g_status_mutex);
-  g_status.busy = false;
-  g_status.done = ok;
-  g_status.failed = !ok;
-  if (!ok) g_status.step = "No se pudo instalar: " + why + ".";
   return ok;
 }
 
-fs::path RemoveMarker(const fs::path& game_root) { return game_root / "kratos_backup" / "remove_at_start"; }
+// The port's release (eLGatoRDV/mk9-kratos-xbox360 v1.0), as GitHub lists it.
+constexpr const char* kZipUrl =
+    "https://github.com/eLGatoRDV/mk9-kratos-xbox360/releases/download/v1.0/Kratos-MK9-360-Share.zip";
+constexpr const char* kZipSha = "47bb63c6e886a7cc7f8a8a1be6a01497eaac4d7ca598d870e525b7f3274b8ef9";
+constexpr uint64_t kZipSize = 95943617;
+
+fs::path ZipPath() {
+  return rex::filesystem::GetExecutableFolder() / "kratos" / "Kratos-MK9-360-Share.zip";
+}
+
+// Whole and the port's (its size, then its SHA-256).
+bool ZipGood(const fs::path& zip) {
+  std::error_code ec;
+  return fs::file_size(zip, ec) == kZipSize && !ec && ShaOf(zip) == kZipSha;
+}
+
+void InstallDownloaded() {
+  std::error_code ec;
+  const fs::path zip = ZipPath();
+  if (!fs::exists(zip, ec)) return;
+  // already here (a game root that had him): the zip is not needed any more
+  const bool complete = g_game_root.empty() ? false : [&] {
+    for (const char* name : kPackages) {
+      if (!fs::is_regular_file(g_game_root / "Asset" / name, ec)) return false;
+    }
+    return fs::is_regular_file(PackageFolder(g_game_root) / "Kratos__Xe-MK9Game.ini", ec) &&
+           ShaOf(g_game_root / "Config" / "Coalesced.ini") == kKratosCoalescedSha;
+  }();
+  if (!complete) {
+    if (!ZipGood(zip)) {
+      REXLOG_WARN("[kratos] {} is not the port's release (size or SHA-256): deleted, downloaded again",
+                  rex::path_to_utf8(zip));
+    } else if (!InstallNow(zip)) {
+      return;  // kept: the log says why (the next start tries again, with no download)
+    }
+  }
+  fs::remove(zip, ec);
+}
+
+std::mutex g_fetch_mutex;
+Fetch g_fetch;
+
+void FetchWorker() {
+  const fs::path zip = ZipPath();
+  fs::path partial = zip;
+  partial += L".partial";
+  std::error_code ec;
+  fs::create_directories(zip.parent_path(), ec);
+  FILE* out = _wfopen(partial.c_str(), L"wb");
+  if (!out) {
+    REXLOG_ERROR("[kratos] could not write {}", rex::path_to_utf8(partial));
+    std::lock_guard<std::mutex> lock(g_fetch_mutex);
+    g_fetch.downloading = false;
+    return;
+  }
+  REXLOG_INFO("[kratos] downloading the port's release ({} MB) from {}", kZipSize >> 20, kZipUrl);
+  uint64_t got = 0;
+  std::string error;
+  const bool ok = updater::DownloadTo(
+      kZipUrl,
+      [&](const char* data, size_t n) {
+        if (std::fwrite(data, 1, n, out) != n) return false;
+        got += n;
+        std::lock_guard<std::mutex> lock(g_fetch_mutex);
+        g_fetch.progress = float(double(got) / double(kZipSize));
+        return true;
+      },
+      &error);
+  std::fclose(out);
+  bool ready = false;
+  if (!ok) {
+    REXLOG_WARN("[kratos] the download stopped ({}): it starts again at the next start", error);
+  } else if (!ZipGood(partial)) {
+    REXLOG_ERROR("[kratos] the download is not the port's release (size or SHA-256): discarded");
+  } else {
+    ready = MoveFileExW(partial.c_str(), zip.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+    if (ready) REXLOG_INFO("[kratos] downloaded: he comes at the next start");
+  }
+  if (!ready) fs::remove(partial, ec);
+  std::lock_guard<std::mutex> lock(g_fetch_mutex);
+  g_fetch.downloading = false;
+  g_fetch.ready = ready;
+}
 
 }  // namespace
 
-void InstallFrom(const fs::path& zip_or_folder) {
-  {
-    std::lock_guard<std::mutex> lock(g_status_mutex);
-    if (g_status.busy) return;
-    g_status.busy = true;
+void StartFetch() {
+  if (Installed() || g_game_root.empty() || SessionGame() || !REXCVAR_GET(mk9_kratos_auto)) return;
+  // tests: never a download (no lobby, a scripted pad, an online test)
+  if (rex::cvar::GetFlagByName("mk9_lobby_url") == "off" || !rex::cvar::GetFlagByName("mk9_input_script").empty() ||
+      !rex::cvar::GetFlagByName("mk9_input_script_file").empty() ||
+      !rex::cvar::GetFlagByName("mk9_online_test").empty()) {
+    return;
   }
-  std::thread([zip_or_folder] { InstallNow(zip_or_folder); }).detach();
-}
-
-void ChooseAndInstall() {
+  std::error_code ec;
+  if (fs::exists(ZipPath(), ec)) return;  // downloaded, its install failed at this start (the log says why)
   {
-    std::lock_guard<std::mutex> lock(g_status_mutex);
-    if (g_status.busy) return;
+    std::lock_guard<std::mutex> lock(g_fetch_mutex);
+    if (g_fetch.downloading || g_fetch.ready) return;
+    g_fetch.downloading = true;
   }
-  const HWND owner = GetForegroundWindow();
-  std::thread([owner] {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    std::wstring path;
-    IFileOpenDialog* dialog = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
-      const COMDLG_FILTERSPEC types[] = {{L"Kratos-MK9-360-Share.zip", L"*.zip"}, {L"*.*", L"*.*"}};
-      dialog->SetFileTypes(2, types);
-      dialog->SetTitle(L"Elegí el zip del port de Kratos (Kratos-MK9-360-Share.zip)");
-      DWORD options = 0;
-      if (SUCCEEDED(dialog->GetOptions(&options))) dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
-      if (SUCCEEDED(dialog->Show(owner))) {
-        IShellItem* item = nullptr;
-        if (SUCCEEDED(dialog->GetResult(&item)) && item) {
-          PWSTR chosen = nullptr;
-          if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &chosen)) && chosen) {
-            path = chosen;
-            CoTaskMemFree(chosen);
-          }
-          item->Release();
-        }
-      }
-      dialog->Release();
-    }
-    CoUninitialize();
-    if (!path.empty()) InstallNow(fs::path(path));
+  std::thread([] {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    FetchWorker();
   }).detach();
 }
 
-InstallStatus Status() {
-  std::lock_guard<std::mutex> lock(g_status_mutex);
-  return g_status;
-}
-
-void RemoveAtNextStart() {
-  if (g_game_root.empty()) return;
-  std::error_code ec;
-  fs::create_directories(RemoveMarker(g_game_root).parent_path(), ec);
-  std::ofstream(RemoveMarker(g_game_root)) << "remove\n";
-  REXLOG_INFO("[kratos] removal asked for: at the next start");
-}
-
-bool RemovePending() {
-  std::error_code ec;
-  return !g_game_root.empty() && fs::exists(RemoveMarker(g_game_root), ec);
-}
-
-void RemoveIfAsked(const fs::path& game_root) {
-  std::error_code ec;
-  if (!fs::exists(RemoveMarker(game_root), ec)) return;
-  const fs::path backup = game_root / "kratos_backup";
-  // the disc's two back (only the right ones), then his files
-  if (ShaOf(backup / "Coalesced.ini") == kDiscCoalescedSha && ShaOf(backup / "Xbox360TOC.txt") == kDiscTocSha) {
-    std::string coal, toc;
-    if (ReadAll(backup / "Coalesced.ini", coal) && ReadAll(backup / "Xbox360TOC.txt", toc)) {
-      WriteNew(game_root / "Config" / "Coalesced.ini", coal);
-      WriteNew(game_root / "Xbox360TOC.txt", toc);
-    }
-  } else {
-    REXLOG_ERROR("[kratos] removal: the kept Coalesced.ini / Xbox360TOC.txt are not the disc's; left as they are");
-  }
-  for (const char* name : kPackages) fs::remove(game_root / "Asset" / name, ec);
-  fs::remove_all(PackageFolder(game_root), ec);
-  fs::remove_all(backup, ec);
-  REXLOG_INFO("[kratos] removed from {}", rex::path_to_utf8(game_root));
+Fetch FetchStatus() {
+  std::lock_guard<std::mutex> lock(g_fetch_mutex);
+  return g_fetch;
 }
 
 }  // namespace mk9::kratos
@@ -681,13 +705,10 @@ void RemoveIfAsked(const fs::path& game_root) {
 namespace mk9::kratos {
 namespace {
 bool InstallNow(const std::filesystem::path&) { return false; }
+void InstallDownloaded() {}
 }  // namespace
-void InstallFrom(const std::filesystem::path&) {}
-void ChooseAndInstall() {}
-InstallStatus Status() { return {}; }
-void RemoveAtNextStart() {}
-bool RemovePending() { return false; }
-void RemoveIfAsked(const std::filesystem::path&) {}
+void StartFetch() {}
+Fetch FetchStatus() { return {}; }
 }  // namespace mk9::kratos
 
 #endif

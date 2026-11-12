@@ -206,6 +206,8 @@ class Mk9App : public rex::ReXApp {
     app_context().CallInUIThreadDeferred(
         [this] { window()->SetTitle("mk9-lauta " MK9_LAUTA_VERSION " - Mortal Kombat Komplete Edition"); });
 #endif
+    // mk9-lauta: Kratos comes by himself: without him, the port's zip downloads now (installed at the next start)
+    mk9::kratos::StartFetch();
     mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
     // mk9-nx online (2026-11-07): the PC sampling profiler and stack dumper (sa2_cpu_profile_from_s, sa2_stack_dump_s)
     // were built but never started.

@@ -211,18 +211,29 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"La partida se juega con otra versión de mk9-lauta: para mirarla hay que tener la misma (F2 > Acerca de).",
        {"The match is played with another version of mk9-lauta: to watch it you need the same one (F2 > About).",
         "A partida é jogada com outra versão do mk9-lauta: para assisti-la é preciso ter a mesma (F2 > Sobre)."}},
-      {"Vos tenés Kratos instalado y {} no: para pelear online tienen que tener los dos lo mismo (F2 > Kratos).",
-       {"You have Kratos installed and {} does not: to fight online you both need the same (F2 > Kratos).",
-        "Você tem o Kratos instalado e {} não: para lutar online os dois precisam ter o mesmo (F2 > Kratos)."}},
-      {"{} tiene Kratos instalado y vos no: para pelear online tienen que tener los dos lo mismo (F2 > Kratos).",
-       {"{} has Kratos installed and you do not: to fight online you both need the same (F2 > Kratos).",
-        "{} tem o Kratos instalado e você não: para lutar online os dois precisam ter o mesmo (F2 > Kratos)."}},
-      {"La partida se juega con Kratos: para mirarla hay que instalarlo (F2 > Kratos).",
-       {"The match is played with Kratos: install him to watch it (F2 > Kratos).",
-        "A partida é jogada com o Kratos: para assistir, instale-o (F2 > Kratos)."}},
-      {"La partida se juega sin Kratos y vos lo tenés instalado: para mirarla hay que tener lo mismo que los jugadores.",
-       {"The match is played without Kratos and you have him installed: to watch it you need what the players have.",
-        "A partida é jogada sem o Kratos e você o tem instalado: para assistir é preciso ter o mesmo que os jogadores."}},
+      {"{} todavía no tiene a Kratos (se le descarga solo): cuando le termine, tiene que reiniciar el juego para pelear "
+       "online con vos.",
+       {"{} does not have Kratos yet (he downloads by himself): once it is done, they must restart the game to fight "
+        "you online.",
+        "{} ainda não tem o Kratos (ele baixa sozinho): quando terminar, precisa reiniciar o jogo para lutar online "
+        "com você."}},
+      {"{} ya tiene a Kratos y vos todavía no: se está descargando solo (abajo a la derecha del menú). Cuando termine, "
+       "reiniciá el juego.",
+       {"{} already has Kratos and you do not yet: he is downloading by himself (bottom right of the menu). When it is "
+        "done, restart the game.",
+        "{} já tem o Kratos e você ainda não: ele está baixando sozinho (embaixo à direita do menu). Quando terminar, "
+        "reinicie o jogo."}},
+      {"La partida se juega con Kratos y vos todavía no lo tenés: se descarga solo; cuando termine, reiniciá el juego.",
+       {"The match is played with Kratos and you do not have him yet: he downloads by himself; when it is done, "
+        "restart the game.",
+        "A partida é jogada com o Kratos e você ainda não o tem: ele baixa sozinho; quando terminar, reinicie o jogo."}},
+      {"Los jugadores de esta partida todavía no tienen a Kratos: para mirarla hay que tener lo mismo que ellos.",
+       {"The players of this match do not have Kratos yet: to watch it you need what they have.",
+        "Os jogadores desta partida ainda não têm o Kratos: para assistir é preciso ter o mesmo que eles."}},
+      {"Kratos listo: aparece la próxima vez que abras el juego",
+       {"Kratos is ready: he appears the next time you open the game",
+        "Kratos pronto: ele aparece na próxima vez que você abrir o jogo"}},
+      {"Descargando a Kratos… {}%", {"Downloading Kratos… {}%", "Baixando o Kratos… {}%"}},
       {"La sala ya tiene el máximo de espectadores.",
        {"The room already has as many spectators as it takes.", "A sala já tem o máximo de espectadores."}},
       {"La partida que mirabas terminó.", {"The match you were watching ended.", "A partida que você assistia terminou."}},

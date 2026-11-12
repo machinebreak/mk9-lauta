@@ -159,11 +159,11 @@ void TakeMods(const json& d) {
   if (!differs) return;
   const std::string other = g.s.other.empty() ? T("El rival") : g.s.other;
   const std::string line = Mods() == "kratos"
-                               ? Tf("Vos tenés Kratos instalado y {} no: para pelear online tienen que tener los dos "
-                                    "lo mismo (F2 > Kratos).",
+                               ? Tf("{} todavía no tiene a Kratos (se le descarga solo): cuando le termine, tiene que "
+                                    "reiniciar el juego para pelear online con vos.",
                                     other)
-                               : Tf("{} tiene Kratos instalado y vos no: para pelear online tienen que tener los dos lo "
-                                    "mismo (F2 > Kratos).",
+                               : Tf("{} ya tiene a Kratos y vos todavía no: se está descargando solo (abajo a la "
+                                    "derecha del menú). Cuando termine, reiniciá el juego.",
                                     other);
   AddLine("", line, true);
   g.s.status = line;
