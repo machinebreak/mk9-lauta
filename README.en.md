@@ -4,7 +4,7 @@
 
 <h3>Mortal Kombat Komplete Edition, native on PC, with rollback netcode</h3>
 
-<p>Made by <b>Lauta</b> · free, no ads, no accounts</p>
+<p>Made by <b>Lauta</b> · Non-profit.</p>
 
 <a href="https://github.com/machinebreak/mk9-lauta/releases/latest"><img width="330" src="https://img.shields.io/badge/Download-for%20Windows-B71C1C?style=for-the-badge&logo=github&logoColor=white" alt="Download for Windows"></a>
 
@@ -114,7 +114,8 @@ packs a release (the program, the Visual C++ runtime, the guide and the licenses
 **MK9 by Lauta** is a project by **Lauta** ([machinebreak](https://github.com/machinebreak) on GitHub), built on the
 work of many people who share their code:
 
-- [Thorhax](https://github.com/Thorhax)'s static recompilation of MK9 and the projects it comes from.
+- [mk9-nx](https://github.com/Thorhax/mk9-nx), [Thorhax](https://github.com/Thorhax)'s static recompilation of MK9, and
+  the projects it comes from.
 - The [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) by Tom Clay, with parts of [Xenia](https://xenia.jp).
 - [reNut](https://github.com/masterspike52/reNut) by masterspike52, the renderer, used with its author's permission.
 - [plume](https://github.com/renderbag/plume), [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
@@ -122,8 +123,7 @@ work of many people who share their code:
   and [Dear ImGui](https://github.com/ocornut/imgui).
 - [eLGatoRDV](https://github.com/eLGatoRDV/mk9-kratos-xbox360)'s Xbox 360 port of Kratos.
 
-The full list, with every license, is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Developed with the help of
-AI tools.
+The full list, with every license, is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License and legal
 

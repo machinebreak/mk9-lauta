@@ -204,11 +204,16 @@ licencias; ningún archivo del juego).
 **MK9 by Lauta** es un proyecto de **Lauta** ([machinebreak](https://github.com/machinebreak) en GitHub), y se apoya
 en el trabajo de mucha gente que comparte su código:
 
+- [mk9-nx](https://github.com/Thorhax/mk9-nx), la recompilación estática de MK9 de [Thorhax](https://github.com/Thorhax),
+  y los proyectos de los que viene.
 - El [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) de Tom Clay, con partes de [Xenia](https://xenia.jp).
 - [reNut](https://github.com/masterspike52/reNut) de masterspike52, el renderizador, usado con permiso de su autor.
 - [plume](https://github.com/renderbag/plume), [XenosRecomp](https://github.com/hedge-dev/XenosRecomp),
   [libjuice](https://github.com/paullouisageneau/libjuice), [SDL](https://www.libsdl.org), [FFmpeg](https://ffmpeg.org)
   y [Dear ImGui](https://github.com/ocornut/imgui).
+- El port de Kratos a Xbox 360 de [eLGatoRDV](https://github.com/eLGatoRDV/mk9-kratos-xbox360).
+
+La lista completa, con la licencia de cada uno, está en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Licencia y aviso legal
 
