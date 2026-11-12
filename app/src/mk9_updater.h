@@ -47,6 +47,8 @@ std::string LogsFolder();
 bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to);
 bool FileSha256(const std::filesystem::path& file, uint8_t out[32]);
 // A GET over HTTPS (redirects followed), its body to 'sink' as it comes (false from it stops); error: why it failed.
-bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error);
+// from: the body from that byte on (a download that goes on where it stopped).
+bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error,
+                uint64_t from = 0);
 
 }  // namespace mk9::updater

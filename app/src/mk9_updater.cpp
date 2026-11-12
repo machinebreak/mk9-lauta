@@ -131,7 +131,7 @@ uint64_t VersionNumber(std::string v) {
 
 // GET over HTTPS, the body to 'sink' as it comes (false from it stops); total: the Content-Length when there is one.
 bool HttpGet(const std::string& url, const std::function<bool(const char*, size_t)>& sink, uint64_t* total,
-             std::string* error) {
+             std::string* error, uint64_t from = 0) {
   const std::wstring wurl = Wide(url);
   URL_COMPONENTS parts{sizeof(parts)};
   wchar_t host[256] = {}, path[2048] = {};
@@ -160,13 +160,14 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
     if (HINTERNET request = WinHttpOpenRequest(connect, L"GET", object.c_str(), nullptr, WINHTTP_NO_REFERER,
                                                WINHTTP_DEFAULT_ACCEPT_TYPES,
                                                parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0)) {
-      const wchar_t* headers = L"Accept: application/vnd.github+json, application/octet-stream\r\n";
-      if (WinHttpSendRequest(request, headers, DWORD(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+      std::wstring headers = L"Accept: application/vnd.github+json, application/octet-stream\r\n";
+      if (from) headers += L"Range: bytes=" + std::to_wstring(from) + L"-\r\n";  // mk9-lauta: go on from there
+      if (WinHttpSendRequest(request, headers.c_str(), DWORD(-1), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
           WinHttpReceiveResponse(request, nullptr)) {
         DWORD code = 0, size = sizeof(code);
         WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
                             &code, &size, WINHTTP_NO_HEADER_INDEX);
-        if (code != 200) {
+        if (code != 200 && !(from && code == 206)) {
           *error = "respuesta " + std::to_string(code);
         } else {
           if (total) {
@@ -704,8 +705,9 @@ bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to
 
 bool FileSha256(const std::filesystem::path& file, uint8_t out[32]) { return Sha256(file, out); }
 
-bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error) {
-  return HttpGet(url, sink, nullptr, error);
+bool DownloadTo(const std::string& url, const std::function<bool(const char*, size_t)>& sink, std::string* error,
+                uint64_t from) {
+  return HttpGet(url, sink, nullptr, error, from);
 }
 
 }  // namespace mk9::updater

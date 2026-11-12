@@ -359,6 +359,15 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
         front->AddText(strong, size, ImVec2(at.x + d, at.y + d), Faded(IM_COL32(0, 0, 0, 200)), line.c_str());
         front->AddText(strong, size, at, Faded(fetch.ready ? IM_COL32(120, 230, 130, 255) : IM_COL32(236, 232, 226, 255)),
                        line.c_str());
+        if (fetch.ready) {  // he comes with a restart: one click
+          const char* label = T("Reiniciar ahora");
+          const ImVec2 label_size = strong->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
+          const ImVec2 restart(label_size.x + std::round(24.0f * s), label_size.y + std::round(10.0f * s));
+          ImGui::SetCursorScreenPos(ImVec2(at.x - restart.x - std::round(12.0f * s), at.y - std::round(5.0f * s)));
+          ImGui::PushFont(strong, size);
+          if (ImGui::Button(label, restart)) updater::Restart();
+          ImGui::PopFont();
+        }
       }
       // the buttons: the networks' names alone
       const Social order[] = {Social::kDiscord, Social::kWhatsApp, Social::kInstagram,

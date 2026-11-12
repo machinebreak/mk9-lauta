@@ -43,6 +43,7 @@ std::atomic<uint64_t> g_null_calls{0};
 
 bool InstallNow(const std::filesystem::path& from);
 void InstallDownloaded();
+void FetchAtStart();
 
 // This game is an online session's (started again joined to a room, watching, or a replay): its content was what the
 // room compared, so nothing is installed nor downloaded in it.
@@ -62,7 +63,8 @@ void AtStart(const std::filesystem::path& game_root) {
     REXLOG_INFO("[kratos] installing {} (mk9_kratos_install)", test);
     InstallNow(rex::to_path(test));
   } else if (!SessionGame()) {
-    InstallDownloaded();  // the zip a run before downloaded, when he is not here yet
+    FetchAtStart();       // he is not here and not downloaded: downloaded now, with a window (the player may skip it)
+    InstallDownloaded();  // the zip, when he is not here yet
   }
   std::error_code ec;
   std::vector<std::string> missing;
@@ -152,6 +154,7 @@ bool Mk9KratosNullGuard(PPCRegister& r3) {
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <commctrl.h>
 #include <shobjidl.h>
 
 #include <cstdio>
@@ -169,6 +172,8 @@ bool Mk9KratosNullGuard(PPCRegister& r3) {
 #include <rex/filesystem/entry.h>
 #include <rex/filesystem/file.h>
 #include <rex/string/utf8.h>
+
+#include <fmt/format.h>
 
 #include "mk9_updater.h"
 
@@ -634,15 +639,17 @@ void FetchWorker() {
   partial += L".partial";
   std::error_code ec;
   fs::create_directories(zip.parent_path(), ec);
-  FILE* out = _wfopen(partial.c_str(), L"wb");
+  uint64_t got = fs::exists(partial, ec) ? fs::file_size(partial, ec) : 0;
+  if (ec || got >= kZipSize) got = 0;  // nothing usable there: from the start
+  FILE* out = _wfopen(partial.c_str(), got ? L"ab" : L"wb");
   if (!out) {
     REXLOG_ERROR("[kratos] could not write {}", rex::path_to_utf8(partial));
     std::lock_guard<std::mutex> lock(g_fetch_mutex);
     g_fetch.downloading = false;
     return;
   }
-  REXLOG_INFO("[kratos] downloading the port's release ({} MB) from {}", kZipSize >> 20, kZipUrl);
-  uint64_t got = 0;
+  REXLOG_INFO("[kratos] downloading the port's release ({} MB) from {}{}", kZipSize >> 20, kZipUrl,
+              got ? fmt::format(", on from {} MB", got >> 20) : std::string());
   std::string error;
   const bool ok = updater::DownloadTo(
       kZipUrl,
@@ -653,44 +660,176 @@ void FetchWorker() {
         g_fetch.progress = float(double(got) / double(kZipSize));
         return true;
       },
-      &error);
+      &error, got);
   std::fclose(out);
   bool ready = false;
   if (!ok) {
-    REXLOG_WARN("[kratos] the download stopped ({}): it starts again at the next start", error);
+    REXLOG_WARN("[kratos] the download stopped ({}): it goes on at the next start", error);
   } else if (!ZipGood(partial)) {
     REXLOG_ERROR("[kratos] the download is not the port's release (size or SHA-256): discarded");
   } else {
     ready = MoveFileExW(partial.c_str(), zip.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
     if (ready) REXLOG_INFO("[kratos] downloaded: he comes at the next start");
   }
-  if (!ready) fs::remove(partial, ec);
+  if (!ready && ok) fs::remove(partial, ec);  // a whole download that is not the port's: never kept
   std::lock_guard<std::mutex> lock(g_fetch_mutex);
   g_fetch.downloading = false;
   g_fetch.ready = ready;
 }
 
-}  // namespace
-
-void StartFetch() {
-  if (Installed() || g_game_root.empty() || SessionGame() || !REXCVAR_GET(mk9_kratos_auto)) return;
-  // tests: never a download (no lobby, a scripted pad, an online test)
+// The download may start: he is not here, no zip waits, not a session's game, not a test (no lobby, a scripted pad,
+// an online test), mk9_kratos_auto.
+bool FetchWanted() {
+  if (Installed() || g_game_root.empty() || SessionGame() || !REXCVAR_GET(mk9_kratos_auto)) return false;
   if (rex::cvar::GetFlagByName("mk9_lobby_url") == "off" || !rex::cvar::GetFlagByName("mk9_input_script").empty() ||
       !rex::cvar::GetFlagByName("mk9_input_script_file").empty() ||
       !rex::cvar::GetFlagByName("mk9_online_test").empty()) {
-    return;
+    return false;
   }
   std::error_code ec;
-  if (fs::exists(ZipPath(), ec)) return;  // downloaded, its install failed at this start (the log says why)
-  {
-    std::lock_guard<std::mutex> lock(g_fetch_mutex);
-    if (g_fetch.downloading || g_fetch.ready) return;
-    g_fetch.downloading = true;
-  }
+  return !fs::exists(ZipPath(), ec);  // downloaded already: installed at the start (or its failure logged)
+}
+
+bool StartFetchLocked() {
+  if (g_fetch.downloading || g_fetch.ready) return false;
+  g_fetch.downloading = true;
   std::thread([] {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     FetchWorker();
   }).detach();
+  return true;
+}
+
+// The window before the game: the download's bar, and a button to play without him meanwhile (the download goes on).
+constexpr int kIdSkip = 101;
+constexpr UINT_PTR kTimer = 1;
+struct FetchWindow {
+  HWND hwnd = nullptr, bar = nullptr, status = nullptr;
+  HFONT font = nullptr, title_font = nullptr;
+  UINT dpi = 96;
+  bool skipped = false;
+};
+FetchWindow* g_window = nullptr;
+
+LRESULT CALLBACK FetchWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+  FetchWindow& w = *g_window;
+  switch (msg) {
+    case WM_TIMER: {
+      const Fetch f = FetchStatus();
+      if (!f.downloading) {
+        DestroyWindow(hwnd);
+        return 0;
+      }
+      SendMessageW(w.bar, PBM_SETPOS, WPARAM(std::clamp(f.progress, 0.0f, 1.0f) * 1000.0f), 0);
+      const std::wstring text = std::to_wstring(int(f.progress * float(kZipSize) / 1000000.0f)) + L" de " +
+                                std::to_wstring(int((kZipSize + 500000) / 1000000)) + L" MB";
+      SetWindowTextW(w.status, text.c_str());
+      return 0;
+    }
+    case WM_COMMAND:
+      if (LOWORD(wparam) == kIdSkip) {
+        w.skipped = true;
+        DestroyWindow(hwnd);
+      }
+      return 0;
+    case WM_CLOSE:
+      w.skipped = true;
+      DestroyWindow(hwnd);
+      return 0;
+    case WM_CTLCOLORSTATIC:
+      SetBkMode(reinterpret_cast<HDC>(wparam), TRANSPARENT);
+      return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+    case WM_DESTROY:
+      KillTimer(hwnd, kTimer);
+      PostQuitMessage(0);
+      return 0;
+    default:
+      break;
+  }
+  return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+void RunFetchWindow(FetchWindow& w) {
+  SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES};
+  InitCommonControlsEx(&controls);
+  HINSTANCE instance = GetModuleHandleW(nullptr);
+  WNDCLASSEXW wc{sizeof(wc)};
+  wc.lpfnWndProc = FetchWindowProc;
+  wc.hInstance = instance;
+  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
+  wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
+  wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
+  wc.lpszClassName = L"mk9LautaKratos";
+  RegisterClassExW(&wc);
+  w.dpi = GetDpiForSystem();
+  auto scale = [&](int v) { return MulDiv(v, int(w.dpi), 96); };
+  const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+  RECT area{0, 0, scale(560), scale(230)};
+  AdjustWindowRectExForDpi(&area, style, FALSE, 0, w.dpi);
+  const int ww = area.right - area.left, wh = area.bottom - area.top;
+  w.hwnd = CreateWindowExW(0, wc.lpszClassName, L"MK9 Online by Lauta - Kratos", style,
+                           (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, (GetSystemMetrics(SM_CYSCREEN) - wh) / 2, ww, wh,
+                           nullptr, nullptr, instance, nullptr);
+  NONCLIENTMETRICSW metrics{sizeof(metrics)};
+  SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0, w.dpi);
+  metrics.lfMessageFont.lfHeight = -MulDiv(10, int(w.dpi), 72);
+  w.font = CreateFontIndirectW(&metrics.lfMessageFont);
+  LOGFONTW title = metrics.lfMessageFont;
+  title.lfHeight = -MulDiv(15, int(w.dpi), 72);
+  title.lfWeight = FW_BOLD;
+  w.title_font = CreateFontIndirectW(&title);
+  auto make = [&](const wchar_t* cls, const wchar_t* text, DWORD st, int x, int y, int cw, int ch, int id) {
+    HWND control = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | st, scale(x), scale(y), scale(cw), scale(ch),
+                                   w.hwnd, reinterpret_cast<HMENU>(intptr_t(id)), instance, nullptr);
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(w.font), TRUE);
+    return control;
+  };
+  HWND heading = make(L"STATIC", L"Descargando a Kratos", 0, 24, 16, 512, 30, 0);
+  SendMessageW(heading, WM_SETFONT, reinterpret_cast<WPARAM>(w.title_font), TRUE);
+  make(L"STATIC",
+       L"Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él. Si querés, "
+       L"podés jugar ya: se sigue descargando y aparece la próxima vez que abras el juego.",
+       0, 24, 52, 512, 56, 0);
+  w.bar = make(PROGRESS_CLASSW, L"", 0, 24, 118, 512, 20, 0);
+  SendMessageW(w.bar, PBM_SETRANGE32, 0, 1000);
+  w.status = make(L"STATIC", L"", SS_LEFT, 24, 146, 300, 22, 0);
+  make(L"BUTTON", L"Jugar sin Kratos por ahora", BS_PUSHBUTTON, 316, 176, 220, 34, kIdSkip);
+  ShowWindow(w.hwnd, SW_SHOW);
+  SetForegroundWindow(w.hwnd);
+  SetTimer(w.hwnd, kTimer, 150, nullptr);
+  MSG msg;
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    if (!IsDialogMessageW(w.hwnd, &msg)) {
+      TranslateMessage(&msg);
+      DispatchMessageW(&msg);
+    }
+  }
+  DeleteObject(w.font);
+  DeleteObject(w.title_font);
+}
+
+void FetchAtStart() {
+  if (!FetchWanted()) return;
+  {
+    std::lock_guard<std::mutex> lock(g_fetch_mutex);
+    if (!StartFetchLocked()) return;
+  }
+  FetchWindow window;
+  g_window = &window;
+  std::thread ui([&window] { RunFetchWindow(window); });  // a message loop of its own
+  ui.join();
+  g_window = nullptr;
+  REXLOG_INFO("[kratos] the start's window: {}", window.skipped ? "the player went on without him (the download goes on)"
+                                                                : "the download ended");
+}
+
+}  // namespace
+
+void StartFetch() {
+  if (!FetchWanted()) return;
+  std::lock_guard<std::mutex> lock(g_fetch_mutex);
+  StartFetchLocked();
 }
 
 Fetch FetchStatus() {
