@@ -78,8 +78,9 @@ foreach ($f in 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_ato
 # --- the guide, the notice, the game files' place ---
 $guide = Get-Content -Raw -Encoding UTF8 (Join-Path $root 'docs\online\guia-jugadores.md')
 $install = @"
-mk9-lauta v${version}: Mortal Kombat Komplete Edition para PC, con online con rollback
-https://github.com/machinebreak/mk9-lauta
+MK9 by Lauta ${version}: Mortal Kombat Komplete Edition para PC, con online y rollback
+Hecho por Lauta. Página oficial (lo único oficial, gratis): https://github.com/machinebreak/mk9-lauta
+Comunidad, rivales y ayuda: https://discord.gg/7hbqkDmKHA
 
 INSTALACIÓN
 ===========
@@ -99,8 +100,8 @@ Requisitos: Windows 10 u 11 de 64 bits, una placa de video compatible con Direct
 integradas) y 4 GB de RAM o más. La primera vez el juego elige la calidad según tu PC; se cambia en F2 > Gráficos
 (para PCs con poca placa de video: "Baja" o "Muy baja").
 
-Si algo falla, la carpeta logs tiene lo que pasó: mandá el último archivo mk9_*.log (y, si el juego se cerró de
-golpe, el crash_*.dmp de la misma hora).
+Si algo falla, la carpeta logs tiene lo que pasó: mandá en el Discord el último archivo mk9_*.log (y, si el juego
+se cerró de golpe, el crash_*.dmp de la misma hora).
 
 
 "@

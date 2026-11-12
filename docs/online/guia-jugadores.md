@@ -71,8 +71,9 @@ en la pelea.
   lenta"), no es que el juego se trabó.
 - Si el otro deja de responder, a los 10 s aparece un aviso en el medio de la pantalla con la cuenta regresiva: si no
   vuelve en 20 s, la sesión termina y volvés al lobby.
-- Las peleas usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los menús y la
-  intro de cada pelea van sincronizados con un retraso según el ping, así no se traban.
+- Las peleas de VERSUS usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los
+  menús y la intro de cada pelea van sincronizados con un retraso según el ping, así no se traban. En los otros modos
+  (por ejemplo DESAFÍO DE SUERTE) las peleas también van con ese retraso, sin rollback.
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
 
@@ -81,9 +82,9 @@ en la pelea.
 Si arriba de la ventana online dice **"Sin conexión con el lobby: reintentando"**, debajo explica la causa y qué
 probar:
 
-- **Falla el DNS** (tu conexión no encuentra el servidor; pasaba con algunos proveedores, como Claro): desde la 0.5.0
-  el juego se conecta igual, directo a la dirección del servidor. Si aun así no conecta, cambiá el DNS de Windows a
-  1.1.1.1 y 8.8.8.8, o probá con otra red (los datos del celular).
+- **Falla el DNS** (tu conexión no encuentra el servidor; pasa con algunos proveedores, como Claro): el juego se
+  conecta igual, directo a la dirección del servidor. Si aun así no conecta, cambiá el DNS de Windows a 1.1.1.1 y
+  8.8.8.8, o probá con otra red (los datos del celular).
 - **La conexión no llega** (firewall, antivirus o el proveedor de internet): probá con otra red o una VPN.
 - **La conexión segura no se pudo verificar**: revisá la fecha y la hora de la PC y que Windows esté actualizado.
 
@@ -198,7 +199,7 @@ la baja (comprobando que sea la oficial, con su firma) y **"Reiniciar ahora"** l
 Tus partidas, tus opciones y los archivos del juego no se tocan. "Más tarde" la deja para otro momento. En una sesión
 online el aviso no aparece. En **F2 > Acerca de** se busca a mano o se apaga la búsqueda al iniciar.
 
-Si tenés la versión 0.1.0, bajá la 0.2.0 a mano una vez (la 0.1.0 no tenía actualizador): descomprimila en la misma
+Si tenés la versión 0.1.0 (no tenía actualizador), bajá la última versión a mano una vez: descomprimila en la misma
 carpeta, reemplazando los archivos, y desde ahí se actualiza sola.
 
 ## Si algo falla

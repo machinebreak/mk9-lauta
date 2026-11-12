@@ -13,7 +13,7 @@ project(mk9 VERSION 1.0.4 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 # mk9-lauta: the PC port's own version (the window's title, the release's zip); MK9_VERSION stays mk9-nx's
-set(MK9_LAUTA_VERSION "0.6.0")
+set(MK9_LAUTA_VERSION "1.0.0")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

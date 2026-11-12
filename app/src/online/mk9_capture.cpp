@@ -410,11 +410,20 @@ uint32_t NativeAboutToRun(const uint8_t* base) {
   return GuestPointer(pc) ? Load32(base, pc + 4) : 0;
 }
 
+// The guest bytes [addr, addr + n) are mapped and readable: a native's first argument is not always a pointer, and
+// a word that looks like one can point at a page nobody committed.
+bool Readable(uint32_t addr, uint32_t n) {
+  if (!GuestPointer(addr) || !n || addr + n < addr) return false;
+  auto* memory = rex::system::kernel_memory();
+  auto* heap = memory ? memory->LookupHeap(addr) : nullptr;
+  return heap && heap->QueryRangeAccess(addr, addr + n - 1) != rex::memory::PageAccess::kNoAccess;
+}
+
 // Up to 40 printable characters at a guest address ("" when it is not text).
 std::string GuestText(const uint8_t* base, uint32_t addr) {
   std::string out;
-  if (!GuestPointer(addr)) return out;
   for (uint32_t i = 0; i < 40; ++i) {
+    if ((i == 0 || ((addr + i) & 0xFFF) == 0) && !Readable(addr + i, 1)) return std::string();
     const char c = char(base[addr + i]);
     if (c == 0) break;
     if (c < 32 || c > 126) return std::string();
@@ -429,7 +438,7 @@ void CaptureNative(const uint8_t* base, uint32_t native) {
   const uint32_t vm = Load32(base, kScriptVm);
   const uint32_t arg = t_native_arg;
   std::string text = GuestText(base, arg);
-  if (text.empty() && GuestPointer(arg)) text = GuestText(base, Load32(base, arg));
+  if (text.empty() && Readable(arg, 4)) text = GuestText(base, Load32(base, arg));
   char line[128];
   const int n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s\n", static_cast<unsigned long long>(g_frame),
                               native, GuestPointer(vm) ? Load32(base, vm + 28) : 0u, arg, text.c_str());

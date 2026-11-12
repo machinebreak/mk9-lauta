@@ -31,6 +31,7 @@
 
 #include "online/fight_state.h"
 #include "online/guest_memory.h"
+#include "online/heap_undo.h"
 #include "online/quiesce.h"
 #include "online/sound_memory.h"
 #include "profiler/sa2_cpu_profile_pc.h"
@@ -719,6 +720,9 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (g_sync.timeline.started() && g_sync.sim > 120) fight_state::SyncTestFighters(base, g_sync_last_key);
   if (!g_sync.timeline.started()) {
     g_sync.timeline.Start(base, 0, int(g_sync.back) + 2, false);  // as a session keeps it: every page in
+    // and as a session's fight, the game's allocations and frees kept with their frame (heap_undo.h): without it a
+    // rollback over them left the render thread a broken tree (sub_82A4F710) now and then, here only
+    heap_undo::Begin();
     g_sync.sim = 0;
     g_sync_script_base = g_mk9_game_frames.load(std::memory_order_relaxed);
     g_sync_script_frame.store(int64_t(g_sync_script_base), std::memory_order_relaxed);
@@ -730,6 +734,9 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   ++g_sync.sim;
   g_sync_script_frame.store(int64_t(g_sync_script_base + g_sync.sim), std::memory_order_relaxed);
   g_sync.timeline.Advance(base, g_sync.sim);
+  heap_undo::SetFrame(int64_t(g_sync.sim));
+  // a rollback goes back 'back' frames from here at most: the frames before that are final
+  if (g_sync.sim > g_sync.back) heap_undo::Confirm(int64_t(g_sync.sim - g_sync.back) - 1);
   g_sync.ms_advance += MsSince(start);
   // the first 2 s learn the pages written with no card (each frame compared whole); mk9_timeline_verify keeps it on
   const int every = REXCVAR_GET(mk9_timeline_verify);
@@ -747,8 +754,10 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (g_sync.sim == g_sync.next_rollback) {
     start = std::chrono::steady_clock::now();
     const uint64_t to = g_sync.sim - g_sync.back;
+    heap_undo::RollBack(int64_t(to));  // the allocations of the frames undone go, the frees held for them are forgotten
     if (g_sync.timeline.RollBack(base, to)) {
       g_sync.sim = to;
+      heap_undo::SetFrame(int64_t(to));
       g_sync_script_frame.store(int64_t(g_sync_script_base + to), std::memory_order_relaxed);
       ++g_sync.rollbacks;
       g_sync.ms_rollback += MsSince(start);
@@ -781,6 +790,7 @@ void SyncTestFightStart(uint64_t frame) {
 void SyncTestStop(const char* why) {
   if (!g_sync.timeline.started() || g_sync.stopped) return;
   g_sync.stopped = true;
+  heap_undo::End();  // no rollback from here: every free held is done
   // the scripted input goes on from the frame this run is at (no frame runs again from here)
   g_mk9_game_frames.store(g_sync_script_base + g_sync.sim, std::memory_order_relaxed);
   REXLOG_INFO("[synctest] {} at simulation frame {}: the test stops ({} rollbacks of {} frames: {} frames compared, "
