@@ -11,7 +11,8 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
-#if defined(_WIN32)
+#include "mk9_platform.h"
+#if MK9_PC
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_stdinc.h>
 #endif
@@ -471,7 +472,7 @@ Style ChosenStyle() {
     if (value == "playstation") return Style::kPlayStation;
     if (value == "keyboard") return Style::kKeyboard;
     if (value != "auto") return Style::kSwitch;
-#if defined(_WIN32)
+#if MK9_PC
     int count = 0;
     SDL_JoystickID *pads = SDL_GetGamepads(&count);
     Style found = Style::kKeyboard;

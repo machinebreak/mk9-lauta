@@ -82,6 +82,15 @@ into `app/src/brand/social_icons.png` by `tools/brand/make_brand_assets.py`); fo
 only: MoltenVK and the Vulkan loader (Apache-2.0), Catch2 (BSL-1.0). The PC release also carries Microsoft's Visual
 C++ runtime DLLs, redistributed under the Visual Studio license terms.
 
+The native Linux build also has, inside its executable: [micro-ecc](https://github.com/kmackay/micro-ecc) by Kenneth
+MacKay (BSD-2-Clause; the updater's signature check, `app/thirdparty/micro-ecc`), stb_image_write and
+stb_image_resize2 of [stb](https://github.com/nothings/stb) by Sean Barrett and contributors (public domain or MIT; the
+profile pictures, `app/thirdparty/stb`), [miniz](https://github.com/richgel999/miniz) by Rich Geldreich and contributors
+(MIT; the Kratos port's .zip, `app/thirdparty/miniz`), the countries' names of the [Unicode CLDR](https://cldr.unicode.org)
+(Unicode License v3; `app/src/online/country_names.inc`, `app/thirdparty/country_data/CLDR-LICENSE`) and libjuice's
+picohash (public domain or MIT; SHA-256 where the system has no libcrypto). It opens the system's libcurl (the lobby,
+the downloads), libcrypto (SHA-256) and Vulkan loader while it runs; none of them is shipped with it.
+
 ### FFmpeg and libmspack (LGPL)
 
 This port changes these files of the SDK's third-party tree; the changed copies are in `sdk/thirdparty`, and

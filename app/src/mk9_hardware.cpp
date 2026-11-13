@@ -2,6 +2,7 @@
 
 #include "mk9_hardware.h"
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -12,6 +13,15 @@
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
+#else
+#include <dlfcn.h>
+#include <sys/sysinfo.h>
+
+#define VK_NO_PROTOTYPES
+#include <vulkan/vulkan.h>
+
+#include <fmt/format.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -26,8 +36,12 @@
 
 #include "options_ui.h"
 
+#if defined(_WIN32)
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "d3d12.lib")
+#else
+REXCVAR_DECLARE(std::string, renut_gpu_adapter);  // the renderer's (renut_engine/gpu/backend/backend.cpp)
+#endif
 
 REXCVAR_DEFINE_STRING(mk9_preset_detected, "", "MK9",
                       "The quality preset the first start chose for this PC (mk9_hardware.h); empty: not chosen yet, "
@@ -36,12 +50,14 @@ REXCVAR_DEFINE_STRING(mk9_preset_detected, "", "MK9",
 namespace mk9::hardware {
 namespace {
 
+#if defined(_WIN32)
 std::string Utf8(const wchar_t* text) {
   const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
   std::string out(size_t(std::max(size, 1)) - 1, '\0');
   if (size > 1) WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), size, nullptr, nullptr);
   return out;
 }
+#endif
 
 std::string Lower(std::string text) {
   for (char& c : text) c = char(std::tolower(static_cast<unsigned char>(c)));
@@ -52,6 +68,7 @@ bool Has(const std::string& text, const char* what) { return text.find(what) != 
 
 constexpr uint64_t kGB = 1ull << 30;
 
+#if defined(_WIN32)
 // mk9-lauta (2026-11-11): the player chose the graphics API: a renut_gpu_backend line in mk9.toml (F2, or the renderer's
 // start watchdog after two starts that failed) or on the command line (the tests).
 bool ApiChosen() {
@@ -119,11 +136,104 @@ void QueryD3D12(IDXGIAdapter1* adapter, Info& info) {
   LARGE_INTEGER version{};
   if (SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &version))) info.driver = uint64_t(version.QuadPart);
 }
+#else
+// mk9-lauta (2026-11-13): Linux: the PC's memory by sysinfo; the GPU by Vulkan (its loader, libvulkan.so.1, opened for
+// a moment as Windows' build opens vulkan-1.dll), the one the renderer takes: plume's choice (renut_gpu_adapter's name,
+// else the best kind: discrete, integrated, virtual, the CPU's; the first of it). A CPU's (llvmpipe, lavapipe) counts as
+// none, as DXGI's Basic Render Driver on Windows. An integrated GPU's memory is the PC's (Vulkan gives a share of the
+// RAM as its own): none of its own, as the first start's screen says it on Windows (first_run_ui.cpp).
+void QueryVulkan(bool details, Info& info) {
+  void* library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!library) library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+  if (!library) return;
+  const auto get = reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr"));
+  const auto create = get ? reinterpret_cast<PFN_vkCreateInstance>(get(VK_NULL_HANDLE, "vkCreateInstance")) : nullptr;
+  VkApplicationInfo app{};
+  app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  app.pApplicationName = "mk9-lauta";
+  app.apiVersion = VK_API_VERSION_1_1;
+  VkInstanceCreateInfo create_info{};
+  create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  create_info.pApplicationInfo = &app;
+  VkInstance instance = VK_NULL_HANDLE;
+  if (!create || create(&create_info, nullptr, &instance) != VK_SUCCESS || !instance) {
+    dlclose(library);
+    return;
+  }
+  const auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(get(instance, "vkDestroyInstance"));
+  const auto enumerate =
+      reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(get(instance, "vkEnumeratePhysicalDevices"));
+  const auto properties =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get(instance, "vkGetPhysicalDeviceProperties"));
+  const auto properties2 =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(get(instance, "vkGetPhysicalDeviceProperties2"));
+  const auto memory =
+      reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get(instance, "vkGetPhysicalDeviceMemoryProperties"));
+  uint32_t count = 0;
+  std::vector<VkPhysicalDevice> devices;
+  if (enumerate && properties && memory && enumerate(instance, &count, nullptr) >= VK_SUCCESS && count) {
+    devices.resize(count);
+    if (enumerate(instance, &count, devices.data()) < VK_SUCCESS) count = 0;
+    devices.resize(count);
+  }
+  const std::string wanted = REXCVAR_GET(renut_gpu_adapter);
+  constexpr uint32_t kScore[] = {0, 3, 4, 2, 1};  // other, integrated, discrete, virtual, CPU: plume's
+  uint32_t best_score = 0;
+  VkPhysicalDevice best = VK_NULL_HANDLE;
+  VkPhysicalDeviceProperties chosen{};
+  for (VkPhysicalDevice device : devices) {
+    VkPhysicalDeviceProperties p{};
+    properties(device, &p);
+    if (uint32_t(p.deviceType) > 4) continue;
+    const bool named = !wanted.empty() && wanted == p.deviceName;
+    if (kScore[p.deviceType] > best_score || named) {
+      best = device;
+      chosen = p;
+      best_score = kScore[p.deviceType];
+      if (named) break;
+    }
+  }
+  if (best != VK_NULL_HANDLE && chosen.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
+    info.gpu = chosen.deviceName;
+    info.vendor = chosen.vendorID;
+    info.uma = chosen.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    info.driver = chosen.driverVersion;
+    info.vulkan_api = chosen.apiVersion;
+    if (!info.uma) {
+      VkPhysicalDeviceMemoryProperties m{};
+      memory(best, &m);
+      for (uint32_t i = 0; i < m.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; ++i) {
+        if (m.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) info.vram = std::max(info.vram, m.memoryHeaps[i].size);
+      }
+    }
+    // the driver's own name for itself (Vulkan 1.2 on the device)
+    if (details && properties2 && chosen.apiVersion >= VK_API_VERSION_1_2) {
+      VkPhysicalDeviceDriverProperties driver{};
+      driver.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+      VkPhysicalDeviceProperties2 p2{};
+      p2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+      p2.pNext = &driver;
+      properties2(best, &p2);
+      info.vulkan_driver = std::string(driver.driverName);
+      if (driver.driverInfo[0]) info.vulkan_driver += std::string(", ") + driver.driverInfo;
+    }
+  }
+  if (destroy) destroy(instance, nullptr);
+  dlclose(library);
+}
+#endif
 
 }  // namespace
 
 Info Detect(bool d3d12) {
   Info info;
+#if !defined(_WIN32)
+  struct sysinfo memory {};
+  if (sysinfo(&memory) == 0) info.ram = uint64_t(memory.totalram) * (memory.mem_unit ? memory.mem_unit : 1);
+  info.threads = std::thread::hardware_concurrency();
+  QueryVulkan(d3d12, info);
+  return info;
+#else
   MEMORYSTATUSEX memory{sizeof(memory)};
   if (GlobalMemoryStatusEx(&memory)) info.ram = memory.ullTotalPhys;
   info.threads = std::thread::hardware_concurrency();
@@ -150,6 +260,7 @@ Info Detect(bool d3d12) {
     factory->Release();
   }
   return info;
+#endif
 }
 
 std::string ChoosePreset(const Info& info) {
@@ -177,6 +288,22 @@ void ApplyDefaults() {
   const Info info = Detect(true);
   REXLOG_INFO("[hardware] {} (vendor {:04X}, {} MB of its own), {} MB of RAM, {} threads", info.gpu, info.vendor,
               info.vram >> 20, info.ram >> 20, info.threads);
+#if !defined(_WIN32)
+  // Linux: Vulkan, the renderer's only graphics API there (nothing to choose)
+  if (!info.gpu.empty()) {
+    const uint32_t d = uint32_t(info.driver);
+    // the driver's version: NVIDIA's in its own fields (10.8.8.6 bits), the others' as Vulkan's (VK_MAKE_VERSION)
+    const std::string version = info.vendor == 0x10DE
+                                    ? fmt::format("{}.{}.{}", d >> 22, (d >> 14) & 0xFF, (d >> 6) & 0xFF)
+                                    : fmt::format("{}.{}.{}", d >> 22, (d >> 12) & 0x3FF, d & 0xFFF);
+    REXLOG_INFO("[hardware] Vulkan {}.{}.{} there, {} memory, driver {}{}", VK_API_VERSION_MAJOR(info.vulkan_api),
+                VK_API_VERSION_MINOR(info.vulkan_api), VK_API_VERSION_PATCH(info.vulkan_api),
+                info.uma ? "unified" : "its own", version,
+                info.vulkan_driver.empty() ? std::string() : " (" + info.vulkan_driver + ")");
+  } else {
+    REXLOG_WARN("[hardware] no Vulkan GPU on this PC (its driver missing?): the game needs one");
+  }
+#else
   if (info.d3d12) {
     REXLOG_INFO("[hardware] Direct3D 12 there: resource binding tier {}, resource heap tier {}, shader model {}.{}, {} "
                 "memory, driver {}.{}.{}.{}",
@@ -186,6 +313,7 @@ void ApplyDefaults() {
   } else {
     REXLOG_WARN("[hardware] no Direct3D 12 device on it");
   }
+#endif
   std::vector<std::pair<std::string, std::string>> values;
   // a PC with 6 GB or less: the renderer's memory policy (unless the player set it)
   if (info.ram && info.ram <= 6 * kGB && !rex::cvar::HasNonDefaultValue("banjo_renut_memory_policy")) {
@@ -195,6 +323,7 @@ void ApplyDefaults() {
   }
   // mk9-lauta (2026-11-11): the graphics API, when the player has not chosen one (each start: a later release may
   // decide otherwise, and a choice in F2 is kept)
+#if defined(_WIN32)
   if (!ApiChosen()) {
     if (const char* reason = VulkanReason(info)) {
       if (VulkanPresent()) {
@@ -205,6 +334,7 @@ void ApplyDefaults() {
       }
     }
   }
+#endif
   if (chosen) return;
   const std::string preset = ChoosePreset(info);
   if (const auto* preset_values = mk9::options_ui::PresetValues(preset)) {

@@ -5,10 +5,16 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
+#else
+// mk9-lauta (2026-11-13): Linux: libcurl (curl_http.h) where Windows has WinHTTP
+#include "mk9_platform.h"
+#include "online/curl_http.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -38,6 +44,10 @@ using Clock = std::chrono::steady_clock;
 constexpr size_t kMaxChat = 200;
 constexpr auto kPingEvery = std::chrono::seconds(25);
 
+// Once the DNS failed for the lobby's name, every connection after goes straight to its address (no 8 s wait first).
+std::atomic<bool> g_by_address{false};
+
+#if defined(_WIN32)
 std::wstring Wide(const std::string& s) {
   if (s.empty()) return {};
   const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
@@ -99,8 +109,6 @@ std::wstring AddressInName(const std::wstring& host) {
   return out;
 }
 
-// Once the DNS failed for the lobby's name, every connection after goes straight to its address (no 8 s wait first).
-std::atomic<bool> g_by_address{false};
 
 // mk9-lauta (2026-11-12): the lobby at its address with the name kept, on every Windows. A player on 0.5.0 still had
 // "dns" (12007): WINHTTP_OPTION_RESOLUTION_HOSTNAME is not in every Windows. Instead WinHTTP goes through a proxy of
@@ -269,6 +277,66 @@ std::string Why(DWORD error, DWORD status) {
   if (status && status != 101) return "http";
   return "other";
 }
+#else
+// mk9-lauta (2026-11-13): Linux. The lobby's URL (ws:// or wss://): its parts.
+struct Url {
+  bool ok = false, secure = false;
+  std::string host, path;  // path with its query
+  long port = 0;
+};
+
+Url Parse(const std::string& text) {
+  Url url;
+  const size_t colon = text.find("://");
+  if (colon == std::string::npos) return url;
+  const std::string scheme = text.substr(0, colon);
+  if (scheme == "wss" || scheme == "https") {
+    url.secure = true;
+  } else if (scheme != "ws" && scheme != "http") {
+    return url;
+  }
+  const size_t host_at = colon + 3;
+  size_t path_at = text.find_first_of("/?", host_at);
+  if (path_at == std::string::npos) path_at = text.size();
+  std::string authority = text.substr(host_at, path_at - host_at);
+  url.path = path_at < text.size() ? text.substr(path_at) : "/";
+  if (url.path[0] == '?') url.path = "/" + url.path;
+  url.port = url.secure ? 443 : 80;
+  if (const size_t c = authority.rfind(':'); c != std::string::npos) {
+    url.port = std::strtol(authority.c_str() + c + 1, nullptr, 10);
+    authority.resize(c);
+  }
+  url.host = authority;
+  url.ok = !url.host.empty() && url.port > 0 && url.port < 65536;
+  return url;
+}
+
+// The address a name like the lobby's carries ("107-172-143-35.sslip.io" -> "107.172.143.35"); "" for any other name
+// (lobby.cpp's Windows AddressInName, in bytes).
+std::string AddressInName(const std::string& host) {
+  std::string out;
+  size_t i = 0;
+  for (int part = 0; part < 4; ++part) {
+    size_t digits = 0;
+    unsigned value = 0;
+    while (i < host.size() && host[i] >= '0' && host[i] <= '9' && digits < 3) {
+      value = value * 10 + unsigned(host[i] - '0');
+      ++i;
+      ++digits;
+    }
+    if (digits == 0 || value > 255 || i >= host.size() || host[i] != (part < 3 ? '-' : '.')) return {};
+    ++i;
+    out += std::to_string(value);
+    if (part < 3) out += '.';
+  }
+  return out;
+}
+
+// The URL of a GET on the lobby's host (its /ice): the same scheme as the lobby's, http(s).
+std::string HttpUrl(const Url& url, const std::string& path) {
+  return std::string(url.secure ? "https://" : "http://") + url.host + ":" + std::to_string(url.port) + path;
+}
+#endif
 
 class Client {
  public:
@@ -390,6 +458,7 @@ class Client {
   // (the game that relaunched it says so from the start: mk9_lobby_by_address), tries again once, and the last
   // answer that came is kept for when none does (Cloudflare's credentials last 12 hours; the lobby keeps an answer
   // an hour).
+#if defined(_WIN32)
   json IceServers() {
     static const bool by_address_from_start = REXCVAR_GET(mk9_lobby_by_address);
     if (by_address_from_start) g_by_address = true;
@@ -418,8 +487,39 @@ class Client {
                 kept.empty() ? "none (the connection may not go through)" : "the ones kept from before");
     return kept;
   }
+#else
+  json IceServers() {
+    static const bool by_address_from_start = REXCVAR_GET(mk9_lobby_by_address);
+    if (by_address_from_start) g_by_address = true;
+    const Url url = Parse(REXCVAR_GET(mk9_lobby_url));
+    if (!url.ok) return json::array();
+    const std::string address = AddressInName(url.host);
+    std::string why;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (attempt) std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::string kind;
+      json out = FetchIce(url, g_by_address && !address.empty() ? address : std::string(), &kind);
+      if (!out.empty()) return KeepIce(out);
+      if (!g_by_address && !address.empty() && kind == "dns") {
+        out = FetchIce(url, address, &kind);
+        if (!out.empty()) {
+          g_by_address = true;
+          REXLOG_WARN("[ice] this connection's DNS does not find the lobby's name: its STUN and TURN servers asked "
+                      "at its address");
+          return KeepIce(out);
+        }
+      }
+      why = kind.empty() ? "no answer" : kind;
+    }
+    json kept = KeptIce();
+    REXLOG_WARN("[ice] the lobby did not give its STUN and TURN servers ({}): {}", why,
+                kept.empty() ? "none (the connection may not go through)" : "the ones kept from before");
+    return kept;
+  }
+#endif
 
  private:
+#if defined(_WIN32)
   // One GET of the lobby's /ice (by name, or by_address through the local proxy): the servers, or an empty array
   // (error: WinHTTP's error, 0 when the answer was not a list).
   json FetchIce(const Url& url, bool by_address, DWORD* error) {
@@ -493,6 +593,54 @@ class Client {
     if (age < 0 || age > 10 * 3600 || !kept["servers"].is_array()) return json::array();
     return kept["servers"];
   }
+#else
+  // One GET of the lobby's /ice (address: at that address with the name kept; "" by name): the servers, or an empty
+  // array (kind: what failed, "" when the answer was not a list).
+  json FetchIce(const Url& url, const std::string& address, std::string* kind) {
+    kind->clear();
+    net::HttpOptions options;
+    options.resolve_address = address;
+    options.timeout_ms = 5000;
+    options.connect_timeout_ms = 5000;
+    std::string body;
+    const net::HttpResult r = net::HttpGetText(HttpUrl(url, "/ice"), options, &body, 1u << 20);
+    if (!r.ok) {
+      *kind = r.kind;
+      return json::array();
+    }
+    json out = json::parse(body, nullptr, false);
+    return out.is_array() ? out : json::array();
+  }
+
+  // The last /ice answer that came, kept beside the game (cache/ice_servers.json) with when it came.
+  static std::filesystem::path IceFile() { return platform::ExeDir() / "cache" / "ice_servers.json"; }
+
+  json KeepIce(const json& servers) {
+    std::error_code ec;
+    std::filesystem::create_directories(IceFile().parent_path(), ec);
+    const json kept = {{"at", int64_t(std::time(nullptr))}, {"servers", servers}};
+    if (std::FILE* f = platform::OpenFile(IceFile(), "wb")) {
+      const std::string text = kept.dump();
+      std::fwrite(text.data(), 1, text.size(), f);
+      std::fclose(f);
+    }
+    return servers;
+  }
+
+  json KeptIce() {
+    std::FILE* f = platform::OpenFile(IceFile(), "rb");
+    if (!f) return json::array();
+    std::string text;
+    char buffer[4096];
+    for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) text.append(buffer, n);
+    std::fclose(f);
+    const json kept = json::parse(text, nullptr, false);
+    if (!kept.is_object() || !kept.contains("at") || !kept.contains("servers")) return json::array();
+    const int64_t age = int64_t(std::time(nullptr)) - kept.value("at", int64_t(0));
+    if (age < 0 || age > 10 * 3600 || !kept["servers"].is_array()) return json::array();
+    return kept["servers"];
+  }
+#endif
 
 
  private:
@@ -530,6 +678,7 @@ class Client {
     }
   }
 
+#if defined(_WIN32)
   bool Connect() {
     const std::string text = REXCVAR_GET(mk9_lobby_url);
     const Url url = Parse(text);
@@ -618,7 +767,74 @@ class Client {
     send_cv_.notify_one();
     return true;
   }
+#else
+  bool Connect() {
+    const std::string text = REXCVAR_GET(mk9_lobby_url);
+    const Url url = Parse(text);
+    if (!url.ok) {
+      static bool warned = false;
+      if (!warned) REXLOG_ERROR("[lobby] mk9_lobby_url is not a ws:// or wss:// URL: {}", text);
+      warned = true;
+      return false;
+    }
+    const std::string address = AddressInName(url.host);
+    static const bool by_address_from_start = REXCVAR_GET(mk9_lobby_by_address);
+    if (by_address_from_start && !address.empty()) g_by_address = true;
+    if (Attempt(text, address, g_by_address)) return true;
+    // the name not found: its address straight away (the provider's DNS), and from now on
+    if (!g_by_address && !address.empty() && LastWhy() == "dns" && Attempt(text, address, true)) {
+      g_by_address = true;
+      REXLOG_WARN("[lobby] this connection's DNS does not find {}: connected to its address, {}", text, address);
+      return true;
+    }
+    return false;
+  }
 
+  std::string LastWhy() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_.link_error;
+  }
+
+  // One try at the lobby: by name, or (by_address) at the name's address with the name kept for TLS and Host.
+  bool Attempt(const std::string& text, const std::string& address, bool by_address) {
+    const bool address_set = by_address && !address.empty();
+    net::HttpOptions options;
+    options.resolve_address = address_set ? address : std::string();
+    options.connect_timeout_ms = 8000;
+    net::HttpResult r;
+    std::shared_ptr<net::WebSocket> socket = net::WebSocket::Connect(text, options, &r);
+    if (!socket) {
+      const std::string why = r.kind.empty() ? "other" : r.kind;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_.link_error != why || state_.link_code != uint32_t(r.code)) {
+          state_.link_error = why;
+          state_.link_code = uint32_t(r.code);
+          state_.link_status = uint32_t(r.status);
+          ++state_.version;
+          REXLOG_WARN("[lobby] could not reach {}{} ({}: curl error {}, HTTP status {}: {}): trying again", text,
+                      address_set ? " at its address" : "", why, r.code, r.status, r.text);
+        }
+      }
+      return false;
+    }
+    {
+      std::lock_guard<std::mutex> lock(socket_mutex_);
+      socket_ = std::move(socket);
+    }
+    last_ping_ = Clock::now();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state_.link_error.clear();
+      state_.link_code = state_.link_status = 0;
+    }
+    REXLOG_INFO("[lobby] connected to {}{}", text, address_set ? " (at its address: no DNS)" : "");
+    send_cv_.notify_one();
+    return true;
+  }
+#endif
+
+#if defined(_WIN32)
   void CloseSocket() {
     std::lock_guard<std::mutex> lock(socket_mutex_);
     if (socket_) {
@@ -652,6 +868,32 @@ class Client {
       message.clear();
     }
   }
+#else
+  void CloseSocket() {
+    std::shared_ptr<net::WebSocket> socket;
+    {
+      std::lock_guard<std::mutex> lock(socket_mutex_);
+      socket = std::move(socket_);
+      socket_.reset();
+    }
+    if (socket) socket->Abort();  // a receive waiting on it returns at once; it goes when its last user lets go
+  }
+
+  void ReceiveLoop() {
+    std::string message;
+    for (;;) {
+      std::shared_ptr<net::WebSocket> socket;
+      {
+        std::lock_guard<std::mutex> lock(socket_mutex_);
+        socket = socket_;
+      }
+      if (!socket) return;
+      if (!socket->Receive(&message, 256 * 1024)) return;
+      OnMessage(message);
+      message.clear();
+    }
+  }
+#endif
 
   // Sends what is queued, and a ping every 25 s, while the link is up.
   void SendLoop() {
@@ -673,6 +915,7 @@ class Client {
     }
   }
 
+#if defined(_WIN32)
   bool Up() {
     std::lock_guard<std::mutex> lock(socket_mutex_);
     return socket_ != nullptr;
@@ -686,6 +929,23 @@ class Client {
     WinHttpWebSocketSend(socket_, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE, const_cast<char*>(text.data()),
                          DWORD(text.size()));
   }
+#else
+  bool Up() {
+    std::lock_guard<std::mutex> lock(socket_mutex_);
+    return socket_ != nullptr;
+  }
+
+  void SendNow(const json& message) { SendText(message.dump()); }
+
+  void SendText(const std::string& text) {
+    std::shared_ptr<net::WebSocket> socket;
+    {
+      std::lock_guard<std::mutex> lock(socket_mutex_);
+      socket = socket_;
+    }
+    if (socket) socket->SendText(text);  // one frame at a time (curl_http.h); receiving goes on meanwhile
+  }
+#endif
 
   bool Stopping() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -836,8 +1096,13 @@ class Client {
   Clock::time_point last_ping_{};
   std::thread worker_, sender_;
 
+#if defined(_WIN32)
   std::mutex socket_mutex_;       // the WinHTTP handles
   HINTERNET session_ = nullptr, connect_ = nullptr, socket_ = nullptr;
+#else
+  std::mutex socket_mutex_;       // the WebSocket (curl_http.h)
+  std::shared_ptr<net::WebSocket> socket_;
+#endif
 };
 
 Client& TheClient() {

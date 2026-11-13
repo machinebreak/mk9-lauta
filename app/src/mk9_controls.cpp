@@ -2,13 +2,20 @@
 
 #include "mk9_controls.h"
 
+#include "mk9_platform.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
+#if !defined(_WIN32)
+#include <SDL3/SDL.h>
+#endif
 
 
 #include <atomic>
@@ -94,6 +101,7 @@ class Assignment final : public rex::input::DeviceAssignment {
   DeviceId keyboard_ = DeviceId::kInvalid;
 };
 
+#if defined(_WIN32)
 std::string Utf8(const std::wstring& text) {
   if (text.empty()) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0, nullptr, nullptr);
@@ -101,6 +109,7 @@ std::string Utf8(const std::wstring& text) {
   WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), out.data(), size, nullptr, nullptr);
   return out;
 }
+#endif
 
 // One key as the player's keyboard prints it.
 std::string KeyLabel(std::string_view name) {
@@ -139,6 +148,7 @@ std::string KeyLabel(std::string_view name) {
   if (name.size() == 7 && name.substr(0, 6) == "Numpad") return "Num " + std::string(name.substr(6));
   // Letters, digits and the punctuation keys: the SDK names them by their place on an English keyboard (window_sdl.cpp
   // reads SDL's scan codes); shown as the character this keyboard's layout has in that place.
+#if defined(_WIN32)
   static const std::pair<std::string_view, UINT> kScanCodes[] = {
       {"Q", 0x10}, {"W", 0x11}, {"E", 0x12}, {"R", 0x13}, {"T", 0x14}, {"Y", 0x15}, {"U", 0x16}, {"I", 0x17},
       {"O", 0x18}, {"P", 0x19}, {"A", 0x1E}, {"S", 0x1F}, {"D", 0x20}, {"F", 0x21}, {"G", 0x22}, {"H", 0x23},
@@ -159,6 +169,34 @@ std::string KeyLabel(std::string_view name) {
     }
     break;
   }
+#else
+  // mk9-lauta (2026-11-13): Linux: the same places, as SDL's scan codes; the key this layout has there, by SDL's name
+  // for it (a letter in capitals, the ñ of a Spanish keyboard as Ñ)
+  static const std::pair<std::string_view, SDL_Scancode> kScanCodes[] = {
+      {"Q", SDL_SCANCODE_Q}, {"W", SDL_SCANCODE_W}, {"E", SDL_SCANCODE_E}, {"R", SDL_SCANCODE_R},
+      {"T", SDL_SCANCODE_T}, {"Y", SDL_SCANCODE_Y}, {"U", SDL_SCANCODE_U}, {"I", SDL_SCANCODE_I},
+      {"O", SDL_SCANCODE_O}, {"P", SDL_SCANCODE_P}, {"A", SDL_SCANCODE_A}, {"S", SDL_SCANCODE_S},
+      {"D", SDL_SCANCODE_D}, {"F", SDL_SCANCODE_F}, {"G", SDL_SCANCODE_G}, {"H", SDL_SCANCODE_H},
+      {"J", SDL_SCANCODE_J}, {"K", SDL_SCANCODE_K}, {"L", SDL_SCANCODE_L}, {"Z", SDL_SCANCODE_Z},
+      {"X", SDL_SCANCODE_X}, {"C", SDL_SCANCODE_C}, {"V", SDL_SCANCODE_V}, {"B", SDL_SCANCODE_B},
+      {"N", SDL_SCANCODE_N}, {"M", SDL_SCANCODE_M}, {"1", SDL_SCANCODE_1}, {"2", SDL_SCANCODE_2},
+      {"3", SDL_SCANCODE_3}, {"4", SDL_SCANCODE_4}, {"5", SDL_SCANCODE_5}, {"6", SDL_SCANCODE_6},
+      {"7", SDL_SCANCODE_7}, {"8", SDL_SCANCODE_8}, {"9", SDL_SCANCODE_9}, {"0", SDL_SCANCODE_0},
+      {"Minus", SDL_SCANCODE_MINUS}, {"Plus", SDL_SCANCODE_EQUALS}, {"LBracket", SDL_SCANCODE_LEFTBRACKET},
+      {"RBracket", SDL_SCANCODE_RIGHTBRACKET}, {"Semicolon", SDL_SCANCODE_SEMICOLON},
+      {"Quote", SDL_SCANCODE_APOSTROPHE}, {"Backtick", SDL_SCANCODE_GRAVE}, {"Backslash", SDL_SCANCODE_BACKSLASH},
+      {"Comma", SDL_SCANCODE_COMMA}, {"Period", SDL_SCANCODE_PERIOD}, {"Slash", SDL_SCANCODE_SLASH},
+  };
+  for (const auto& [key, scan_code] : kScanCodes) {
+    if (name != key) continue;
+    const SDL_Keycode code = SDL_GetKeyFromScancode(scan_code, SDL_KMOD_NONE, false);
+    if (code > 32 && code < SDLK_SCANCODE_MASK) {
+      const char* label = SDL_GetKeyName(code);
+      if (label && *label) return label;
+    }
+    break;
+  }
+#endif
   return std::string(name);
 }
 
@@ -205,9 +243,7 @@ void FindMappingsFile() {
   const std::filesystem::path file(rex::cvar::GetFlagByName("hid_mappings_file"));
   std::error_code ec;
   if (file.empty() || file.is_absolute() || std::filesystem::exists(file, ec)) return;
-  wchar_t exe[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::filesystem::path beside = std::filesystem::path(exe).parent_path() / file;
+  const std::filesystem::path beside = mk9::platform::ExeDir() / file;
   if (std::filesystem::exists(beside, ec)) rex::cvar::SetFlagByName("hid_mappings_file", beside.string());
 }
 

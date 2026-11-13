@@ -4,6 +4,7 @@
 
 #include "imgui_internal.h"  // ImGui::RegisterUserTexture
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -13,6 +14,7 @@
 #include <wincodec.h>
 #include <winhttp.h>
 #include <wrl/client.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -40,9 +42,37 @@
 #include "online/i18n.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
+#if defined(_WIN32)
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "winhttp.lib")
+#else
+// mk9-lauta (2026-11-13): Linux: the pictures by stb (stb_image reads them, stb_image_resize2 scales them,
+// stb_image_write makes the JPEG), Discord's by libcurl, the file chosen in SDL's dialog (the desktop's own: its
+// portal, else zenity)
+#include <climits>
+
+#include <SDL3/SDL.h>
+
+#include "mk9_platform.h"
+#include "online/curl_http.h"
+
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_PNG
+#define STBI_ONLY_BMP
+#define STBI_ONLY_GIF
+#define STBI_NO_STDIO
+#include "../../../sdk/thirdparty/stb/stb_image.h"
+#define STB_IMAGE_RESIZE_STATIC
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "../../thirdparty/stb/stb_image_resize2.h"
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBI_WRITE_NO_STDIO
+#include "../../thirdparty/stb/stb_image_write.h"
+#endif
 
 REXCVAR_DEFINE_STRING(mk9_avatar_file, "online_avatar.jpg", "MK9 Online",
                       "The player's own profile picture's file beside the executable (tests: two games on one PC, each "
@@ -55,8 +85,13 @@ namespace mk9::avatars {
 namespace {
 
 using i18n::T;
-using Microsoft::WRL::ComPtr;
 using Clock = std::chrono::steady_clock;
+#if defined(_WIN32)
+using Microsoft::WRL::ComPtr;
+using Imaging = IWICImagingFactory;  // the pictures' thread's: WIC's factory
+#else
+struct Imaging {};  // stb keeps nothing between pictures
+#endif
 
 constexpr size_t kKeep = 300;    // others' pictures kept in avatars\ (the newest)
 constexpr size_t kTextures = 24;  // textures at once
@@ -64,9 +99,13 @@ constexpr size_t kTextures = 24;  // textures at once
 // --- files ---
 
 std::filesystem::path ExeDir() {
+#if defined(_WIN32)
   wchar_t exe[MAX_PATH] = {};
   GetModuleFileNameW(nullptr, exe, MAX_PATH);
   return std::filesystem::path(exe).parent_path();
+#else
+  return platform::ExeDir();
+#endif
 }
 std::filesystem::path MinePath() {
   const std::string file = REXCVAR_GET(mk9_avatar_file);
@@ -88,7 +127,11 @@ std::string ReadFile(const std::filesystem::path& path) {
 bool WriteFile(const std::filesystem::path& path, const std::string& data) {
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
+#if defined(_WIN32)
   const std::filesystem::path part = path.wstring() + L".part";
+#else
+  const std::filesystem::path part = path.native() + ".part";
+#endif
   {
     std::ofstream out(part, std::ios::binary | std::ios::trunc);
     if (!out) return false;
@@ -99,12 +142,14 @@ bool WriteFile(const std::filesystem::path& path, const std::string& data) {
   return !ec;
 }
 
+#if defined(_WIN32)
 std::wstring Wide(const std::string& text) {
   const int n = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), nullptr, 0);
   std::wstring out(size_t(std::max(n, 0)), L'\0');
   if (n > 0) MultiByteToWideChar(CP_UTF8, 0, text.c_str(), int(text.size()), out.data(), n);
   return out;
 }
+#endif
 
 // --- the state the threads share ---
 
@@ -141,7 +186,7 @@ void Finish(const std::string& note) {
 // The pictures' thread: one, with COM (multithreaded) and a WIC factory of its own; the jobs in order.
 class Worker {
  public:
-  using Job = std::function<void(IWICImagingFactory*)>;
+  using Job = std::function<void(Imaging*)>;
   void Post(Job job) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -156,11 +201,15 @@ class Worker {
 
  private:
   void Run() {
+#if defined(_WIN32)
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     ComPtr<IWICImagingFactory> factory;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
       REXLOG_WARN("[avatars] Windows' imaging (WIC) is not there: no profile pictures");
     }
+#else
+    Imaging imaging;
+#endif
     for (;;) {
       Job job;
       {
@@ -169,7 +218,11 @@ class Worker {
         job = std::move(jobs_.front());
         jobs_.pop_front();
       }
+#if defined(_WIN32)
       job(factory.Get());
+#else
+      job(&imaging);
+#endif
     }
   }
   std::mutex mutex_;
@@ -184,6 +237,7 @@ Worker& Pictures() {
 }
 
 // --- WIC (the pictures' thread) ---
+#if defined(_WIN32)
 
 // A picture's pixels, RGBA. strict (another player's): a JPEG of exactly kSize x kSize.
 bool Pixels(IWICImagingFactory* wic, const std::string& data, bool strict, std::vector<uint8_t>* rgba, UINT* w,
@@ -354,6 +408,150 @@ std::string MakeAvatar(IWICImagingFactory* wic, IWICBitmapSource* source, UINT o
   return {};
 }
 
+#else
+// --- stb (the pictures' thread; mk9-lauta 2026-11-13: Linux) ---
+
+bool IsJpeg(const std::string& data) {
+  return data.size() > 3 && uint8_t(data[0]) == 0xFF && uint8_t(data[1]) == 0xD8 && uint8_t(data[2]) == 0xFF;
+}
+
+// A picture's pixels, RGBA. strict (another player's): a JPEG of exactly kSize x kSize.
+bool Pixels(Imaging*, const std::string& data, bool strict, std::vector<uint8_t>* rgba, uint32_t* w, uint32_t* h) {
+  if (data.empty() || data.size() > size_t(INT_MAX)) return false;
+  if (strict && !IsJpeg(data)) return false;
+  const auto* bytes = reinterpret_cast<const stbi_uc*>(data.data());
+  int fw = 0, fh = 0, channels = 0;
+  if (!stbi_info_from_memory(bytes, int(data.size()), &fw, &fh, &channels) || fw <= 0 || fh <= 0 || fw > 1024 ||
+      fh > 1024) {
+    return false;
+  }
+  if (strict && (fw != kSize || fh != kSize)) return false;
+  stbi_uc* pixels = stbi_load_from_memory(bytes, int(data.size()), &fw, &fh, &channels, 4);
+  if (!pixels) return false;
+  rgba->assign(pixels, pixels + size_t(fw) * size_t(fh) * 4);
+  stbi_image_free(pixels);
+  *w = uint32_t(fw);
+  *h = uint32_t(fh);
+  return true;
+}
+
+// EXIF's orientation in a TIFF block (1-8; 1 for none).
+int TiffOrientation(const uint8_t* t, size_t n) {
+  if (n < 8) return 1;
+  const bool little = t[0] == 'I' && t[1] == 'I';
+  if (!little && !(t[0] == 'M' && t[1] == 'M')) return 1;
+  auto u16 = [&](size_t at) -> uint32_t {
+    return little ? uint32_t(t[at]) | uint32_t(t[at + 1]) << 8 : uint32_t(t[at]) << 8 | uint32_t(t[at + 1]);
+  };
+  auto u32 = [&](size_t at) -> uint32_t {
+    return little ? u16(at) | u16(at + 2) << 16 : u16(at) << 16 | u16(at + 2);
+  };
+  if (u16(2) != 42) return 1;
+  const size_t ifd = u32(4);
+  if (ifd + 2 > n) return 1;
+  const size_t count = u16(ifd);
+  for (size_t k = 0; k < count; ++k) {
+    const size_t e = ifd + 2 + k * 12;
+    if (e + 12 > n) return 1;
+    if (u16(e) == 274 && u16(e + 2) == 3) {  // Orientation, a SHORT
+      const uint32_t v = u16(e + 8);
+      return v >= 1 && v <= 8 ? int(v) : 1;
+    }
+  }
+  return 1;
+}
+
+// How the camera held a JPEG (its EXIF's orientation, 1-8; 1 for none): what WIC's "/app1/ifd/{ushort=274}" reads.
+int OrientationOf(const std::string& data) {
+  if (!IsJpeg(data)) return 1;
+  const auto* p = reinterpret_cast<const uint8_t*>(data.data());
+  const size_t n = data.size();
+  size_t i = 2;
+  while (i + 4 <= n) {
+    if (p[i] != 0xFF) return 1;
+    const uint8_t marker = p[i + 1];
+    if (marker == 0xFF) {  // a fill byte
+      ++i;
+      continue;
+    }
+    if (marker == 0xD9 || marker == 0xDA) return 1;  // the end, or the image's data: no EXIF before it
+    const size_t length = size_t(p[i + 2]) << 8 | p[i + 3];
+    if (length < 2 || i + 2 + length > n) return 1;
+    if (marker == 0xE1 && length >= 8 && std::memcmp(p + i + 4, "Exif\0\0", 6) == 0) {
+      return TiffOrientation(p + i + 10, length - 8);
+    }
+    i += 2 + length;
+  }
+  return 1;
+}
+
+void AppendBytes(void* context, void* data, int size) {
+  static_cast<std::string*>(context)->append(static_cast<const char*>(data), size_t(size));
+}
+
+// Any picture (RGBA, alpha straight) as a profile's: the square from its middle, kSize px, turned as the camera held
+// it, over the screens' dark where it is transparent, a JPEG of kMaxBytes at most. "" when it cannot be made. (WIC's
+// MakeAvatar's steps: the turn after the scaling here, the same picture: the middle square turns into itself.)
+std::string MakeAvatar(const uint8_t* rgba, int w, int h, int orientation) {
+  if (!rgba || w <= 0 || h <= 0) return {};
+  const int side = std::min(w, h);
+  const uint8_t* square = rgba + (size_t((h - side) / 2) * size_t(w) + size_t((w - side) / 2)) * 4;
+  std::vector<uint8_t> scaled(size_t(kSize) * kSize * 4);
+  if (!stbir_resize_uint8_linear(square, side, side, w * 4, scaled.data(), kSize, kSize, kSize * 4, STBIR_RGBA)) {
+    return {};
+  }
+  // turned (EXIF's 1-8): the pixel at (x, y) is the scaled one's at (sx, sy)
+  constexpr int last = kSize - 1;
+  constexpr int kBackR = 24, kBackG = 18, kBackB = 20;  // the screens' dark, as on Windows
+  std::vector<uint8_t> rgb(size_t(kSize) * kSize * 3);
+  for (int y = 0; y < kSize; ++y) {
+    for (int x = 0; x < kSize; ++x) {
+      int sx = x, sy = y;
+      switch (orientation) {
+        case 2: sx = last - x; break;
+        case 3: sx = last - x; sy = last - y; break;
+        case 4: sy = last - y; break;
+        case 5: sx = y; sy = x; break;
+        case 6: sx = y; sy = last - x; break;
+        case 7: sx = last - y; sy = last - x; break;
+        case 8: sx = last - y; sy = x; break;
+        default: break;
+      }
+      const uint8_t* from = &scaled[(size_t(sy) * kSize + size_t(sx)) * 4];
+      uint8_t* to = &rgb[(size_t(y) * kSize + size_t(x)) * 3];
+      const int a = from[3];
+      to[0] = uint8_t((from[0] * a + kBackR * (255 - a) + 127) / 255);
+      to[1] = uint8_t((from[1] * a + kBackG * (255 - a) + 127) / 255);
+      to[2] = uint8_t((from[2] * a + kBackB * (255 - a) + 127) / 255);
+    }
+  }
+  for (int quality = 88; quality > 35; quality -= 12) {  // WIC's 0.88, 0.76, ... as stb's 1-100
+    std::string jpeg;
+    if (!stbi_write_jpg_to_func(AppendBytes, &jpeg, kSize, kSize, 3, rgb.data(), quality) || jpeg.empty()) return {};
+    if (jpeg.size() <= kMaxBytes) return jpeg;
+  }
+  return {};
+}
+
+// A picture's bytes as a profile's (orientation: EXIF's, for a JPEG's).
+std::string AvatarOf(const std::string& data, int orientation) {
+  if (data.empty() || data.size() > size_t(INT_MAX)) return {};
+  const auto* bytes = reinterpret_cast<const stbi_uc*>(data.data());
+  int w = 0, h = 0, channels = 0;
+  // a photo's of 100 megapixels at most (RGBA: 400 MB while it is read)
+  if (!stbi_info_from_memory(bytes, int(data.size()), &w, &h, &channels) || w <= 0 || h <= 0 ||
+      uint64_t(w) * uint64_t(h) > 100'000'000ull) {
+    return {};
+  }
+  stbi_uc* pixels = stbi_load_from_memory(bytes, int(data.size()), &w, &h, &channels, 4);
+  if (!pixels) return {};
+  std::string jpeg = MakeAvatar(pixels, w, h, orientation);
+  stbi_image_free(pixels);
+  return jpeg;
+}
+
+#endif
+
 void SetMine(const std::string& jpeg, const char* how) {
   if (jpeg.empty() || !WriteFile(MinePath(), jpeg)) {
     Finish(T("No se pudo guardar la foto."));
@@ -372,6 +570,7 @@ void SetMine(const std::string& jpeg, const char* how) {
   Finish(T("Foto de perfil guardada."));
 }
 
+#if defined(_WIN32)
 void FromFile(IWICImagingFactory* wic, const std::wstring& path) {
   ComPtr<IWICBitmapDecoder> decoder;
   ComPtr<IWICBitmapFrameDecode> frame;
@@ -385,8 +584,28 @@ void FromFile(IWICImagingFactory* wic, const std::wstring& path) {
   }
   SetMine(MakeAvatar(wic, frame.Get(), OrientationOf(frame.Get())), "a file");
 }
+#else
+void FromFile(Imaging*, const std::string& path) {
+  std::string data;
+  std::error_code ec;
+  const std::filesystem::path file(path);
+  const uintmax_t size = std::filesystem::file_size(file, ec);
+  if (!ec && size > 0 && size <= (64u << 20)) {
+    std::ifstream in(file, std::ios::binary);
+    if (in) data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  std::string jpeg = data.empty() ? std::string() : AvatarOf(data, OrientationOf(data));
+  if (jpeg.empty()) {
+    REXLOG_WARN("[avatars] a picture chosen did not open");
+    Finish(T("No se pudo abrir esa imagen: probá con una JPG o PNG."));
+    return;
+  }
+  SetMine(jpeg, "a file");
+}
+#endif
 
 // A file of Discord's servers (https://cdn.discordapp.com<path>); "" on failure. 4 MB at most.
+#if defined(_WIN32)
 std::string Download(const std::wstring& path) {
   std::string body;
   HINTERNET session = WinHttpOpen(L"mk9-lauta", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -417,6 +636,24 @@ std::string Download(const std::wstring& path) {
   WinHttpCloseHandle(session);
   return body.size() < (4u << 20) ? body : std::string();
 }
+#else
+std::string Download(const std::string& path) {
+  net::HttpOptions options;
+  options.connect_timeout_ms = 5000;
+  options.timeout_ms = 16000;
+  std::string body;
+  bool too_big = false;
+  const net::HttpResult r = net::HttpGet("https://cdn.discordapp.com" + path, options, [&](const char* data, size_t n) {
+    if (body.size() + n >= (4u << 20)) {
+      too_big = true;
+      return false;
+    }
+    body.append(data, n);
+    return true;
+  });
+  return r.ok && r.status == 200 && !too_big ? body : std::string();
+}
+#endif
 
 bool Digits(const std::string& s) {
   return !s.empty() && s.size() <= 24 && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
@@ -428,6 +665,7 @@ bool AvatarId(const std::string& s) {
   });
 }
 
+#if defined(_WIN32)
 void FromDiscord(IWICImagingFactory* wic) {
   std::string id, avatar;
   if (!discord::User(&id, &avatar, 3000)) {
@@ -456,6 +694,30 @@ void FromDiscord(IWICImagingFactory* wic) {
   }
   SetMine(MakeAvatar(wic, frame.Get(), 1), "Discord's");
 }
+#else
+void FromDiscord(Imaging*) {
+  std::string id, avatar;
+  if (!discord::User(&id, &avatar, 3000)) {
+    Finish(T("Abrí Discord en esta PC y probá de nuevo."));
+    return;
+  }
+  if (avatar.empty()) {
+    Finish(T("Tu cuenta de Discord no tiene foto."));
+    return;
+  }
+  if (!Digits(id) || !AvatarId(avatar)) {
+    Finish(T("No se pudo bajar tu foto de Discord."));
+    return;
+  }
+  const std::string png = Download("/avatars/" + id + "/" + avatar + ".png?size=256");
+  std::string jpeg = png.empty() ? std::string() : AvatarOf(png, 1);
+  if (jpeg.empty()) {
+    Finish(T("No se pudo bajar tu foto de Discord."));
+    return;
+  }
+  SetMine(jpeg, "Discord's");
+}
+#endif
 
 // The newest kKeep of the others' pictures stay (the player's own always).
 void Prune(const std::string& keep) {
@@ -489,13 +751,13 @@ std::unordered_map<std::string, Texture> g_textures;
 std::vector<ImTextureData*> g_dying;  // asked to go: deleted once the overlay let them go
 
 void Decode(const std::string& hash) {
-  Pictures().Post([hash](IWICImagingFactory* wic) {
+  Pictures().Post([hash](Imaging* wic) {
     Decoded decoded;
     decoded.hash = hash;
     std::string data = ReadFile(CachePath(hash));
     if (data.empty() && hash == MineHash()) data = MineData();
     std::vector<uint8_t> rgba;
-    UINT w = 0, h = 0;
+    uint32_t w = 0, h = 0;
     if (HashOf(data) == hash && Pixels(wic, data, true, &rgba, &w, &h)) {
       decoded.width = w;
       decoded.height = h;
@@ -607,6 +869,7 @@ void ChooseFile() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_note.clear();
   }
+#if defined(_WIN32)
   const HWND owner = GetForegroundWindow();
   const std::wstring title = Wide(T("Elegí tu foto de perfil"));
   const std::wstring kind = Wide(T("Imágenes"));
@@ -643,12 +906,56 @@ void ChooseFile() {
     }
     Pictures().Post([path](IWICImagingFactory* wic) { FromFile(wic, path); });
   }).detach();
+#else
+  // mk9-lauta (2026-11-13): Linux: the desktop's own dialog (SDL's: the XDG portal, else zenity), from SDL's main
+  // thread as SDL asks; the answer comes back by Chosen (on whatever thread SDL says it on)
+  SDL_RunOnMainThread(
+      [](void*) {
+        static SDL_DialogFileFilter filters[2];
+        filters[0] = {T("Imágenes"), "jpg;jpeg;jfif;png;bmp;gif"};
+        filters[1] = {"*", "*"};
+        SDL_Window* window = nullptr;
+        int count = 0;
+        if (SDL_Window** windows = SDL_GetWindows(&count)) {
+          if (count > 0) window = windows[0];
+          SDL_free(windows);
+        }
+        const SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, filters);
+        SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, 2);
+        SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING, T("Elegí tu foto de perfil"));
+        SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_WINDOW_POINTER, window);
+        SDL_SetBooleanProperty(props, SDL_PROP_FILE_DIALOG_MANY_BOOLEAN, false);
+        SDL_ShowFileDialogWithProperties(
+            SDL_FILEDIALOG_OPENFILE,
+            [](void*, const char* const* files, int) {
+              if (!files) {  // no dialog (no portal, no zenity)
+                REXLOG_WARN("[avatars] the file dialog did not open: {}", SDL_GetError());
+                Finish(T("No se pudo abrir el selector de archivos."));
+                return;
+              }
+              if (!files[0]) {  // cancelled
+                g_busy.store(false);
+                return;
+              }
+              const std::string path = files[0];
+              Pictures().Post([path](Imaging* wic) { FromFile(wic, path); });
+            },
+            nullptr, props);
+        SDL_DestroyProperties(props);
+      },
+      nullptr, false);
+#endif
 }
 
 void UseFile(const std::string& path) {
   if (path.empty() || g_busy.exchange(true)) return;
+#if defined(_WIN32)
   const std::wstring wide = Wide(path);
   Pictures().Post([wide](IWICImagingFactory* wic) { FromFile(wic, wide); });
+#else
+  Pictures().Post([path](Imaging* wic) { FromFile(wic, path); });
+#endif
 }
 
 void UseDiscord() {
@@ -657,7 +964,7 @@ void UseDiscord() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_note.clear();
   }
-  Pictures().Post([](IWICImagingFactory* wic) { FromDiscord(wic); });
+  Pictures().Post([](Imaging* wic) { FromDiscord(wic); });
 }
 
 void Remove() {
@@ -697,9 +1004,9 @@ std::string Read(const std::string& hash) {
 void Store(const std::string& hash_in, const std::string& jpeg) {
   const std::string hash = CleanHash(hash_in);
   if (hash.empty() || jpeg.empty() || jpeg.size() > kMaxBytes || HashOf(jpeg) != hash || Have(hash)) return;
-  Pictures().Post([hash, jpeg](IWICImagingFactory* wic) {
+  Pictures().Post([hash, jpeg](Imaging* wic) {
     std::vector<uint8_t> rgba;
-    UINT w = 0, h = 0;
+    uint32_t w = 0, h = 0;
     if (!Pixels(wic, jpeg, true, &rgba, &w, &h)) {
       REXLOG_WARN("[avatars] a picture from another game is not a {}x{} JPEG: dropped", kSize, kSize);
       return;

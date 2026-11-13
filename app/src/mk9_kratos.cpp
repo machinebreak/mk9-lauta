@@ -149,13 +149,25 @@ bool Mk9KratosNullGuard(PPCRegister& r3) {
 // ---------------------------------------------------------------------------------------------------------------------
 // F2 > Kratos: the installer (tools/kratos/kratos_install.py's steps, each checked) and the removal.
 
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__SWITCH__))
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <commctrl.h>
 #include <shobjidl.h>
+#else
+// mk9-lauta (2026-11-13): Linux: the same steps; a file replaced by rename after an fsync, the download's window a small
+// one of the game's (mk9_small_window.h)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include "imgui.h"
+#include "mk9_platform.h"
+#include "mk9_small_window.h"
+#endif
 
 #include <cstdio>
 #include <cstring>
@@ -247,14 +259,29 @@ bool WriteNew(const fs::path& file, std::string_view data) {
   std::error_code ec;
   fs::create_directories(file.parent_path(), ec);
   fs::path temp = file;
+#if defined(_WIN32)
   temp += L".kratos_tmp";
+#else
+  temp += ".kratos_tmp";
+#endif
   {
     std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     if (!out) return false;
     out.write(data.data(), std::streamsize(data.size()));
     if (!out.good()) return false;
   }
+#if defined(_WIN32)
   return MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+  // on the disk before it takes the old one's place (Windows: MOVEFILE_WRITE_THROUGH); rename replaces in one step
+  if (std::FILE* written = platform::OpenFile(temp, "rb+")) {
+    fsync(fileno(written));
+    std::fclose(written);
+  }
+  std::error_code rename_ec;
+  fs::rename(temp, file, rename_ec);
+  return !rename_ec;
+#endif
 }
 
 bool CopyNew(const fs::path& from, const fs::path& to) {
@@ -641,12 +668,20 @@ Fetch g_fetch;
 void FetchWorker() {
   const fs::path zip = ZipPath();
   fs::path partial = zip;
+#if defined(_WIN32)
   partial += L".partial";
+#else
+  partial += ".partial";
+#endif
   std::error_code ec;
   fs::create_directories(zip.parent_path(), ec);
   uint64_t got = fs::exists(partial, ec) ? fs::file_size(partial, ec) : 0;
   if (ec || got >= kZipSize) got = 0;  // nothing usable there: from the start
+#if defined(_WIN32)
   FILE* out = _wfopen(partial.c_str(), got ? L"ab" : L"wb");
+#else
+  FILE* out = platform::OpenFile(partial, got ? "ab" : "wb");
+#endif
   if (!out) {
     REXLOG_ERROR("[kratos] could not write {}", rex::path_to_utf8(partial));
     std::lock_guard<std::mutex> lock(g_fetch_mutex);
@@ -673,7 +708,13 @@ void FetchWorker() {
   } else if (!ZipGood(partial)) {
     REXLOG_ERROR("[kratos] the download is not the port's release (size or SHA-256): discarded");
   } else {
+#if defined(_WIN32)
     ready = MoveFileExW(partial.c_str(), zip.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    std::error_code rename_ec;
+    fs::rename(partial, zip, rename_ec);
+    ready = !rename_ec;
+#endif
     if (ready) REXLOG_INFO("[kratos] downloaded: he comes at the next start");
   }
   if (!ready && ok) fs::remove(partial, ec);  // a whole download that is not the port's: never kept
@@ -702,13 +743,18 @@ bool StartFetchLocked() {
   if (g_fetch.downloading || g_fetch.ready) return false;
   g_fetch.downloading = true;
   std::thread([] {
+#if defined(_WIN32)
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#else
+    setpriority(PRIO_PROCESS, id_t(syscall(SYS_gettid)), 5);  // this thread's nice (Linux's are per thread)
+#endif
     FetchWorker();
   }).detach();
   return true;
 }
 
 // The window before the game: the download's bar, and a button to play without him meanwhile (the download goes on).
+#if defined(_WIN32)
 constexpr int kIdSkip = 101;
 constexpr UINT_PTR kTimer = 1;
 struct FetchWindow {
@@ -816,6 +862,42 @@ void RunFetchWindow(FetchWindow& w) {
   DeleteObject(w.font);
   DeleteObject(w.title_font);
 }
+#else
+// mk9-lauta (2026-11-13): Linux: a small window of the game's (mk9_small_window.h), the same words, bar and button.
+struct FetchWindow {
+  bool skipped = false;
+};
+FetchWindow* g_window = nullptr;
+
+void RunFetchWindow(FetchWindow& w) {
+  small_window::Run(
+      "MK9 Online by Lauta - Kratos", 560, 230,
+      [&w](const small_window::Look& look) {
+        const Fetch f = FetchStatus();
+        if (!f.downloading) return false;
+        const float s = look.scale;
+        ImGui::PushFont(look.title, 28.0f * s);
+        ImGui::TextUnformatted("Descargando a Kratos");
+        ImGui::PopFont();
+        ImGui::TextWrapped(
+            "Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él. Si querés, "
+            "podés jugar ya: se sigue descargando y aparece la próxima vez que abras el juego.");
+        ImGui::Spacing();
+        ImGui::ProgressBar(std::clamp(f.progress, 0.0f, 1.0f), ImVec2(-1.0f, 20.0f * s), "");
+        ImGui::Text("%d de %d MB", int(f.progress * float(kZipSize) / 1000000.0f), int((kZipSize + 500000) / 1000000));
+        ImGui::SameLine(ImGui::GetWindowWidth() - 240.0f * s - ImGui::GetStyle().WindowPadding.x);
+        if (ImGui::Button("Jugar sin Kratos por ahora", ImVec2(240.0f * s, 34.0f * s))) {
+          w.skipped = true;
+          return false;
+        }
+        return true;
+      },
+      [&w] {
+        w.skipped = true;
+        return true;
+      });
+}
+#endif
 
 void FetchAtStart() {
   if (!FetchWanted()) return;
@@ -825,8 +907,12 @@ void FetchAtStart() {
   }
   FetchWindow window;
   g_window = &window;
+#if defined(_WIN32)
   std::thread ui([&window] { RunFetchWindow(window); });  // a message loop of its own
   ui.join();
+#else
+  RunFetchWindow(window);  // SDL's window: on the main thread (this one), as SDL asks
+#endif
   g_window = nullptr;
   REXLOG_INFO("[kratos] the start's window: {}", window.skipped ? "the player went on without him (the download goes on)"
                                                                 : "the download ended");
@@ -847,7 +933,7 @@ Fetch FetchStatus() {
 
 }  // namespace mk9::kratos
 
-#else  // not Windows: no installer
+#else  // the Switch: no installer
 
 namespace mk9::kratos {
 namespace {

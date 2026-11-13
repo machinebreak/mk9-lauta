@@ -2,12 +2,23 @@
 
 #include "online/flags.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <winhttp.h>
+#else
+// mk9-lauta (2026-11-13): Linux: the trace by libcurl (curl_http.h), the region from the locale (LANG)
+#include <cstdlib>
+
+#include <string_view>
+
+#include "online/curl_http.h"
+#include "online/i18n.h"
+#endif
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -114,6 +125,7 @@ std::string Upper(std::string s) {
 }
 
 // Cloudflare's trace answers the address's country ("loc=AR"); "" when it cannot be reached.
+#if defined(_WIN32)
 std::string ByConnection() {
   std::string out;
   HINTERNET session = WinHttpOpen(L"mk9-lauta", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
@@ -154,6 +166,33 @@ std::string ByRegion() {
   for (int i = 0; i < 2 && iso2[i]; ++i) out += char(iso2[i]);
   return Upper(out);
 }
+#else
+std::string ByConnection() {
+  net::HttpOptions options;
+  options.timeout_ms = 4000;
+  options.connect_timeout_ms = 4000;
+  std::string body;
+  if (!net::HttpGetText("https://www.cloudflare.com/cdn-cgi/trace", options, &body, 4096).ok) return {};
+  const size_t at = body.find("\nloc=");
+  return at != std::string::npos && at + 7 <= body.size() ? Upper(body.substr(at + 5, 2)) : std::string();
+}
+
+// The system's region: the locale's country ("es_AR.UTF-8" -> AR), as the desktop's region settings write it.
+std::string ByRegion() {
+  for (const char* var : {"LC_ALL", "LC_ADDRESS", "LC_MESSAGES", "LANG"}) {
+    const char* value = std::getenv(var);
+    if (!value || !*value) continue;
+    const std::string locale = value;
+    const size_t underscore = locale.find('_');
+    if (underscore == std::string::npos || underscore + 3 > locale.size()) continue;
+    const std::string country = Upper(locale.substr(underscore + 1, 2));
+    if (std::isalpha(static_cast<unsigned char>(country[0])) && std::isalpha(static_cast<unsigned char>(country[1]))) {
+      return country;
+    }
+  }
+  return {};
+}
+#endif
 
 }  // namespace
 
@@ -190,7 +229,29 @@ double EstimatedRoundTripMs(const std::string& a, const std::string& b) {
   return 30.0 + km * 0.022;
 }
 
+#if !defined(_WIN32)
+// mk9-lauta (2026-11-13): Linux has no call for a country's name in the player's language: the Unicode CLDR's names
+// in the game's three (tools/online/make_country_names.py)
+struct CountryName {
+  const char* code;
+  const char* es;
+  const char* en;
+  const char* pt;
+};
+const CountryName kCountryNames[] = {
+#include "online/country_names.inc"
+};
+#endif
+
 std::string Name(const std::string& code) {
+#if !defined(_WIN32)
+  const std::string upper = Upper(code);
+  const std::string_view lang = i18n::Language();
+  for (const CountryName& n : kCountryNames) {
+    if (upper == n.code) return lang == "en" ? n.en : lang == "pt" ? n.pt : n.es;
+  }
+  return upper;
+#else
   // Windows' own name of the country, in its language (Windows 10 and later)
   using GetGeoInfoEx_t = int(WINAPI*)(PWSTR, GEOTYPE, PWSTR, int);
   static const auto get = reinterpret_cast<GetGeoInfoEx_t>(
@@ -207,6 +268,7 @@ std::string Name(const std::string& code) {
     }
   }
   return Upper(code);
+#endif
 }
 
 std::string Mine() {

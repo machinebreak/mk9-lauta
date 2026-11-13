@@ -6,6 +6,7 @@
 #if defined(_WIN32)
 #include <excpt.h>
 #endif
+#include "renut_engine/gpu/guest/guarded_read.h"  // mk9-lauta: Linux's guard
 #include "mk9_button_icons.h"  // mk9-nx: the Switch button icons (app/src)
 
 #include <algorithm>
@@ -1151,6 +1152,14 @@ void FlushTextureFillsLocked() {
   for (const PendingFill &f : g_pending_fills) {
 #if defined(_WIN32)
     if (!ReadLevelGuarded(f)) {
+      std::memset(f.dst, 0, size_t(f.slice_pitch) * f.depth);
+      NoteGoneGuestRead("a texture", f.src.base, f.row_pitch * f.blocks_h, 0);
+    }
+#elif defined(__linux__) && !defined(__SWITCH__)
+    // mk9-lauta (2026-11-13): Linux: the same guard (guest/guarded_read.h)
+    if (!detail::GuardedRead([&] {
+          ReadLevel(f.info, f.fetch, f.src, f.blocks_w, f.blocks_h, f.depth, f.dst, f.row_pitch, f.slice_pitch);
+        })) {
       std::memset(f.dst, 0, size_t(f.slice_pitch) * f.depth);
       NoteGoneGuestRead("a texture", f.src.base, f.row_pitch * f.blocks_h, 0);
     }

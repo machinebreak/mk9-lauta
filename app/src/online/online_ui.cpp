@@ -2,15 +2,19 @@
 
 #include "online/online_ui.h"
 
+#include "mk9_platform.h"
+
 #include "first_run_ui.h"
 #include "mk9_brand.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
 #include "options_ui.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -110,8 +114,7 @@ std::string Trim(const char* text) {
 std::string Clock24(int64_t ms) {
   if (ms <= 0) return "--:--";
   const std::time_t t = std::time_t(ms / 1000);
-  std::tm local{};
-  localtime_s(&local, &t);
+  const std::tm local = mk9::platform::LocalTime(t);
   return fmt::format("{:02}:{:02}", local.tm_hour, local.tm_min);
 }
 
@@ -409,16 +412,27 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (lobby.link_error.empty()) return;
     const char* help =
         lobby.link_error == "dns"
+#if defined(_WIN32)
             ? T("Tu conexión no encuentra el servidor del online (falla el DNS). Probá cambiar el DNS de Windows a 1.1.1.1 "
                 "y 8.8.8.8, o conectarte con otra red (por ejemplo, los datos del celular).")
+#else
+            ? T("Tu conexión no encuentra el servidor del online (falla el DNS). Probá cambiar el DNS de tu conexión a "
+                "1.1.1.1 y 8.8.8.8 (en la configuración de red del escritorio), o conectarte con otra red (por ejemplo, "
+                "los datos del celular).")
+#endif
         : lobby.link_error == "connect" || lobby.link_error == "timeout"
             ? T("Tu conexión no llega al servidor del online: puede ser un firewall, un antivirus o tu proveedor de "
                 "internet. Probá con otra red (por ejemplo, los datos del celular) o una VPN, y contanos qué proveedor "
                 "tenés.")
         : lobby.link_error == "tls"
+#if defined(_WIN32)
             ? T("No se pudo verificar la conexión segura con el servidor. Revisá que la fecha y la hora de la PC estén "
                 "bien y que Windows esté actualizado (sus certificados). Un antivirus que revisa las conexiones también "
                 "puede causarlo.")
+#else
+            ? T("No se pudo verificar la conexión segura con el servidor. Revisá que la fecha y la hora de la PC estén "
+                "bien y que el sistema esté actualizado (sus certificados: el paquete ca-certificates).")
+#endif
         : lobby.link_error == "http" ? T("El servidor del online respondió con un error: probá de nuevo en un rato.")
                                      : T("No se pudo conectar con el servidor del online.");
     ImGui::PushStyleColor(ImGuiCol_Text, kGrey);
@@ -1165,9 +1179,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     for (const profiles::Match& m : matches) {
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
-      std::tm local{};
-      const std::time_t t = std::time_t(m.at);
-      localtime_s(&local, &t);
+      const std::tm local = mk9::platform::LocalTime(std::time_t(m.at));
       ImGui::TextColored(kGrey, "%02d/%02d %02d:%02d", local.tm_mday, local.tm_mon + 1, local.tm_hour, local.tm_min);
       ImGui::TableNextColumn();
       if (m.result > 0) {
@@ -1436,9 +1448,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   void ListReplays() {
     replays_listed_ = Clock::now();
     replays_.clear();
-    wchar_t exe[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
+    const std::filesystem::path logs = mk9::platform::ExeDir() / "logs";
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(logs, ec)) {
       const std::string name = entry.path().filename().string();

@@ -2,9 +2,15 @@
 
 #include "mk9_renderer_start.h"
 
+#include "mk9_platform.h"
+
+#include <cstdlib>
+
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -31,10 +37,12 @@ REXCVAR_DEFINE_STRING(mk9_renderer_test_fail, "", "MK9",
 
 // A laptop with two GPUs runs the game on the dedicated one when the executable exports these (NVIDIA Optimus, AMD
 // PowerXpress): the drivers read the .exe's exports, not a DLL's (the SDK's rexgpu DLL has them, to no effect).
+#if defined(_WIN32)
 extern "C" {
 __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
+#endif
 
 namespace mk9::renderer_start {
 namespace {
@@ -48,9 +56,7 @@ std::atomic<bool> g_presented{false};
 std::atomic<bool> g_lost{false};
 
 std::filesystem::path MarkerPath() {
-  wchar_t exe[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  return std::filesystem::path(exe).parent_path() / L"logs" / L"renderer_start.txt";
+  return mk9::platform::ExeDir() / "logs" / "renderer_start.txt";
 }
 
 // logs/renderer_start.txt: "<api> <failed starts in a row> <pending|ok|lost> [<the last API that showed an image>]"
@@ -116,7 +122,12 @@ void BeforeDevice() {
   failed = failed_before ? failed + 1 : 0;
   const bool chosen_failed = failed_before && !ok_api.empty() && ok_api != current;  // F2's new choice, failed once
   std::lock_guard lock(g_mutex);
+#if !defined(_WIN32)
+  // mk9-lauta (2026-11-13): Linux has Vulkan only: nothing to go back to (the marker still says how the starts went)
+  if (false) {
+#else
   if (failed >= 2 || chosen_failed) {
+#endif
     const std::string other = chosen_failed ? ok_api : current == "vulkan" ? "d3d12" : "vulkan";
     REXLOG_WARN("[renderer] {} did not get an image on screen in the last {} start(s) (logs/renderer_start.txt): {} "
                 "from now on (renut_gpu_backend, saved in mk9.toml)",
@@ -140,7 +151,11 @@ void BeforeDevice() {
   // tests (mk9_renderer_test_fail): a start of that API that dies here, as a driver's would
   if (const std::string fail = REXCVAR_GET(mk9_renderer_test_fail); !fail.empty() && fail == current) {
     REXLOG_WARN("[renderer] mk9_renderer_test_fail: this start of {} ends here", Name(current));
+#if defined(_WIN32)
     TerminateProcess(GetCurrentProcess(), 3);
+#else
+    std::_Exit(3);
+#endif
   }
 }
 
@@ -166,6 +181,7 @@ void DeviceLost() {
     failed = g_presented.load() ? 0 : g_failed;
     if (!api.empty()) Write(api, failed, "lost", g_ok_api);
   }
+#if defined(_WIN32)
   const std::string other = api == "vulkan" ? "DirectX 12" : "Vulkan";
   REXLOG_ERROR("[renderer] the {} device was lost: told the player; a second time in a row swaps to {} at the next "
                "start",
@@ -177,6 +193,15 @@ void DeviceLost() {
                   "actualizar el driver de la placa de video.\n\nEl detalle quedó en la carpeta logs.",
                   Name(api), other)
 );
+#else
+  // mk9-lauta (2026-11-13): Linux has Vulkan only: no other API to try at the next start
+  REXLOG_ERROR("[renderer] the Vulkan device was lost: told the player");
+  rex::ShowSimpleMessageBox(
+      rex::SimpleMessageBoxType::Error,
+      "La placa de video dejó de responder (se perdió el dispositivo de Vulkan): el juego ya no puede dibujar.\n\n"
+      "Cerralo y volvé a abrirlo. Si vuelve a pasar, actualizá el driver de la placa de video (Mesa en AMD e Intel, "
+      "el de NVIDIA en NVIDIA).\n\nEl detalle quedó en la carpeta logs.");
+#endif
 }
 
 void Install() {

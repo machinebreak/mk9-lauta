@@ -85,6 +85,27 @@ if(REXGLUE_PLATFORM_SWITCH)
         target_sources(${TARGET} PRIVATE "${BANJO_RENUT_SHADER_CACHE_CPP}")
         set_source_files_properties("${BANJO_RENUT_SHADER_CACHE_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     endfunction()
+elseif(UNIX AND NOT APPLE)
+    # mk9-lauta (2026-11-13): the native Linux build. The repository carries DXC for Windows only, so XenosRecomp does
+    # not run here: the build embeds the Windows build's SPIR-V cache (tools/renut_linux_shader_cache.py), the very
+    # shaders the Windows build draws with on Vulkan. MK9_RENUT_XENOS_RECOMP_LINUX=ON translates them here instead
+    # (with a DXC for Linux in the XenosRecomp tree).
+    option(MK9_RENUT_XENOS_RECOMP_LINUX "Linux: translate the game shaders with XenosRecomp here" OFF)
+    if(NOT MK9_RENUT_XENOS_RECOMP_LINUX)
+        set(MK9_RENUT_SHADER_CACHE_CPP "${CMAKE_SOURCE_DIR}/../out/renut_linux/shader_cache_linux.cpp" CACHE FILEPATH
+            "Renut's shader cache for the Linux build (from the Windows build: tools/renut_linux_shader_cache.py)")
+        # Renut's own shaders (present, overlay, resolves) too: the Windows build's SPIR-V headers (no DXC here)
+        set(MK9_PREBUILT_HOST_SHADERS_DIR "${CMAKE_SOURCE_DIR}/../out/renut_linux/host_shaders" CACHE PATH
+            "Renut's host shaders for the Linux build (from the Windows build: tools/renut_linux_shader_cache.py)")
+        function(banjo_renut_shader_cache_override TARGET)
+            if(NOT EXISTS "${MK9_RENUT_SHADER_CACHE_CPP}")
+                message(FATAL_ERROR "No ${MK9_RENUT_SHADER_CACHE_CPP}: build the Windows tree, then run "
+                                    "tools/renut_linux_shader_cache.py")
+            endif()
+            target_sources(${TARGET} PRIVATE "${MK9_RENUT_SHADER_CACHE_CPP}")
+            set_source_files_properties("${MK9_RENUT_SHADER_CACHE_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        endfunction()
+    endif()
 endif()
 
 # sa2-nx: the shader steps run Python (the early alpha pass, and the host shaders' deko3d blobs on the Switch build):

@@ -2,28 +2,51 @@
 
 #include "online/net_udp.h"
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+// mk9-lauta (2026-11-13): Linux: POSIX sockets, under Winsock's names where they are the same calls
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <cerrno>
+using SOCKET = int;
+constexpr int INVALID_SOCKET = -1;
+inline int closesocket(int s) { return ::close(s); }
+inline int WSAGetLastError() { return errno; }
+#endif
 
 #include <cstring>
 #include <mutex>
 
 #include <rex/logging.h>
 
+#if defined(_WIN32)
 #pragma comment(lib, "ws2_32.lib")
+#endif
 
 namespace mk9::net {
 namespace {
 
 bool StartWinsock() {
+#if defined(_WIN32)
   static const bool ok = [] {
     WSADATA data;
     return WSAStartup(MAKEWORD(2, 2), &data) == 0;
   }();
   return ok;
+#else
+  return true;
+#endif
 }
 
 }  // namespace
@@ -40,6 +63,7 @@ bool UdpSocket::Open(uint16_t port) {
     REXLOG_ERROR("[net] socket: error {}", WSAGetLastError());
     return false;
   }
+#if defined(_WIN32)
   u_long nonblocking = 1;
   ioctlsocket(s, FIONBIO, &nonblocking);
   // A datagram the peer could not take must not end the socket (Windows reports ICMP port unreachable as an error on
@@ -47,6 +71,10 @@ bool UdpSocket::Open(uint16_t port) {
   BOOL off = FALSE;
   DWORD returned = 0;
   WSAIoctl(s, _WSAIOW(IOC_VENDOR, 12), &off, sizeof(off), nullptr, 0, &returned, nullptr, nullptr);
+#else
+  fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK);
+  fcntl(s, F_SETFD, FD_CLOEXEC);  // not into a game started from this one
+#endif
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -56,7 +84,11 @@ bool UdpSocket::Open(uint16_t port) {
     closesocket(s);
     return false;
   }
+#if defined(_WIN32)
   int len = sizeof(addr);
+#else
+  socklen_t len = sizeof(addr);
+#endif
   getsockname(s, reinterpret_cast<sockaddr*>(&addr), &len);
   local_port_ = ntohs(addr.sin_port);
   socket_ = static_cast<uintptr_t>(s);
@@ -108,7 +140,11 @@ int UdpSocket::Receive(void* buffer, size_t capacity) {
   if (socket_ == ~uintptr_t(0)) return -1;
   for (;;) {
     sockaddr_in from{};
+#if defined(_WIN32)
     int len = sizeof(from);
+#else
+    socklen_t len = sizeof(from);
+#endif
     const int got = ::recvfrom(static_cast<SOCKET>(socket_), static_cast<char*>(buffer), int(capacity), 0,
                                reinterpret_cast<sockaddr*>(&from), &len);
     if (got < 0) return -1;
@@ -129,7 +165,11 @@ bool UdpSocket::WaitReadable(int timeout_ms) {
   FD_ZERO(&set);
   FD_SET(static_cast<SOCKET>(socket_), &set);
   timeval tv{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
+#if defined(_WIN32)
   return ::select(0, &set, nullptr, nullptr, &tv) > 0;
+#else
+  return ::select(static_cast<SOCKET>(socket_) + 1, &set, nullptr, nullptr, &tv) > 0;
+#endif
 }
 
 }  // namespace mk9::net

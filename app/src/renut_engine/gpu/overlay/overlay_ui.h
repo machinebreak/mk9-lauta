@@ -14,6 +14,7 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 
@@ -31,6 +32,10 @@ ImFont *StrongFont();
 // mk9-lauta (2026-11-11, E6): the game window's scale in Windows' display settings (its DPI / 96: 1.25 at 125 %, 1.5
 // at 150 %); 1 before Start or where Windows does not say.
 float DpiScale();
+
+// mk9-lauta (2026-11-13): the screens' Barlow fonts as embedded (0 regular, 1 semibold, 2 condensed bold), for what
+// draws before the overlay exists (the Linux first start's installer). Null on the Switch.
+const unsigned char *EmbeddedFont(int which, size_t *size);
 
 // An overlay window. Draw builds its widgets, on the UI thread with the
 // overlay's context current, once per overlay frame.

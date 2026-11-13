@@ -2,13 +2,17 @@
 
 #include "options_ui.h"
 
+#include "mk9_platform.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -138,19 +142,26 @@ const std::vector<Option>& DisplayOptions() {
       {"fullscreen", "Pantalla",
        {{"true", "Pantalla completa"}, {"false", "Ventana"}},
        "F11 o Alt+Enter cambian entre pantalla completa y ventana en cualquier momento."},
+#if defined(_WIN32)  // mk9-lauta (2026-11-13): Linux has Vulkan only
       {"renut_gpu_backend", "API gráfica",
        {{"d3d12", "DirectX 12"}, {"vulkan", "Vulkan"}},
        "Si el juego anda mal o se ve raro con una, probá la otra (algunas placas y drivers van mejor con Vulkan). Se "
        "aplica al volver a abrir el juego.",
        true},
+#endif
       {"mk9_show_fps", "Mostrar FPS",
        {{"false", "No"}, {"true", "Sí, arriba a la izquierda"}},
        "Los cuadros por segundo que se ven y, si se saltean, los que se dibujan."},
       {"mk9_ui_scale", "Tamaño de los menús F1 y F2",
        {{"auto", "Automático (según la pantalla)"}, {"1", "100 %"}, {"1.25", "125 %"}, {"1.5", "150 %"},
         {"2", "200 %"}},
+#if defined(_WIN32)
        "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K) y "
        "sigue la escala de Windows (125 %, 150 %)."},
+#else
+       "El tamaño del texto de estas ventanas. Automático lo agranda en pantallas de más de 1080 líneas (1440p, 4K) y "
+       "sigue la escala del escritorio (125 %, 150 %)."},
+#endif
       {"mk9_brand_menu", "Redes en el menú principal",
        {{"true", "Mostrar"}, {"false", "Ocultar"}},
        "MK9 Online by Lauta y los botones de Discord, WhatsApp, Instagram, Kick, YouTube y X, abajo a la derecha del "
@@ -275,9 +286,7 @@ std::string WithoutKey(const std::string& bind, int virtual_key) {
 }
 
 std::filesystem::path ConfigPath() {
-  wchar_t path[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, path, MAX_PATH);
-  return std::filesystem::path(path).parent_path() / "mk9.toml";
+  return mk9::platform::ExeDir() / "mk9.toml";
 }
 
 // A key's line as TOML (a string quoted).

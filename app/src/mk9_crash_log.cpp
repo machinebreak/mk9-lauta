@@ -9,6 +9,8 @@
 
 #include <dbghelp.h>
 
+#include "mk9_crash_log.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -124,15 +126,26 @@ const bool g_test_crash = [] {
 #if defined(__linux__)
 
 #include <dlfcn.h>
+#include <execinfo.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <mutex>
 
+#include <rex/exception_handler.h>
 #include <rex/logging.h>
 #include <rex/logging/api.h>
+
+#include "mk9_crash_log.h"
+#include "mk9_platform.h"
+#include "renut_engine/gpu/guest/guarded_read.h"
 
 namespace {
 
@@ -174,6 +187,85 @@ bool Install() {
 // Installed before main; it only logs, then re-raises with the previous action.
 const bool g_installed = Install();
 
+// mk9-lauta (2026-11-13): the last chance in the SDK's fault chain. On Linux the SDK's handler of SIGSEGV and SIGILL
+// (rex::arch::ExceptionHandler, which takes them over from the handlers above when the runtime is set up) asks its
+// handlers in turn and, when none takes the fault, returns to the instruction, which faults again: the game hangs at
+// 100 % of a core with nothing in its log. Last in that chain, this one writes the fault and the thread's stack (module
+// and offset of each frame) to logs/crash_<date>.txt (Windows' minidump's place) and the log, then gives the signal its
+// default action, so the fault, met again at the return, ends the process. A guarded read's fault (renut's
+// guarded_read.h) is left to its own handler, before this one in the chain.
+bool LastChance(rex::arch::Exception* ex, void*) {
+  using Code = rex::arch::Exception::Code;
+  if (ex->code() != Code::kAccessViolation && ex->code() != Code::kIllegalInstruction) return false;
+  if (renut::gpu::detail::t_guarded_read) return false;
+  const int sig = ex->code() == Code::kAccessViolation ? SIGSEGV : SIGILL;
+  static std::atomic<bool> reported{false};
+  if (!reported.exchange(true)) {
+    const uintptr_t pc = uintptr_t(ex->pc());
+    Dl_info dl{};
+    const char* name = "?";
+    uintptr_t base = 0;
+    if (dladdr(reinterpret_cast<void*>(pc), &dl) && dl.dli_fname) {
+      name = std::strrchr(dl.dli_fname, '/') ? std::strrchr(dl.dli_fname, '/') + 1 : dl.dli_fname;
+      base = reinterpret_cast<uintptr_t>(dl.dli_fbase);
+    }
+    char path[1024] = "";
+    const std::time_t now = std::time(nullptr);
+    std::tm t{};
+    localtime_r(&now, &t);
+    std::snprintf(path, sizeof(path), "%s/logs/crash_%04d%02d%02d_%02d%02d%02d.txt",
+                  mk9::platform::ExeDir().c_str(), t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
+                  t.tm_sec);
+    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+      dprintf(fd, "%s at %016lx (%s+0x%lx), fault address %016lx, thread %d\n",
+              sig == SIGSEGV ? "access violation" : "illegal instruction", (unsigned long)pc, name,
+              (unsigned long)(pc - base), (unsigned long)ex->fault_address(), int(gettid()));
+      void* frames[64];
+      const int count = backtrace(frames, 64);
+      for (int i = 0; i < count; ++i) {
+        Dl_info f{};
+        if (dladdr(frames[i], &f) && f.dli_fname) {
+          const char* module = std::strrchr(f.dli_fname, '/') ? std::strrchr(f.dli_fname, '/') + 1 : f.dli_fname;
+          dprintf(fd, "#%02d %s+0x%lx %s\n", i, module,
+                  (unsigned long)(uintptr_t(frames[i]) - uintptr_t(f.dli_fbase)), f.dli_sname ? f.dli_sname : "");
+        } else {
+          dprintf(fd, "#%02d %p\n", i, frames[i]);
+        }
+      }
+      close(fd);
+    }
+    REXLOG_CRITICAL("[crash] unhandled {} at {:016X} ({}+0x{:X}), fault address {:016X}, thread {}; stack in {}",
+                    sig == SIGSEGV ? "access violation" : "illegal instruction", pc, name, pc - base,
+                    ex->fault_address(), gettid(), fd >= 0 ? path : "not written");
+    rex::FlushLogging();
+  }
+  signal(sig, SIG_DFL);
+  return true;  // the instruction runs again: its fault now ends the process (the default action, a core dump)
+}
+
 }  // namespace
 
+namespace mk9::crash_log {
+
+void AfterRuntime() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    void* warm[1];
+    backtrace(warm, 1);  // libgcc's unwinder loaded now, not inside a fault
+    renut::gpu::detail::InstallGuardedReadHandler();
+    rex::arch::ExceptionHandler::Install(&LastChance, nullptr);
+  });
+}
+
+}  // namespace mk9::crash_log
+
 #endif
+
+#if !defined(__linux__)  // Windows (its handlers are in place before main), the Switch
+#include "mk9_crash_log.h"
+namespace mk9::crash_log {
+void AfterRuntime() {}
+}  // namespace mk9::crash_log
+#endif
+

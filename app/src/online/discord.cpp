@@ -7,9 +7,21 @@
 
 #include "online/discord.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#else
+// mk9-lauta (2026-11-13): Linux: the Discord app's socket (discord-ipc-N in the runtime folder; Flatpak's and Snap's
+// too), the same frames as Windows' pipe
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdlib>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -18,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -60,6 +73,16 @@ std::atomic<bool> g_started{false};
 bool g_have_user = false;
 std::string g_user_id, g_user_avatar;
 
+// This game's process id (Discord shows the activity while that process lives).
+uint32_t ProcessId() {
+#if defined(_WIN32)
+  return GetCurrentProcessId();
+#else
+  return uint32_t(getpid());
+#endif
+}
+
+#if defined(_WIN32)
 class Pipe {
  public:
   ~Pipe() { Close(); }
@@ -128,6 +151,97 @@ class Pipe {
   HANDLE handle_ = INVALID_HANDLE_VALUE;
   std::string in_;
 };
+#else
+class Pipe {
+ public:
+  ~Pipe() { Close(); }
+  bool Open() {
+    if (fd_ >= 0) return true;
+    std::vector<std::string> folders;
+    for (const char* var : {"XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"}) {
+      if (const char* v = std::getenv(var); v && *v) folders.push_back(v);
+    }
+    folders.push_back("/tmp");
+    for (const std::string& folder : folders) {
+      for (const char* sub : {"", "/app/com.discordapp.Discord", "/snap.discord"}) {
+        for (int i = 0; i < 10; ++i) {
+          const std::string path = folder + sub + "/discord-ipc-" + std::to_string(i);
+          sockaddr_un addr{};
+          if (path.size() >= sizeof(addr.sun_path)) continue;
+          addr.sun_family = AF_UNIX;
+          std::memcpy(addr.sun_path, path.c_str(), path.size() + 1);
+          const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+          if (fd < 0) return false;
+          if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+            fd_ = fd;
+            return true;
+          }
+          ::close(fd);
+        }
+      }
+    }
+    return false;
+  }
+  void Close() {
+    if (fd_ >= 0) ::close(fd_);
+    fd_ = -1;
+    in_.clear();
+  }
+  bool Write(uint32_t op, const json& body) {
+    const std::string text = body.dump();
+    std::string frame(8 + text.size(), '\0');
+    const uint32_t length = uint32_t(text.size());
+    std::memcpy(frame.data(), &op, 4);
+    std::memcpy(frame.data() + 4, &length, 4);
+    std::memcpy(frame.data() + 8, text.data(), text.size());
+    size_t done = 0;
+    while (done < frame.size()) {
+      const ssize_t n = ::send(fd_, frame.data() + done, frame.size() - done, MSG_NOSIGNAL);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) {
+        Close();
+        return false;
+      }
+      done += size_t(n);
+    }
+    return true;
+  }
+  // What came back, read without waiting; each whole frame's JSON to `on` (false: the socket is gone).
+  template <typename OnFrame>
+  bool Read(OnFrame&& on) {
+    for (;;) {
+      char buffer[4096];
+      const ssize_t n = ::recv(fd_, buffer, sizeof(buffer), MSG_DONTWAIT);
+      if (n > 0) {
+        in_.append(buffer, size_t(n));
+        continue;
+      }
+      if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) break;
+      Close();  // 0: Discord closed it; another error: gone
+      return false;
+    }
+    while (in_.size() >= 8) {
+      uint32_t op = 0, length = 0;
+      std::memcpy(&op, in_.data(), 4);
+      std::memcpy(&length, in_.data() + 4, 4);
+      if (length > (1u << 20)) {  // not Discord's
+        Close();
+        return false;
+      }
+      if (in_.size() < 8 + size_t(length)) break;
+      const json body = json::parse(in_.substr(8, length), nullptr, false);
+      in_.erase(0, 8 + size_t(length));
+      if (body.is_object()) on(op, body);
+    }
+    return true;
+  }
+  bool IsOpen() const { return fd_ >= 0; }
+
+ private:
+  int fd_ = -1;
+  std::string in_;
+};
+#endif
 
 // A text field of a frame ("" when missing, null or not a text: the replies' "evt" is null).
 std::string Field(const json& object, const char* key) {
@@ -193,7 +307,7 @@ void Run(std::string app_id) {
       if (wanted.since > 0) activity["timestamps"] = {{"start", wanted.since}};
     }
     if (pipe.Write(1, {{"cmd", "SET_ACTIVITY"},
-                       {"args", {{"pid", int(GetCurrentProcessId())}, {"activity", activity}}},
+                       {"args", {{"pid", int(ProcessId())}, {"activity", activity}}},
                        {"nonce", std::to_string(++nonce)}})) {
       sent = wanted;
       have_sent = true;

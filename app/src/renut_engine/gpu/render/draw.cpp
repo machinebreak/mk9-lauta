@@ -127,6 +127,7 @@ REXCVAR_DECLARE(bool, sa2_renut_neon_compare);  // sa2-nx (2026-10-20): backend/
 #if defined(_WIN32)
 #include <excpt.h>
 #endif
+#include "renut_engine/gpu/guest/guarded_read.h"  // mk9-lauta: Linux's guard
 
 namespace renut::gpu {
 
@@ -163,6 +164,15 @@ bool CopyGuarded(u8 *dst, const u8 *src, u32 size) {
     return false;
   }
   return true;
+}
+#elif defined(__linux__) && !defined(__SWITCH__)
+// mk9-lauta (2026-11-13): Linux: the same guard, by the SDK's fault handler (guest/guarded_read.h)
+bool ConvertVerticesGuarded(const HostVertexStream &stream, const u8 *guest, u32 stride, u32 count, u32 endian,
+                            u8 *host) {
+  return detail::GuardedRead([&] { ConvertVertices(stream, guest, stride, count, endian, host); });
+}
+bool CopyGuarded(u8 *dst, const u8 *src, u32 size) {
+  return detail::GuardedRead([&] { std::memcpy(dst, src, size); });
 }
 #else
 bool ConvertVerticesGuarded(const HostVertexStream &stream, const u8 *guest, u32 stride, u32 count, u32 endian,
@@ -2189,6 +2199,24 @@ bool ReadIndices(const u8 *src, u32 count, bool is32, u32 endian) {
   {
     QuietGuestFaultScope quiet;
     ok = ReadIndicesGuarded(src, count, is32, endian, g_indices.data());
+  }
+  if (!ok) {
+    NoteGoneGuestRead("an index buffer", src, count * (is32 ? 4 : 2), 0);
+    return false;
+  }
+#elif defined(__linux__) && !defined(__SWITCH__)
+  // mk9-lauta (2026-11-13): Linux: the same guard (guest/guarded_read.h), and the same test
+  static const bool test_gone = [] {
+    const char *v = std::getenv("MK9_TEST_GONE_READ");
+    return v && v[0] == '2';
+  }();
+  static uint64_t test_reads = 0;
+  if (test_gone && ++test_reads % 3000 == 0)
+    src = detail::GuestVirtualBase() + 0x3FC30780u;
+  bool ok;
+  {
+    QuietGuestFaultScope quiet;
+    ok = detail::GuardedRead([&] { ReadIndicesInto(src, count, is32, endian, g_indices.data()); });
   }
   if (!ok) {
     NoteGoneGuestRead("an index buffer", src, count * (is32 ? 4 : 2), 0);

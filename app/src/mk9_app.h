@@ -25,7 +25,9 @@
 #include "mk9_installer.h"
 #include "mk9_hardware.h"
 #include "mk9_overlay_input.h"
-#if defined(_WIN32)
+#include "mk9_platform.h"
+#include "mk9_crash_log.h"
+#if MK9_PC
 #include <rex/input/input_system.h>
 #endif
 #include "mk9_snapshot.h"
@@ -83,7 +85,7 @@ class Mk9App : public rex::ReXApp {
     }
     // Which renderer enhancements run (sa2-nx's switchable set), in one line; before any guest thread exists.
     sa2::enh::Resolve();
-#if defined(_WIN32)
+#if MK9_PC
     // mk9-lauta (2026-11-09): this PC's defaults: the first start's preset, the memory saving (mk9_hardware.h)
     mk9::hardware::ApplyDefaults();
 #endif
@@ -92,14 +94,14 @@ class Mk9App : public rex::ReXApp {
   // Without --game_data_root, use a game_root/ folder next to the executable, and on a PC build tree the
   // repository's assets/game_root. The disc names the executable Default.xex. An explicit path always wins.
   void OnConfigurePaths(rex::PathConfig& paths) override {
-#if defined(_WIN32)
+#if MK9_PC
     // mk9-lauta (2026-11-09): the folder the installer kept in mk9.toml (read here: the SDK loads mk9.toml later)
     if (paths.game_data_root.empty()) {
       paths.game_data_root = mk9::installer::ConfiguredRoot(paths.config_path);
     }
 #endif
     if (!paths.game_data_root.empty()) {
-#if defined(_WIN32)
+#if MK9_PC
       // mk9-lauta (2026-11-09): a configured folder that no longer holds the game: the installer again
       std::error_code missing;
       if (std::filesystem::is_regular_file(paths.game_data_root / "default.xex", missing) ||
@@ -132,7 +134,7 @@ class Mk9App : public rex::ReXApp {
         break;
       }
     }
-#if defined(_WIN32)
+#if MK9_PC
     // mk9-lauta (2026-11-09): no game files found: the first start's installer asks for the player's copy (an .iso
     // or a folder, mk9_installer.h); closed without one, the game ends
     const std::filesystem::path chosen = mk9::installer::Run(folder);
@@ -194,9 +196,11 @@ class Mk9App : public rex::ReXApp {
 
   // Test snapshots of the game image (mk9_snapshot_s), read from the presenter's guest output.
   void OnPostSetup() override {
+    // mk9-lauta (2026-11-13): Linux: the last chance in the SDK's fault chain, after its guest memory's (mk9_crash_log.h)
+    mk9::crash_log::AfterRuntime();
     // The options' key capture, ahead of the game's keyboard (mk9_controls.h), on the window's thread.
     app_context().CallInUIThreadDeferred([this] { mk9::controls::AttachWindow(window()); });
-#if defined(_WIN32)
+#if MK9_PC
     // mk9-lauta: F1 and F2 with a controller, the game's input held while one is open, the window's close asked
     // first (mk9_overlay_input.h)
     mk9::overlay_input::Install(static_cast<rex::input::InputSystem*>(runtime()->input_system()));

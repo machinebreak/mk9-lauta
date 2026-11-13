@@ -145,6 +145,8 @@ set(MK9_SOURCES
     src/online/sound_memory.cpp
     src/online/write_trace.cpp
     src/online/seed.cpp
+    # mk9-lauta (2026-11-13): what the game asks its operating system for, on Windows and on Linux
+    src/mk9_platform.cpp
 )
 if(NOT REXGLUE_PLATFORM_SWITCH)
     # Switch profiler counters the native renderer calls (no-ops on PC).
@@ -188,19 +190,51 @@ target_link_libraries(mk9 PRIVATE libavcodec)
 
 # mk9-nx online (2026-11-08): libjuice 1.7.4 (thirdparty/libjuice, MPL-2.0): ICE, the players' direct UDP path through
 # their NATs or a TURN relay (src/online/ice_link.cpp); the lobby is WinHTTP's WebSocket (src/online/lobby.cpp).
-if(WIN32)
+if(WIN32 OR (UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH))
     enable_language(C)
     file(GLOB MK9_JUICE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/src/*.c")
     add_library(mk9_juice STATIC ${MK9_JUICE_SOURCES})
     target_include_directories(mk9_juice
         PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/include"
         PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/include/juice" "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libjuice/src")
+    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
+endif()
+if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(mk9_juice PRIVATE ws2_32 bcrypt)
     target_link_libraries(mk9 PRIVATE mk9_juice winhttp ws2_32 shell32 bcrypt comctl32 ole32 winmm)
-    target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
-        "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
+elseif(UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH)
+    # mk9-lauta (2026-11-13): the native Linux build. libjuice on POSIX sockets; the lobby, downloads and the updater
+    # on the system's libcurl, loaded at run time (src/online/curl_http.cpp: only its headers are needed here).
+    target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER)
+    find_package(Threads REQUIRED)
+    target_link_libraries(mk9_juice PRIVATE Threads::Threads)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(MK9_CURL REQUIRED libcurl)
+    target_include_directories(mk9 PRIVATE ${MK9_CURL_INCLUDE_DIRS})
+    target_sources(mk9 PRIVATE src/online/curl_http.cpp src/mk9_sha256.c src/mk9_small_window_linux.cpp)
+    # the first start's installer's window (src/mk9_installer.cpp): Dear ImGui's SDL 3 backends (the SDK's copy of
+    # them, 1.92.5 as Renut's ImGui), hidden as Renut's ImGui is (renut_engine/gpu/gpu.cmake)
+    set(MK9_IMGUI_BACKENDS "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/imgui/backends/imgui_impl_sdl3.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/imgui/backends/imgui_impl_sdlrenderer3.cpp")
+    target_sources(mk9 PRIVATE ${MK9_IMGUI_BACKENDS})
+    set_source_files_properties(${MK9_IMGUI_BACKENDS} PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden"
+        SKIP_PRECOMPILE_HEADERS ON)
+    # the release signature's check (BCrypt's on Windows): micro-ecc's P-256 (thirdparty/micro-ecc, BSD-2-Clause)
+    add_library(mk9_uecc STATIC thirdparty/micro-ecc/uECC.c)
+    target_include_directories(mk9_uecc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/micro-ecc")
+    target_compile_definitions(mk9_uecc PUBLIC uECC_SUPPORTS_secp160r1=0 uECC_SUPPORTS_secp192r1=0
+        uECC_SUPPORTS_secp224r1=0 uECC_SUPPORTS_secp256k1=0)
+    # the Kratos port's .zip unpacked inside the program (Windows' build: tar.exe): miniz (thirdparty/miniz, MIT),
+    # reading only, without zlib's names and hidden (nothing shared with the SDK's libraries)
+    add_library(mk9_miniz STATIC thirdparty/miniz/miniz.c)
+    target_include_directories(mk9_miniz PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniz")
+    target_compile_definitions(mk9_miniz PUBLIC MINIZ_NO_ZLIB_COMPATIBLE_NAMES MINIZ_NO_ARCHIVE_WRITING_APIS
+        MINIZ_NO_DEFLATE_APIS)
+    target_compile_options(mk9_miniz PRIVATE -fvisibility=hidden)
+    target_link_libraries(mk9 PRIVATE mk9_juice mk9_uecc mk9_miniz ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].

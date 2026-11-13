@@ -6,9 +6,15 @@
 
 #include "online/fight_state.h"
 
+#include "mk9_platform.h"
+#include <rex/system/xmemory.h>
+#include <rex/system/kernel_state.h>
+
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -60,6 +66,7 @@ constexpr unsigned long kAccessViolation = 0xC0000005ul;
 
 uint8_t* Raw(uint8_t* base, uint32_t a) { return base + a + (a >= 0xE0000000u ? 0x1000u : 0u); }
 
+#if defined(_WIN32)
 bool Read32(uint8_t* base, uint32_t a, uint32_t* out) {
   __try {
     uint32_t v;
@@ -79,6 +86,31 @@ bool ReadByte(uint8_t* base, uint32_t a, char* out) {
   }
   return true;
 }
+#else
+// mk9-lauta (2026-11-13): Linux: what a fault would have said on Windows (an address with no page), asked of the
+// guest's heaps first (the same answer, so the fights' hashes agree across the two systems)
+bool Mapped(uint32_t a, uint32_t size, bool write = false) {
+  auto* memory = rex::system::kernel_memory();
+  auto* heap = memory ? memory->LookupHeap(a) : nullptr;
+  if (!heap || a + size < a) return false;
+  const rex::memory::PageAccess access = heap->QueryRangeAccess(a, a + size - 1);
+  return write ? access == rex::memory::PageAccess::kReadWrite : access != rex::memory::PageAccess::kNoAccess;
+}
+
+bool Read32(uint8_t* base, uint32_t a, uint32_t* out) {
+  if (!Mapped(a, 4)) return false;
+  uint32_t v;
+  std::memcpy(&v, Raw(base, a), 4);
+  *out = __builtin_bswap32(v);
+  return true;
+}
+
+bool ReadByte(uint8_t* base, uint32_t a, char* out) {
+  if (!Mapped(a, 1)) return false;
+  *out = char(*Raw(base, a));
+  return true;
+}
+#endif
 
 struct QuietFaults {
   QuietFaults() { rex::memory::BeginQuietGuestFaults(); }
@@ -181,12 +213,18 @@ void Diagnose(uint8_t* base) {
 namespace {
 
 bool ReadBlock(uint8_t* base, uint32_t a, uint32_t size, uint8_t* out) {
+#if defined(_WIN32)
   __try {
     std::memcpy(out, Raw(base, a), size);
   } __except (GetExceptionCode() == kAccessViolation ? 1 : 0) {
     return false;
   }
   return true;
+#else
+  if (!Mapped(a, size)) return false;
+  std::memcpy(out, Raw(base, a), size);
+  return true;
+#endif
 }
 
 }  // namespace
@@ -332,7 +370,7 @@ uint64_t HashCore(uint8_t* base, uint64_t seed) {
 }
 
 bool WriteFighters(const std::filesystem::path& file, uint64_t upto) {
-  FILE* f = _wfopen(file.c_str(), L"wb");
+  FILE* f = mk9::platform::OpenFile(file, "wb");
   if (!f) return false;
   // "FHSH", u32 version 1, u32 range count, the ranges (u8 kind, u32 offset, u32 size), then per kept frame of the
   // epoch up to `upto`, in order: u64 key, u8 have[2], player 1's bytes, player 2's (the ranges' order)
@@ -459,12 +497,18 @@ void TestDesync(uint8_t* base, int player) {
   std::memcpy(&health, &bits, 4);
   health = std::max(0.0f, health - 0.05f);
   std::memcpy(&bits, &health, 4);
+#if defined(_WIN32)
   bits = _byteswap_ulong(bits);
   __try {
     std::memcpy(Raw(base, object + kHealth), &bits, 4);
   } __except (GetExceptionCode() == kAccessViolation ? 1 : 0) {
     return;
   }
+#else
+  bits = __builtin_bswap32(bits);
+  if (!Mapped(object + kHealth, 4, true)) return;
+  std::memcpy(Raw(base, object + kHealth), &bits, 4);
+#endif
   REXLOG_WARN("[fight] mk9_net_test_desync_frame: player 1's fighter down to {:.3f} at game frame {} (this machine "
               "only)",
               health, frame);

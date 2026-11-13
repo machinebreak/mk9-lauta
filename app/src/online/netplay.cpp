@@ -77,6 +77,7 @@
 // went on alike).
 
 #include "mk9_kratos.h"
+#include "mk9_platform.h"
 #include "online/netplay.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -85,7 +86,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -514,7 +517,7 @@ void RecordWriter(std::filesystem::path logs, std::filesystem::path file) {
     std::filesystem::remove(old.front(), ec);
     old.erase(old.begin());
   }
-  FILE* f = _wfopen(file.c_str(), L"wb");
+  FILE* f = mk9::platform::OpenFile(file, "wb");
   if (!f) REXLOG_WARN("[net] the replay's file could not be made: the session is not recorded");
   std::string chunk;
   for (;;) {
@@ -543,12 +546,8 @@ void RecordOpen() {
   g_rec.to_file = REXCVAR_GET(mk9_net_record);
   g_rec.record.reserve(4096);
   if (g_rec.to_file) {
-    wchar_t exe[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    const std::filesystem::path logs = std::filesystem::path(exe).parent_path() / L"logs";
-    const std::time_t now = std::time(nullptr);
-    std::tm local{};
-    localtime_s(&local, &now);
+    const std::filesystem::path logs = mk9::platform::ExeDir() / "logs";
+    const std::tm local = mk9::platform::LocalTime(std::time(nullptr));
     char name[64];
     std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
     const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
@@ -770,21 +769,17 @@ std::mutex g_desync_report_mutex;
 double RoundTripTypical();
 
 void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool fighters_only) {
-  wchar_t exe[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::time_t now = std::time(nullptr);
-  std::tm when{};
-  localtime_s(&when, &now);
+  const std::tm when = mk9::platform::LocalTime(std::time(nullptr));
   char name[64];
   std::strftime(name, sizeof(name), "desync_%Y%m%d_%H%M%S", &when);
-  const std::filesystem::path dir = std::filesystem::path(exe).parent_path() / L"logs" /
+  const std::filesystem::path dir = mk9::platform::ExeDir() / "logs" /
                                     (std::string(name) + (g.player == 0 ? "_p1" : "_p2") +
                                      (fighters_only ? "_fighters" : ""));
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
   const bool fighters =
       fight_state::WriteFighters(dir / L"fighters.bin", uint64_t(g.epoch) << 32 | uint64_t(frame));
-  if (FILE* f = _wfopen((dir / L"summary.txt").c_str(), L"w")) {
+  if (FILE* f = mk9::platform::OpenFile(dir / "summary.txt", "w")) {
     std::fprintf(f, "mk9-lauta %s, session protocol %u, player %d\n", MK9_LAUTA_VERSION, unsigned(Protocol()),
                  g.player + 1);
     std::fprintf(f, "first frame whose hashes differ: epoch %u frame %lld (game frame %llu)\n", g.epoch,
@@ -809,7 +804,7 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool figh
   // thread of its own: the game thread does not wait on the disk)
   if (g_rec.open && !g_rec.to_file && !fighters_only) {
     std::thread([inputs = RecordMemoryCopy(), file = dir / L"session.mk9net"] {
-      if (FILE* out = _wfopen(file.c_str(), L"wb")) {
+      if (FILE* out = mk9::platform::OpenFile(file, "wb")) {
         std::fwrite(inputs.data(), 1, inputs.size(), out);
         std::fclose(out);
       }
@@ -1366,7 +1361,7 @@ bool Configure() {
     g.host = false;
     g.player = 0;
     const std::filesystem::path path = std::filesystem::u8path(replay);
-    if (!feed::LoadFile(path.wstring())) {
+    if (!feed::LoadFile(path)) {
       REXLOG_ERROR("[watch] the replay {} cannot be read", replay);
       g.failed = true;
       return false;

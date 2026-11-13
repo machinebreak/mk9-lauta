@@ -396,6 +396,11 @@ const std::unordered_map<std::string_view, Text>& Table() {
        {"Your connection cannot find the online server (DNS fails). Try setting Windows' DNS to 1.1.1.1 and 8.8.8.8, or another network (your phone's data, for example).", "Sua conexão não encontra o servidor do online (falha no DNS). Tente mudar o DNS do Windows para 1.1.1.1 e 8.8.8.8, ou outra rede (os dados do celular, por exemplo)."}},
       {"Tu conexión no llega al servidor del online: puede ser un firewall, un antivirus o tu proveedor de internet. Probá con otra red (por ejemplo, los datos del celular) o una VPN, y contanos qué proveedor tenés.",
        {"Your connection does not reach the online server: a firewall, an antivirus or your internet provider may block it. Try another network (your phone's data, for example) or a VPN, and tell us your provider.", "Sua conexão não chega ao servidor do online: pode ser um firewall, um antivírus ou seu provedor de internet. Tente outra rede (os dados do celular, por exemplo) ou uma VPN, e conte qual é seu provedor."}},
+      // mk9-lauta (2026-11-13): Linux's (online_ui.cpp)
+      {"Tu conexión no encuentra el servidor del online (falla el DNS). Probá cambiar el DNS de tu conexión a 1.1.1.1 y 8.8.8.8 (en la configuración de red del escritorio), o conectarte con otra red (por ejemplo, los datos del celular).",
+       {"Your connection cannot find the online server (DNS fails). Try setting your connection's DNS to 1.1.1.1 and 8.8.8.8 (in the desktop's network settings), or another network (your phone's data, for example).", "Sua conexão não encontra o servidor do online (falha no DNS). Tente mudar o DNS da sua conexão para 1.1.1.1 e 8.8.8.8 (nas configurações de rede da área de trabalho), ou outra rede (os dados do celular, por exemplo)."}},
+      {"No se pudo verificar la conexión segura con el servidor. Revisá que la fecha y la hora de la PC estén bien y que el sistema esté actualizado (sus certificados: el paquete ca-certificates).",
+       {"The secure connection to the server could not be verified. Check that the PC's date and time are right and that the system is up to date (its certificates: the ca-certificates package).", "Não foi possível verificar a conexão segura com o servidor. Confira se a data e a hora do PC estão certas e se o sistema está atualizado (seus certificados: o pacote ca-certificates)."}},
       {"No se pudo verificar la conexión segura con el servidor. Revisá que la fecha y la hora de la PC estén bien y que Windows esté actualizado (sus certificados). Un antivirus que revisa las conexiones también puede causarlo.",
        {"The secure connection to the server could not be verified. Check that the PC's date and time are right and that Windows is up to date (its certificates). An antivirus that inspects connections can cause it too.", "Não foi possível verificar a conexão segura com o servidor. Confira se a data e a hora do PC estão certas e se o Windows está atualizado (seus certificados). Um antivírus que inspeciona as conexões também pode causar isso."}},
       {"El servidor del online respondió con un error: probá de nuevo en un rato.",
@@ -445,6 +450,8 @@ const std::unordered_map<std::string_view, Text>& Table() {
        {"The picture could not be saved.", "Não foi possível salvar a foto."}},
       {"Foto de perfil guardada.",
        {"Profile picture saved.", "Foto de perfil salva."}},
+      {"No se pudo abrir el selector de archivos.",
+       {"The file picker could not open.", "Não foi possível abrir o seletor de arquivos."}},
       {"No se pudo abrir esa imagen: probá con una JPG o PNG.",
        {"That image could not be opened: try a JPG or PNG.", "Não foi possível abrir essa imagem: tente uma JPG ou PNG."}},
       {"Abrí Discord en esta PC y probá de nuevo.",
@@ -539,6 +546,11 @@ void SetLanguage(const char* code) {
   if (REXCVAR_GET(mk9_online_language) != "auto") return;  // the player chose the online screens' own
   const std::string_view c(code ? code : "");
   g_chosen.store(c == "en" ? kEn : c == "pt" ? kPt : kEs, std::memory_order_relaxed);
+}
+
+const char* Language() {
+  const Lang lang = Current();
+  return lang == kEn ? "en" : lang == kPt ? "pt" : "es";
 }
 
 const char* T(const char* es) {

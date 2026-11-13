@@ -2,11 +2,18 @@
 
 #include "online/session.h"
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 // after windows.h
 #include <shellapi.h>
+#else
+// mk9-lauta (2026-11-13): Linux (mk9_platform.h)
+#include <unistd.h>
+
+#include "mk9_platform.h"
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -26,6 +33,12 @@ REXCVAR_DECLARE(std::string, mk9_online_name);
 
 namespace mk9::session {
 namespace {
+
+#if defined(_WIN32)
+// A command line's argument: UTF-16 on Windows (CreateProcessW), UTF-8 bytes on Linux (execve).
+using Arg = std::wstring;
+#define MK9_ARG(text) L##text
+std::wstring PathArg(const std::filesystem::path& p) { return p.wstring(); }
 
 std::filesystem::path ExeDir() {
   wchar_t path[MAX_PATH] = {};
@@ -60,39 +73,58 @@ std::wstring Quote(const std::wstring& arg) {
   out.push_back(L'"');
   return out;
 }
+#else
+using Arg = std::string;
+#define MK9_ARG(text) text
+std::string PathArg(const std::filesystem::path& p) { return p.string(); }
+std::filesystem::path ExeDir() { return platform::ExeDir(); }
+std::string Wide(const std::string& s) { return s; }  // UTF-8 as it is
+#endif
 
 // This game's own options, without a session's (nor a test's way into one: mk9_online_test, nor the files a test's
 // run writes: the game started again would write over them), nor those in dropping, which the caller gives again: the
 // command line's parser (CLI11) refuses an option given twice, and then takes none of them (a spectator started this
 // way with two user_data_root came up offline, on the default lobby).
-std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropping = {}) {
-  static const wchar_t* const kTestOutputs[] = {L"--mk9_check_log",    L"--mk9_rand_log",     L"--mk9_native_log",
-                                                L"--mk9_script_log",   L"--mk9_state_hash",   L"--mk9_input_record",
-                                                L"--mk9_snapshot_s"};
+// This process's arguments after the executable's.
+std::vector<Arg> ProcessArgs() {
+#if defined(_WIN32)
   int argc = 0;
   wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
   std::vector<std::wstring> out;
-  for (int i = 1; argv && i < argc; ++i) {
-    const std::wstring a = argv[i];
-    if (a.rfind(L"--mk9_net_room", 0) == 0 || a.rfind(L"--mk9_net_role", 0) == 0 ||
-        a.rfind(L"--mk9_online_name", 0) == 0 || a.rfind(L"--mk9_online_show", 0) == 0 ||
-        a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos ||
-        a.rfind(L"--mk9_net_replay", 0) == 0 || a.rfind(L"--mk9_lobby_by_address", 0) == 0 ||
-        a.rfind(L"--mk9_net_local_players", 0) == 0 ||
+  for (int i = 1; argv && i < argc; ++i) out.push_back(argv[i]);
+  if (argv) LocalFree(argv);
+  return out;
+#else
+  return platform::OwnArguments();
+#endif
+}
+
+std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> dropping = {}) {
+  static const Arg::value_type* const kTestOutputs[] = {
+      MK9_ARG("--mk9_check_log"),  MK9_ARG("--mk9_rand_log"),   MK9_ARG("--mk9_native_log"),
+      MK9_ARG("--mk9_script_log"), MK9_ARG("--mk9_state_hash"), MK9_ARG("--mk9_input_record"),
+      MK9_ARG("--mk9_snapshot_s")};
+  std::vector<Arg> out;
+  for (const Arg& a : ProcessArgs()) {
+    if (a.rfind(MK9_ARG("--mk9_net_room"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_role"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_online_name"), 0) == 0 || a.rfind(MK9_ARG("--mk9_online_show"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_online_test="), 0) == 0 || a.find(MK9_ARG("online_session")) != Arg::npos ||
+        a.rfind(MK9_ARG("--mk9_net_replay"), 0) == 0 || a.rfind(MK9_ARG("--mk9_lobby_by_address"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
-                    [&](const wchar_t* o) { return a.rfind(o, 0) == 0; }) ||
-        std::any_of(dropping.begin(), dropping.end(), [&](const wchar_t* o) { return a.rfind(o, 0) == 0; })) {
+                    [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; }) ||
+        std::any_of(dropping.begin(), dropping.end(), [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; })) {
       continue;
     }
     out.push_back(a);
   }
-  if (argv) LocalFree(argv);
   // mk9-lauta (2026-11-13): this connection's DNS does not know the lobby's name: the next game goes to its address
   // from the start (lobby.h ByAddress), its /ice included (a session that asked by name ran with no TURN)
-  if (lobby::ByAddress()) out.push_back(L"--mk9_lobby_by_address=true");
+  if (lobby::ByAddress()) out.push_back(MK9_ARG("--mk9_lobby_by_address=true"));
   return out;
 }
 
+#if defined(_WIN32)
 [[noreturn]] void Start(const std::vector<std::wstring>& options, const char* what) {
   const std::filesystem::path dir = ExeDir();
   wchar_t exe[MAX_PATH] = {};
@@ -115,6 +147,18 @@ std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropp
   TerminateProcess(GetCurrentProcess(), 0);
   for (;;) Sleep(1000);
 }
+#else
+[[noreturn]] void Start(const std::vector<std::string>& options, const char* what) {
+  // the program the player started (an AppImage's own file, not its mount, which goes away with this game)
+  if (platform::StartDetached(platform::LaunchPath(), options, ExeDir())) {
+    REXLOG_INFO("[session] {}: the game starts again", what);
+  } else {
+    REXLOG_ERROR("[session] {}: the game could not start again", what);
+  }
+  rex::FlushLogging();
+  _exit(0);
+}
+#endif
 
 }  // namespace
 
@@ -125,16 +169,16 @@ void Launch(const std::string& room, bool host, const std::string& name, const s
   std::error_code ec;
   std::filesystem::remove_all(profile, ec);
   std::filesystem::create_directories(profile, ec);
-  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
-  options.push_back(L"--mk9_net_room=" + Wide(room));
-  options.push_back(std::wstring(L"--mk9_net_role=") + (host ? L"host" : L"guest"));
-  options.push_back(L"--mk9_online_name=" + Wide(name));
-  if (players == 2) options.push_back(L"--mk9_net_local_players=2");  // two at this PC (netplay.h)
+  std::vector<Arg> options = OwnOptions({MK9_ARG("--user_data_root")});
+  options.push_back(MK9_ARG("--mk9_net_room=") + Wide(room));
+  options.push_back(Arg(MK9_ARG("--mk9_net_role=")) + (host ? MK9_ARG("host") : MK9_ARG("guest")));
+  options.push_back(MK9_ARG("--mk9_online_name=") + Wide(name));
+  if (players == 2) options.push_back(MK9_ARG("--mk9_net_local_players=2"));  // two at this PC (netplay.h)
   if (host && listed) {
-    options.push_back(L"--mk9_net_room_listed=true");
-    if (!title.empty()) options.push_back(L"--mk9_net_room_title=" + Wide(title));
+    options.push_back(MK9_ARG("--mk9_net_room_listed=true"));
+    if (!title.empty()) options.push_back(MK9_ARG("--mk9_net_room_title=") + Wide(title));
   }
-  options.push_back(L"--user_data_root=" + profile.wstring());
+  options.push_back(MK9_ARG("--user_data_root=") + PathArg(profile));
   Start(options, "the room's fight");
 }
 
@@ -143,11 +187,11 @@ void Watch(const std::string& room, const std::string& name) {
   std::error_code ec;
   std::filesystem::remove_all(profile, ec);
   std::filesystem::create_directories(profile, ec);
-  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
-  options.push_back(L"--mk9_net_room=" + Wide(room));
-  options.push_back(L"--mk9_net_role=watch");
-  options.push_back(L"--mk9_online_name=" + Wide(name));
-  options.push_back(L"--user_data_root=" + profile.wstring());
+  std::vector<Arg> options = OwnOptions({MK9_ARG("--user_data_root")});
+  options.push_back(MK9_ARG("--mk9_net_room=") + Wide(room));
+  options.push_back(MK9_ARG("--mk9_net_role=watch"));
+  options.push_back(MK9_ARG("--mk9_online_name=") + Wide(name));
+  options.push_back(MK9_ARG("--user_data_root=") + PathArg(profile));
   Start(options, "watching a room's session");
 }
 
@@ -156,17 +200,17 @@ void Replay(const std::string& path) {
   std::error_code ec;
   std::filesystem::remove_all(profile, ec);
   std::filesystem::create_directories(profile, ec);
-  std::vector<std::wstring> options = OwnOptions({L"--user_data_root"});
-  options.push_back(L"--mk9_net_replay=" + Wide(path));
-  options.push_back(L"--user_data_root=" + profile.wstring());
+  std::vector<Arg> options = OwnOptions({MK9_ARG("--user_data_root")});
+  options.push_back(MK9_ARG("--mk9_net_replay=") + Wide(path));
+  options.push_back(MK9_ARG("--user_data_root=") + PathArg(profile));
   Start(options, "a replay");
 }
 
 void Back() {
-  std::vector<std::wstring> options = OwnOptions();
-  options.push_back(L"--mk9_online_show=true");  // the lobby's screens open again
+  std::vector<Arg> options = OwnOptions();
+  options.push_back(MK9_ARG("--mk9_online_show=true"));  // the lobby's screens open again
   const std::string name = REXCVAR_GET(mk9_online_name);
-  if (!name.empty()) options.push_back(L"--mk9_online_name=" + Wide(name));  // the same name (two tests on one PC)
+  if (!name.empty()) options.push_back(MK9_ARG("--mk9_online_name=") + Wide(name));  // the same name (two tests on one PC)
   Start(options, "back from the room");
 }
 

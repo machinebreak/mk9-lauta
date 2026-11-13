@@ -8,10 +8,27 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
 #include <bcrypt.h>
 #include <shellapi.h>
 #include <winhttp.h>
+#else
+// mk9-lauta (2026-11-13): Linux: downloads by libcurl (curl_http.h), the hash by mk9_sha256.h (the system's
+// libcrypto, else picohash), the signature by micro-ecc (P-256, the same key), the release a .tar.gz unpacked by
+// tar, the program started again
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include "miniz.h"
+#include "mk9_platform.h"
+#include "mk9_sha256.h"
+#include "online/curl_http.h"
+#include "uECC.h"
+
+extern char** environ;
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -61,6 +78,14 @@ namespace {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+// The release's package for this system, and its signature (mk9-lauta 2026-11-13: Linux's is a .tar.gz, which keeps
+// the program's executable bit).
+#if defined(_WIN32)
+constexpr std::string_view kPackageSuffix = "-windows-x64.zip";
+#else
+constexpr std::string_view kPackageSuffix = "-linux-x64.tar.gz";
+#endif
+
 // The release key's public half (P-256: X then Y). Releases are signed with its private half, which never leaves the
 // maintainer's machine (tools/release/sign_release.py).
 constexpr uint8_t kPublicKey[64] = {
@@ -92,6 +117,7 @@ struct State {
 };
 State g;
 
+#if defined(_WIN32)
 fs::path ExeFolder() {
   wchar_t path[MAX_PATH] = {};
   GetModuleFileNameW(nullptr, path, MAX_PATH);
@@ -113,6 +139,12 @@ std::wstring Wide(const std::string& s) {
   MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
   return w;
 }
+#else
+fs::path ExeFolder() { return platform::ExeDir(); }
+// paths are UTF-8 bytes on Linux: the names as they are
+std::string Utf8(const std::string& s) { return s; }
+std::string Wide(const std::string& s) { return s; }
+#endif
 
 void SetStatus(Phase phase, const std::string& message, double progress = 0) {
   std::lock_guard lock(g.mutex);
@@ -130,6 +162,7 @@ uint64_t VersionNumber(std::string v) {
 }
 
 // GET over HTTPS, the body to 'sink' as it comes (false from it stops); total: the Content-Length when there is one.
+#if defined(_WIN32)
 bool HttpGet(const std::string& url, const std::function<bool(const char*, size_t)>& sink, uint64_t* total,
              std::string* error, uint64_t from = 0) {
   const std::wstring wurl = Wide(url);
@@ -212,8 +245,40 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
   WinHttpCloseHandle(session);
   return ok;
 }
+#else
+bool HttpGet(const std::string& url, const std::function<bool(const char*, size_t)>& sink, uint64_t* total,
+             std::string* error, uint64_t from = 0) {
+  net::HttpOptions options;
+  options.timeout_ms = 0;  // a release is a long download: it ends when it stalls for 30 s
+  options.connect_timeout_ms = 10000;
+  options.range_from = from;  // mk9-lauta: go on from there
+  options.headers.push_back("Accept: application/vnd.github+json, application/octet-stream");
+  options.headers.push_back(std::string("User-Agent: mk9-lauta/") + MK9_LAUTA_VERSION);
+  bool cancelled = false;
+  const net::HttpResult r = net::HttpGet(url, options, [&](const char* data, size_t size) {
+    if (!sink(data, size)) {
+      cancelled = true;
+      return false;
+    }
+    return true;
+  });
+  if (total) *total = r.total;
+  if (r.ok) return true;
+  if (cancelled) {
+    if (error->empty()) *error = "cancelada";
+  } else if (r.status && r.status != 200 && !(from && r.status == 206)) {
+    *error = "respuesta " + std::to_string(r.status);
+  } else if (r.kind == "dns" || r.kind == "connect" || r.kind == "tls") {
+    *error = "sin conexión con GitHub";
+  } else {
+    *error = "la descarga se cortó";
+  }
+  return false;
+}
+#endif
 
 // SHA-256 of a file.
+#if defined(_WIN32)
 bool Sha256(const fs::path& file, uint8_t out[32]) {
   BCRYPT_ALG_HANDLE alg = nullptr;
   if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) return false;
@@ -255,6 +320,15 @@ bool SignatureValid(const uint8_t digest[32], const std::vector<uint8_t>& signat
   BCryptCloseAlgorithmProvider(alg, 0);
   return ok;
 }
+#else
+bool Sha256(const fs::path& file, uint8_t out[32]) { return mk9_sha256_file(file.c_str(), out) != 0; }
+
+// The release key's signature (r and s, 64 bytes) of a SHA-256: micro-ecc's P-256 (the same check as BCrypt's).
+bool SignatureValid(const uint8_t digest[32], const std::vector<uint8_t>& signature) {
+  if (signature.size() != 64) return false;
+  return uECC_verify(kPublicKey, digest, 32, signature.data(), uECC_secp256r1()) == 1;
+}
+#endif
 
 std::vector<uint8_t> FromHex(const std::string& text) {
   std::vector<uint8_t> out;
@@ -275,6 +349,7 @@ std::vector<uint8_t> FromHex(const std::string& text) {
   return out;
 }
 
+#if defined(_WIN32)
 // Runs a program without a window and waits for it (exit code, or -1).
 int RunHidden(std::wstring command_line) {
   STARTUPINFOW si{sizeof(si)};
@@ -308,6 +383,72 @@ bool Unpack(const fs::path& zip, const fs::path& to) {
   return RunHidden(L"powershell -NoProfile -NonInteractive -Command \"Expand-Archive -LiteralPath '" + zip.wstring() +
                    L"' -DestinationPath '" + to.wstring() + L"' -Force\"") == 0;
 }
+#else
+// Runs a program (found on PATH) and waits for it: its exit code, or -1.
+int RunAndWait(const std::vector<std::string>& args) {
+  std::vector<std::string> owned = args;
+  std::vector<char*> argv;
+  for (std::string& a : owned) argv.push_back(a.data());
+  argv.push_back(nullptr);
+  pid_t pid = 0;
+  if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0) return -1;
+  int status = 0;
+  if (waitpid(pid, &status, 0) != pid) return -1;
+  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+
+// A .zip (the Kratos port's) by miniz, inside the program (unzip is not on every distribution): each name checked (no
+// absolute path, no "..") before its file is written; each file's CRC-32 checked by miniz.
+bool Unzip(const fs::path& zip, const fs::path& to) {
+  mz_zip_archive archive{};
+  if (!mz_zip_reader_init_file(&archive, zip.c_str(), 0)) return false;
+  bool ok = true;
+  std::error_code ec;
+  const mz_uint count = mz_zip_reader_get_num_files(&archive);
+  for (mz_uint i = 0; ok && i < count; ++i) {
+    mz_zip_archive_file_stat stat;
+    if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
+      ok = false;
+      break;
+    }
+    std::string name = stat.m_filename;
+    std::replace(name.begin(), name.end(), '\\', '/');
+    fs::path relative;
+    for (const fs::path& part : fs::path(name)) {
+      const std::string text = part.string();
+      if (text.empty() || text == "." || text == "/") continue;
+      if (text == "..") {
+        ok = false;
+        break;
+      }
+      relative /= part;
+    }
+    if (!ok || relative.empty()) continue;
+    const fs::path dest = to / relative;
+    if (mz_zip_reader_is_file_a_directory(&archive, i)) {
+      fs::create_directories(dest, ec);
+      continue;
+    }
+    fs::create_directories(dest.parent_path(), ec);
+    ok = mz_zip_reader_extract_to_file(&archive, i, dest.c_str(), 0);
+  }
+  if (!ok) REXLOG_ERROR("[update] {}: could not unpack ({})", zip.string(), mz_zip_get_error_string(archive.m_last_error));
+  mz_zip_reader_end(&archive);
+  return ok;
+}
+
+// The release unpacked into 'to': a .tar.gz by tar (every distribution has it), a .zip by miniz.
+bool Unpack(const fs::path& package, const fs::path& to) {
+  std::error_code ec;
+  fs::remove_all(to, ec);
+  fs::create_directories(to, ec);
+  const std::string name = package.filename().string();
+  if (name.size() > 7 && name.compare(name.size() - 7, 7, ".tar.gz") == 0) {
+    return RunAndWait({"tar", "-xzf", package.string(), "-C", to.string()}) == 0;
+  }
+  return Unzip(package, to);
+}
+#endif
 
 fs::path UpdateFolder() { return ExeFolder() / L"update"; }
 
@@ -342,11 +483,13 @@ void Check() {
   for (const json& asset : release.value("assets", json::array())) {
     const std::string name = asset.value("name", "");
     const std::string url = asset.value("browser_download_url", "");
-    if (name.size() > 4 && name.rfind("-windows-x64.zip") == name.size() - 16) {
+    const std::string_view n = name;
+    if (n.size() > kPackageSuffix.size() && n.substr(n.size() - kPackageSuffix.size()) == kPackageSuffix) {
       zip_url = url;
       zip_name = name;
       zip_size = asset.value("size", uint64_t(0));
-    } else if (name.size() > 4 && name.rfind("-windows-x64.zip.sig") == name.size() - 20) {
+    } else if (n.size() > kPackageSuffix.size() + 4 && n.substr(n.size() - 4) == ".sig" &&
+               n.substr(n.size() - 4 - kPackageSuffix.size(), kPackageSuffix.size()) == kPackageSuffix) {
       sig_url = url;
     }
   }
@@ -608,6 +751,18 @@ void Download() {
 // The program in this folder (a new version just installed, or this one) started as this one was, and this one
 // closed; returns only if it could not start.
 static void StartAgain() {
+#if !defined(_WIN32)
+  // mk9-lauta (2026-11-13): Linux: the same arguments but a test's update switches, the program this folder has now
+  std::vector<std::string> args;
+  for (const std::string& arg : platform::OwnArguments()) {
+    if (arg.rfind("--mk9_update_test", 0) != 0) args.push_back(arg);
+  }
+  if (platform::StartDetached(platform::LaunchPath(), args, ExeFolder())) {
+    rex::FlushLogging();
+    _exit(0);
+  }
+  return;
+#else
   const fs::path exe_folder = ExeFolder();
   STARTUPINFOW si{sizeof(si)};
   PROCESS_INFORMATION pi{};
@@ -628,6 +783,7 @@ static void StartAgain() {
     CloseHandle(pi.hProcess);
     ExitProcess(0);
   }
+#endif
 }
 
 void InstallAndRestart() {
@@ -696,10 +852,21 @@ void Restart() {
 }
 
 void Open(const std::string& what) {
+#if defined(_WIN32)
   ShellExecuteW(nullptr, L"open", Wide(what).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+  // the desktop's default program for it (a browser for a page, the file manager for a folder)
+  platform::StartDetached("/usr/bin/xdg-open", {what}, fs::path());
+#endif
 }
 
-std::string LogsFolder() { return Utf8((ExeFolder() / L"logs").wstring()); }
+std::string LogsFolder() {
+#if defined(_WIN32)
+  return Utf8((ExeFolder() / L"logs").wstring());
+#else
+  return (ExeFolder() / "logs").string();
+#endif
+}
 
 bool UnpackZip(const std::filesystem::path& zip, const std::filesystem::path& to) { return Unpack(zip, to); }
 

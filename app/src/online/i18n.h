@@ -14,4 +14,7 @@ const char* T(const char* es);
 // language ("es", "en", "pt"): they follow it at once, unless mk9_online_language says another than auto.
 void SetLanguage(const char* code);
 
+// mk9-lauta (2026-11-13): the online screens' language now: "es", "en" or "pt".
+const char* Language();
+
 }  // namespace mk9::i18n

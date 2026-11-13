@@ -2,9 +2,13 @@
 
 #include "online/stats.h"
 
+#include "mk9_platform.h"
+
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -21,9 +25,7 @@ namespace {
 using json = nlohmann::json;
 
 std::filesystem::path File() {
-  wchar_t path[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, path, MAX_PATH);
-  return std::filesystem::path(path).parent_path() / "online_stats.jsonl";
+  return mk9::platform::ExeDir() / "online_stats.jsonl";
 }
 
 std::mutex g_mutex;

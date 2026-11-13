@@ -2,6 +2,8 @@
 
 #include "online/feed.h"
 
+#include "mk9_platform.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -178,8 +180,8 @@ bool Ended() {
   return g_ended;
 }
 
-bool LoadFile(const std::wstring& path) {
-  FILE* f = _wfopen(path.c_str(), L"rb");
+bool LoadFile(const std::filesystem::path& path) {
+  FILE* f = mk9::platform::OpenFile(path, "rb");
   if (!f) return false;
   std::string bytes;
   char buffer[65536];

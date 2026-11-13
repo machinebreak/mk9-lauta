@@ -124,11 +124,36 @@ The file names keep sa2-nx's (`sa2_shaders.mesp`, `sa2_*` settings) so fixes can
 
 ## Linux
 
-Same steps with `tools/codegen.sh`, the `linux-pc` preset and `tools/linux/boot_test.sh` (Xvfb); needs clang >= 18,
-CMake, Ninja, `libx11-xcb-dev` and `libwayland-dev`. The SDK's shared libraries are loaded from `sdk/out/linux-amd64`
-(`LD_LIBRARY_PATH`, the boot test sets it). glslangValidator:
-`cmake -S sdk/thirdparty/glslang -B out/glslang -G Ninja -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF && ninja -C out/glslang glslangValidator`.
-DXC: Microsoft's Linux release unpacked into `out/tools/dxc`.
+mk9-lauta's native Linux build (2026-11-13): the same game code (`app/generated`, platform independent C++) and the
+same shaders (the Windows build's SPIR-V, `tools/renut_linux_shader_cache.py`), built with clang 20 (the Windows build's
+major version) against the SDK's Linux layer (SDL3 for the window, input and audio; Vulkan through plume's Xlib
+surface, so SDL runs on X11 or XWayland). Made from WSL2 (Ubuntu 24.04) on the Windows machine, or on any Linux box:
+
+```bash
+tools/linux/check_deps.sh            # the packages it needs (or tools/linux/local_deps.sh, unpacked without root)
+tools/linux/build_linux.sh           # glslangValidator, configure out/linux, build (JOBS=4 by default)
+tools/linux/make_release_linux.sh --tar   # out/release/mk9-lauta-v<version>-linux-x64.tar.gz (signed on Windows:
+                                     # python tools/release/sign_release.py <the .tar.gz>)
+```
+
+What the Linux build does in its own way (the Windows code is unchanged; each place is an `#if` beside it):
+
+- **Online and downloads**: libcurl, opened at run time (`app/src/online/curl_http.cpp`): HTTP, and the lobby's
+  WebSocket over curl's TLS connection; the release's signature checked with micro-ecc, SHA-256 by the system's
+  libcrypto (picohash where there is none), the Kratos port's .zip unpacked by miniz.
+- **Windows of its own before the game's** (the first start's installer, the Kratos download): SDL windows drawn with
+  Dear ImGui (`app/src/mk9_small_window.h`), SDL's file dialogs (the desktop's portal or zenity) and drop on the window.
+- **The overlay (F1, F2, the online screens)**: an SDL event filter sees the window's events before the SDK, as the
+  window procedure does on Windows; Renut's own Dear ImGui is hidden in the executable (`-fvisibility=hidden`), so the
+  SDK's shared library keeps its copy, as its DLL does on Windows.
+- **Guest memory gone under the renderer, crashes**: the renderer's guarded reads go through the SDK's fault handler
+  (`renut_engine/gpu/guest/guarded_read.h`), and a fault nobody takes is logged with the thread's stack in
+  `logs/crash_<date>.txt` (`mk9_crash_log.cpp`).
+- **Determinism with Windows**: the SDK lists folders in NTFS's order on Linux (`sdk/src/core/filesystem_posix.cpp`),
+  so the game enumerates its DLC and saves as on Windows; a match between the two runs the same frames.
+
+The older notes of the inherited Linux test path: `tools/linux/boot_test.sh` runs the game on Xvfb (muted, for a fixed
+time, snapshots), `tools/linux/compare_hashes.py` compares two runs' state hashes.
 
 ## Switch
 

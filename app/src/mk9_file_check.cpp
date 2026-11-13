@@ -366,7 +366,7 @@ void TestAfterIntroStarted() {
 
 }  // namespace mk9::file_check
 
-#elif defined(_WIN32) && defined(MK9_BUILTIN_CONFIG)
+#elif (defined(_WIN32) || (defined(__linux__) && !defined(__SWITCH__))) && defined(MK9_BUILTIN_CONFIG)
 
 // mk9-nx online (2026-11-08): the PC's check, the sizes only, every start (one listing of each game folder, as on the
 // Switch): a file missing or cut short is named in Spanish before the game starts, instead of a crash when the game
@@ -426,6 +426,37 @@ std::string Bytes(uint64_t n) {
   return digits;
 }
 
+// A folder of the game's as it is on the disk. mk9-lauta (2026-11-13): Linux's file systems tell "dlc" from "DLC"
+// (Windows' and the game's own, the SDK's, do not): each name the list's, else the one there that differs only in case.
+std::filesystem::path OnDisk(const std::filesystem::path& root, const std::string& relative) {
+#if defined(_WIN32)
+  return root / relative;
+#else
+  std::filesystem::path at = root;
+  size_t start = 0;
+  while (start < relative.size()) {
+    const size_t slash = relative.find('/', start);
+    const std::string part = relative.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+    start = slash == std::string::npos ? relative.size() : slash + 1;
+    if (part.empty()) continue;
+    std::error_code ec;
+    if (std::filesystem::exists(at / part, ec)) {
+      at /= part;
+      continue;
+    }
+    std::filesystem::path found;
+    for (const auto& entry : std::filesystem::directory_iterator(at, ec)) {
+      if (Lower(entry.path().filename().string()) == Lower(part)) {
+        found = entry.path();
+        break;
+      }
+    }
+    at = found.empty() ? at / part : found;
+  }
+  return at;
+#endif
+}
+
 }  // namespace
 
 void AtStart(const std::filesystem::path& game_root) {
@@ -443,7 +474,7 @@ void AtStart(const std::filesystem::path& game_root) {
     auto [it, fresh] = folders.try_emplace(Lower(folder));
     if (fresh) {
       std::error_code ec;
-      for (const auto& entry : std::filesystem::directory_iterator(game_root / folder, ec)) {
+      for (const auto& entry : std::filesystem::directory_iterator(OnDisk(game_root, folder), ec)) {
         std::error_code size_ec;
         if (entry.is_regular_file(size_ec)) {
           it->second[Lower(entry.path().filename().string())] = entry.file_size(size_ec);
@@ -471,8 +502,13 @@ void AtStart(const std::filesystem::path& game_root) {
   if (problems.size() > 8) {
     text += "- y " + std::to_string(problems.size() - 8) + " más (están todos en la carpeta logs)\n";
   }
+#if defined(_WIN32)
   text += "\nVolvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado de "
           "mk9.exe, entera.";
+#else
+  text += "\nVolvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado de "
+          "mk9, entera.";
+#endif
   rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, text);
   rex::FlushLogging();
   std::_Exit(1);

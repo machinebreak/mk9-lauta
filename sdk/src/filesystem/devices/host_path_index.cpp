@@ -86,6 +86,24 @@ namespace rex::filesystem {
 
 namespace vfs_index {
 
+#if defined(__linux__) && !defined(__SWITCH__)
+// mk9-lauta (2026-11-13): a folder's entries in NTFS's order (the names compared by their capitals, then byte by byte):
+// what Windows lists on its usual file system, where readdir gives the file system's own order (ext4's, a hash). The
+// game enumerates folders (its DLC packages, its saves): in the same order on Linux, its memory is the same as on
+// Windows, which an online match between the two needs.
+inline bool NtfsOrder(const std::string& a, const std::string& b) {
+  const size_t n = a.size() < b.size() ? a.size() : b.size();
+  for (size_t i = 0; i < n; ++i) {
+    unsigned char x = static_cast<unsigned char>(a[i]), y = static_cast<unsigned char>(b[i]);
+    if (x >= 'a' && x <= 'z') x = static_cast<unsigned char>(x - 32);
+    if (y >= 'a' && y <= 'z') y = static_cast<unsigned char>(y - 32);
+    if (x != y) return x < y;
+  }
+  if (a.size() != b.size()) return a.size() < b.size();
+  return a < b;  // names only case tells apart (Linux allows both): still one order
+}
+#endif
+
 bool ListLight(const std::string& path, std::vector<LightEntry>* output) {
 #if defined(__SWITCH__)
   return ListLightSwitch(path, output);
@@ -115,18 +133,27 @@ bool ListLight(const std::string& path, std::vector<LightEntry>* output) {
     LightEntry l;
     l.name = ent->d_name;
     l.is_directory = ent->d_type == DT_DIR;
+    std::string complete = path;
+    if (complete.empty() || complete.back() != '/') {
+      complete.push_back('/');
+    }
+    complete += l.name;
+    // mk9-lauta (2026-11-13): a file system that does not say (DT_UNKNOWN), or a link (DT_LNK): stat says
+    if (!l.is_directory && (ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK)) {
+      struct stat st {};
+      l.is_directory = stat(complete.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+    }
     if (!l.is_directory) {
-      struct stat st;
-      std::string complete = path;
-      if (complete.empty() || complete.back() != '/') {
-        complete.push_back('/');
-      }
-      complete += l.name;
+      struct stat st {};
       l.size = stat(complete.c_str(), &st) == 0 ? uint64_t(st.st_size) : ~uint64_t(0);
     }
     output->push_back(std::move(l));
   }
   closedir(dir);
+#if defined(__linux__) && !defined(__SWITCH__)
+  std::sort(output->begin(), output->end(),
+            [](const LightEntry& a, const LightEntry& b) { return NtfsOrder(a.name, b.name); });
+#endif
   return true;
 #endif
 }

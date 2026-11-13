@@ -102,6 +102,19 @@ function(renut_host_shader TARGET STEM PROFILE)
             endif()
         endif()
         set(out "${RENUT_GPU_GEN_DIR}/host_shaders/${STEM}.${fmt}.h")
+        # mk9-lauta (2026-11-13): the Linux build has no DXC: it takes the Windows build's header of the same shader
+        # (MK9_PREBUILT_HOST_SHADERS_DIR, filled by tools/renut_linux_shader_cache.py)
+        if(DEFINED MK9_PREBUILT_HOST_SHADERS_DIR AND EXISTS "${MK9_PREBUILT_HOST_SHADERS_DIR}/${STEM}.${fmt}.h")
+            add_custom_command(
+                OUTPUT "${out}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${RENUT_GPU_GEN_DIR}/host_shaders"
+                COMMAND ${CMAKE_COMMAND} -E copy "${MK9_PREBUILT_HOST_SHADERS_DIR}/${STEM}.${fmt}.h" "${out}"
+                DEPENDS "${MK9_PREBUILT_HOST_SHADERS_DIR}/${STEM}.${fmt}.h"
+                COMMENT "Host shader ${STEM}.hlsl (${PROFILE}, ${fmt}) from the Windows build"
+                VERBATIM)
+            target_sources(${TARGET} PRIVATE "${out}")
+            continue()
+        endif()
         add_custom_command(
             OUTPUT "${out}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${RENUT_GPU_GEN_DIR}/host_shaders"
@@ -327,6 +340,12 @@ function(renut_gpu_setup TARGET)
     if(NOT REXGLUE_PLATFORM_SWITCH)
         target_sources(${TARGET} PRIVATE ${renut_imgui_sources})
         set_source_files_properties(${renut_imgui_sources} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+        if(UNIX AND NOT APPLE)
+            # mk9-lauta (2026-11-13): Linux: the SDK is a shared library there that exports its own copy's symbols; an
+            # executable's definition of the same names is exported too and the library's calls take it (one GImGui for
+            # both: what this copy is for). Hidden, the executable keeps its copy to itself, as Windows' DLL does.
+            set_source_files_properties(${renut_imgui_sources} PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
+        endif()
     endif()
     target_include_directories(${TARGET} BEFORE PRIVATE "${RENUT_IMGUI_DIR}")
     target_compile_definitions(${TARGET} PRIVATE RENUT_RECOMP)

@@ -23,6 +23,10 @@ struct Info {
   int binding_tier = 0, heap_tier = 0, shader_model = 0;
   bool uma = false;
   uint64_t driver = 0;
+  // mk9-lauta (2026-11-13): Linux: Vulkan on that adapter (its API version, VK_MAKE_API_VERSION), and its driver as it
+  // names itself (Detect(true) only: "radv, Mesa 24.2.8"); driver above is Vulkan's driverVersion there
+  uint32_t vulkan_api = 0;
+  std::string vulkan_driver;
 };
 Info Detect(bool d3d12 = false);
 

@@ -17,6 +17,8 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <algorithm>
+#include <string>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -320,6 +322,22 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info) {
   return false;
 }
 
+// mk9-lauta (2026-11-13): a folder's entries in NTFS's order (the names compared by their capitals, then byte by byte):
+// what Windows lists on its usual file system, where readdir gives the file system's own order (ext4's, a hash). The
+// game enumerates folders (its DLC packages, its saves): in the same order on Linux, its memory is the same as on
+// Windows, which an online match between the two needs.
+inline bool NtfsOrder(const std::string& a, const std::string& b) {
+  const size_t n = a.size() < b.size() ? a.size() : b.size();
+  for (size_t i = 0; i < n; ++i) {
+    unsigned char x = static_cast<unsigned char>(a[i]), y = static_cast<unsigned char>(b[i]);
+    if (x >= 'a' && x <= 'z') x = static_cast<unsigned char>(x - 32);
+    if (y >= 'a' && y <= 'z') y = static_cast<unsigned char>(y - 32);
+    if (x != y) return x < y;
+  }
+  if (a.size() != b.size()) return a.size() < b.size();
+  return a < b;  // names only case tells apart (Linux allows both): still one order
+}
+
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
   std::vector<FileInfo> result;
 
@@ -336,13 +354,16 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
     FileInfo info;
 
     info.name = ent->d_name;
-    struct stat st;
-    stat((path / info.name).c_str(), &st);
+    struct stat st {};
+    const bool stated = stat((path / info.name).c_str(), &st) == 0;
     info.create_timestamp = convertUnixtimeToWinFiletime(st.st_ctime);
     info.access_timestamp = convertUnixtimeToWinFiletime(st.st_atime);
     info.write_timestamp = convertUnixtimeToWinFiletime(st.st_mtime);
     info.path = path;
-    if (ent->d_type == DT_DIR) {
+    // mk9-lauta (2026-11-13): a file system that does not say (DT_UNKNOWN), or a link to a folder (DT_LNK): stat says
+    const bool directory = ent->d_type == DT_DIR || ((ent->d_type == DT_UNKNOWN || ent->d_type == DT_LNK) &&
+                                                     stated && S_ISDIR(st.st_mode));
+    if (directory) {
       info.type = FileInfo::Type::kDirectory;
       info.total_size = 0;
     } else {
@@ -352,6 +373,10 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
     result.push_back(info);
   }
   closedir(dir);
+#if defined(__linux__) && !defined(__SWITCH__)
+  std::sort(result.begin(), result.end(),
+            [](const FileInfo& a, const FileInfo& b) { return NtfsOrder(a.name.native(), b.name.native()); });
+#endif
   return result;
 }
 

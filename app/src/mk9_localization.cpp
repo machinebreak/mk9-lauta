@@ -2,13 +2,17 @@
 
 #include "mk9_localization.h"
 
+#include "mk9_platform.h"
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#if defined(_WIN32)
 #include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -62,6 +66,7 @@ const Texts kTexts[] = {
      "L'online di questa versione si apre con F1: stanze, partita rapida e chat."},
 };
 
+#if defined(_WIN32)
 std::string Cp1252(std::string_view utf8) {
   const int wide_size = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
   std::wstring wide(size_t(std::max(wide_size, 0)), L'\0');
@@ -71,6 +76,45 @@ std::string Cp1252(std::string_view utf8) {
   WideCharToMultiByte(1252, 0, wide.data(), int(wide.size()), out.data(), size, nullptr, nullptr);
   return out;
 }
+#else
+// mk9-lauta (2026-11-13): Linux: UTF-8 to Windows-1252 by its table (what WideCharToMultiByte(1252) gives: Latin-1 as
+// it is, the 27 characters of 0x80-0x9F, '?' for the rest)
+std::string Cp1252(std::string_view utf8) {
+  static const std::pair<char32_t, uint8_t> kExtra[] = {
+      {0x20AC, 0x80}, {0x201A, 0x82}, {0x0192, 0x83}, {0x201E, 0x84}, {0x2026, 0x85}, {0x2020, 0x86}, {0x2021, 0x87},
+      {0x02C6, 0x88}, {0x2030, 0x89}, {0x0160, 0x8A}, {0x2039, 0x8B}, {0x0152, 0x8C}, {0x017D, 0x8E}, {0x2018, 0x91},
+      {0x2019, 0x92}, {0x201C, 0x93}, {0x201D, 0x94}, {0x2022, 0x95}, {0x2013, 0x96}, {0x2014, 0x97}, {0x02DC, 0x98},
+      {0x2122, 0x99}, {0x0161, 0x9A}, {0x203A, 0x9B}, {0x0153, 0x9C}, {0x017E, 0x9E}, {0x0178, 0x9F}};
+  std::string out;
+  for (size_t i = 0; i < utf8.size();) {
+    const uint8_t b = uint8_t(utf8[i]);
+    char32_t c = b;
+    size_t n = 1;
+    if (b >= 0xF0 && i + 3 < utf8.size()) {
+      c = char32_t(b & 0x07) << 18 | char32_t(utf8[i + 1] & 0x3F) << 12 | char32_t(utf8[i + 2] & 0x3F) << 6 |
+          char32_t(utf8[i + 3] & 0x3F);
+      n = 4;
+    } else if (b >= 0xE0 && i + 2 < utf8.size()) {
+      c = char32_t(b & 0x0F) << 12 | char32_t(utf8[i + 1] & 0x3F) << 6 | char32_t(utf8[i + 2] & 0x3F);
+      n = 3;
+    } else if (b >= 0xC0 && i + 1 < utf8.size()) {
+      c = char32_t(b & 0x1F) << 6 | char32_t(utf8[i + 1] & 0x3F);
+      n = 2;
+    }
+    i += n;
+    if (c < 0x80 || (c >= 0xA0 && c <= 0xFF)) {
+      out += char(c);
+      continue;
+    }
+    char mapped = '?';
+    for (const auto& [code, byte] : kExtra) {
+      if (code == c) mapped = char(byte);
+    }
+    out += mapped;
+  }
+  return out;
+}
+#endif
 
 uint32_t Get32(const std::string& data, size_t at) {
   return uint32_t(uint8_t(data[at])) << 24 | uint32_t(uint8_t(data[at + 1])) << 16 |
@@ -174,9 +218,7 @@ void Install(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::pat
   std::error_code ec;
   const std::filesystem::path source = game_root / "Localization";
   if (!std::filesystem::is_directory(source, ec)) return;
-  wchar_t exe[MAX_PATH] = {};
-  GetModuleFileNameW(nullptr, exe, MAX_PATH);
-  const std::filesystem::path folder = std::filesystem::path(exe).parent_path() / "cache" / "localization";
+  const std::filesystem::path folder = mk9::platform::ExeDir() / "cache" / "localization";
   std::filesystem::create_directories(folder, ec);
   int files = 0, texts = 0;
   for (const auto& entry : std::filesystem::directory_iterator(source, ec)) {

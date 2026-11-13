@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace mk9::feed {
@@ -44,6 +45,6 @@ bool Ended();
 
 // --- a replay (mk9-lauta, 2026-11-11) ---
 // A session recording read whole from a file (netplay.cpp, mk9_net_replay), as if the relay had brought all of it.
-bool LoadFile(const std::wstring& path);
+bool LoadFile(const std::filesystem::path& path);
 
 }  // namespace mk9::feed

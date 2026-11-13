@@ -474,6 +474,27 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
   }
   oflag |= O_CREAT;
   auto full_path = MakeShmName(path);
+#if REX_PLATFORM_LINUX
+  // mk9-lauta (2026-11-13): an anonymous memory file (memfd), gone with the process however it ends: a /dev/shm file
+  // stayed after a crash (the guest memory's, ~4.8 GB, its touched pages in RAM until the next boot; a full /dev/shm
+  // made the next start die with SIGBUS), and /dev/shm's size (small in some sandboxes) no longer limits it. Views are
+  // mapped from the descriptor, as before; the name is only the file's label.
+  int ret = memfd_create(full_path.c_str() + 1, MFD_CLOEXEC);
+  const bool anonymous = ret >= 0;
+  if (!anonymous) {
+    // no memfd (a kernel before 3.17): /dev/shm's, its name gone at once (the open descriptor keeps the file)
+    ret = shm_open(full_path.c_str(), oflag, 0777);
+    if (ret < 0) {
+      return kFileMappingHandleInvalid;
+    }
+    shm_unlink(full_path.c_str());
+  }
+  if (rex_ftruncate64(ret, static_cast<off_t>(length)) != 0) {
+    close(ret);
+    return kFileMappingHandleInvalid;
+  }
+  return static_cast<FileMappingHandle>(ret);
+#else
   int ret = shm_open(full_path.c_str(), oflag, 0777);
   if (ret < 0) {
     return kFileMappingHandleInvalid;
@@ -484,6 +505,7 @@ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, siz
     return kFileMappingHandleInvalid;
   }
   return static_cast<FileMappingHandle>(ret);
+#endif
 #endif
 }
 

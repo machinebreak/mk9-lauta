@@ -2,6 +2,7 @@
 
 #include "mk9_installer.h"
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -13,6 +14,23 @@
 #include <bcrypt.h>
 #include <commctrl.h>
 #include <shobjidl.h>
+#else
+// mk9-lauta (2026-11-13): Linux: the disc read by pread, SHA-256 by mk9_sha256.h, the window a small one of the game's
+// (mk9_small_window.h: SDL's, drawn with Dear ImGui), SDL's file dialogs
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <ctime>
+#include <optional>
+
+#include <SDL3/SDL.h>
+
+#include "imgui.h"
+#include "mk9_platform.h"
+#include "mk9_sha256.h"
+#include "mk9_small_window.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -39,11 +57,13 @@
 #include "mk9_builtin_config.h"  // kMk9GameFiles: app/mk9_game_files.txt
 #endif
 
+#if defined(_WIN32)
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "ole32.lib")
 // Windows' own look for the installer's buttons and bar (common controls 6)
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
+#endif
 
 namespace mk9::installer {
 namespace {
@@ -89,6 +109,7 @@ std::vector<GameFile> GameFiles() {
   return files;
 }
 
+#if defined(_WIN32)
 // --- SHA-256 (Windows' CNG) -----------------------------------------------------------------------------------------
 
 class Sha256 {
@@ -115,6 +136,32 @@ class Sha256 {
   BCRYPT_ALG_HANDLE alg_ = nullptr;
   BCRYPT_HASH_HANDLE hash_ = nullptr;
 };
+#else
+// --- SHA-256 (Linux: mk9_sha256.h, the system's libcrypto, else picohash) -------------------------------------------
+
+class Sha256 {
+ public:
+  Sha256() : hash_(mk9_sha256_begin()) {}
+  ~Sha256() {
+    if (hash_) {
+      unsigned char unused[32];
+      mk9_sha256_end(hash_, unused);
+    }
+  }
+  Sha256(const Sha256&) = delete;
+  Sha256& operator=(const Sha256&) = delete;
+  void Update(const void* data, size_t size) { mk9_sha256_add(hash_, data, size); }
+  std::array<uint8_t, 32> Finish() {
+    std::array<uint8_t, 32> out{};
+    if (hash_) mk9_sha256_end(hash_, out.data());
+    hash_ = nullptr;
+    return out;
+  }
+
+ private:
+  mk9_sha256* hash_ = nullptr;
+};
+#endif
 
 // --- An Xbox 360 disc image (XDVDFS: the game partition's directory trees) -----------------------------------------
 
@@ -126,13 +173,23 @@ class Disc {
   };
 
   ~Disc() {
+#if defined(_WIN32)
     if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+#else
+    if (fd_ >= 0) close(fd_);
+#endif
   }
 
   bool Open(const fs::path& path, std::string& error) {
+#if defined(_WIN32)
     file_ = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                         FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (file_ == INVALID_HANDLE_VALUE) {
+#else
+    fd_ = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd_ >= 0) posix_fadvise(fd_, 0, 0, POSIX_FADV_SEQUENTIAL);
+    if (fd_ < 0) {
+#endif
       error = "No se pudo abrir el archivo.";
       return false;
     }
@@ -157,6 +214,18 @@ class Disc {
   }
 
   bool Read(uint64_t offset, void* out, size_t size) {
+#if !defined(_WIN32)
+    auto* bytes = static_cast<uint8_t*>(out);
+    while (size > 0) {
+      const ssize_t got = pread(fd_, bytes, std::min<size_t>(size, 1 << 24), off_t(offset));
+      if (got < 0 && errno == EINTR) continue;
+      if (got <= 0) return false;
+      bytes += got;
+      size -= size_t(got);
+      offset += uint64_t(got);
+    }
+    return true;
+#else
     LARGE_INTEGER at;
     at.QuadPart = LONGLONG(offset);
     if (!SetFilePointerEx(file_, at, nullptr, FILE_BEGIN)) return false;
@@ -169,6 +238,7 @@ class Disc {
       size -= got;
     }
     return true;
+#endif
   }
 
  private:
@@ -208,7 +278,11 @@ class Disc {
     }
   }
 
+#if defined(_WIN32)
   HANDLE file_ = INVALID_HANDLE_VALUE;
+#else
+  int fd_ = -1;
+#endif
   std::map<std::string, Entry> files_;
 };
 
@@ -227,6 +301,7 @@ void SetStatus(Job& job, std::string text) {
   job.status = std::move(text);
 }
 
+#if defined(_WIN32)
 std::string Utf8(const std::wstring& text) {
   if (text.empty()) return {};
   const int size = WideCharToMultiByte(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0, nullptr, nullptr);
@@ -242,6 +317,37 @@ std::wstring Wide(std::string_view text) {
   MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), out.data(), size);
   return out;
 }
+#else
+// paths are UTF-8 bytes on Linux: the list's as they are
+std::string Wide(std::string_view text) { return std::string(text); }
+
+// A game file in a folder the player chose, as it is on the disk: Linux's file systems tell "dlc" from "DLC" (the
+// game's own, the SDK's, does not; nor Windows'): each name the list's, else the one there that differs only in case.
+fs::path OnDisk(const fs::path& folder, const std::string& relative) {
+  fs::path at = folder;
+  size_t start = 0;
+  while (start < relative.size()) {
+    const size_t slash = relative.find('/', start);
+    const std::string part = relative.substr(start, slash == std::string::npos ? std::string::npos : slash - start);
+    start = slash == std::string::npos ? relative.size() : slash + 1;
+    if (part.empty()) continue;
+    std::error_code ec;
+    if (fs::exists(at / part, ec)) {
+      at /= part;
+      continue;
+    }
+    fs::path found;
+    for (const auto& entry : fs::directory_iterator(at, ec)) {
+      if (Lower(entry.path().filename().string()) == Lower(part)) {
+        found = entry.path();
+        break;
+      }
+    }
+    at = found.empty() ? at / part : found;
+  }
+  return at;
+}
+#endif
 
 const char* kWrongVersion =
     "no es la versión que usa mk9-lauta (Mortal Kombat Komplete Edition de Xbox 360, la europea: En, Fr, De, Es, "
@@ -275,6 +381,7 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
     total += f.size;
   }
   job.bytes_total = total;
+#if defined(_WIN32)
   ULARGE_INTEGER free_bytes{};
   if (GetDiskFreeSpaceExW(exe_folder.c_str(), &free_bytes, nullptr, nullptr) &&
       free_bytes.QuadPart < total + (256ull << 20)) {
@@ -282,13 +389,27 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
                        Utf8(exe_folder.root_name().wstring()) + ".");
     return false;
   }
+#else
+  std::error_code space_ec;
+  const fs::space_info space = fs::space(exe_folder, space_ec);
+  if (!space_ec && space.available < total + (256ull << 20)) {
+    SetStatus(job, "No hay lugar: hacen falta " + std::to_string((total >> 30) + 1) + " GB libres en " +
+                       exe_folder.string() + ".");
+    return false;
+  }
+#endif
   std::error_code ec;
   const fs::path partial = exe_folder / "game_root.partial";
   fs::remove_all(partial, ec);  // a cut install of ours
   fs::create_directories(partial, ec);
   if (ec) {
+#if defined(_WIN32)
     SetStatus(job, "No se puede escribir en " + Utf8(exe_folder.wstring()) +
                        ": poné la carpeta del juego en otro lugar (por ejemplo Documentos).");
+#else
+    SetStatus(job, "No se puede escribir en " + exe_folder.string() +
+                       ": poné la carpeta del juego en otro lugar (por ejemplo en tu carpeta personal).");
+#endif
     return false;
   }
   // default.xex first: a wrong version stops before 7 GB are copied
@@ -306,8 +427,13 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
     const Disc::Entry* e = disc.Find(f->path);
     const fs::path target = partial / fs::path(Wide(f->path));
     fs::create_directories(target.parent_path(), ec);
+#if defined(_WIN32)
     HANDLE out = CreateFileW(target.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (out == INVALID_HANDLE_VALUE) {
+#else
+    std::FILE* out = platform::OpenFile(target, "wb");
+    if (!out) {
+#endif
       SetStatus(job, "No se pudo escribir " + f->path + ".");
       fs::remove_all(partial, ec);
       return false;
@@ -323,8 +449,12 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
         break;
       }
       sha.Update(buffer.data(), chunk);
+#if defined(_WIN32)
       DWORD wrote = 0;
       if (!WriteFile(out, buffer.data(), DWORD(chunk), &wrote, nullptr) || wrote != chunk) {
+#else
+      if (std::fwrite(buffer.data(), 1, chunk, out) != chunk) {
+#endif
         SetStatus(job, "No se pudo escribir " + f->path + " (¿se llenó el disco?).");
         fine = false;
         break;
@@ -334,7 +464,14 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
       job.bytes_done += chunk;
       if (job.cancel) break;
     }
+#if defined(_WIN32)
     CloseHandle(out);
+#else
+    if (std::fclose(out) != 0 && fine) {  // what was still buffered is written at the close: a full disk shows here
+      SetStatus(job, "No se pudo escribir " + f->path + " (¿se llenó el disco?).");
+      fine = false;
+    }
+#endif
     if (fine && !job.cancel && sha.Finish() != f->sha256) {
       SetStatus(job, f->path + " no coincide con el original: " +
                          (Lower(f->path) == "default.xex" ? std::string(kWrongVersion)
@@ -350,7 +487,11 @@ bool InstallFromDisc(const fs::path& image, const fs::path& exe_folder, Job& job
   // the finished folder takes game_root's place (an old one is kept aside, never deleted)
   const fs::path root = exe_folder / "game_root";
   if (fs::exists(root, ec)) {
+#if defined(_WIN32)
     fs::rename(root, exe_folder / ("game_root.old-" + std::to_string(GetTickCount64())), ec);
+#else
+    fs::rename(root, exe_folder / ("game_root.old-" + std::to_string(std::time(nullptr))), ec);
+#endif
   }
   fs::rename(partial, root, ec);
   if (ec) {
@@ -373,7 +514,11 @@ void KeepGameRoot(const fs::path& exe_folder, const fs::path& root) {
     }
   }
   std::string value;
+#if defined(_WIN32)
   for (char c : Utf8(root.wstring())) {
+#else
+  for (char c : root.string()) {
+#endif
     if (c == '\\' || c == '"') value.push_back('\\');
     value.push_back(c);
   }
@@ -399,7 +544,11 @@ bool InstallFromFolder(const fs::path& folder, const fs::path& exe_folder, Job& 
   for (const GameFile& f : files) total += f.size;
   job.bytes_total = total;
   for (const GameFile& f : files) {
+#if defined(_WIN32)
     const fs::path path = folder / fs::path(Wide(f.path));
+#else
+    const fs::path path = OnDisk(folder, f.path);
+#endif
     const uint64_t size = fs::file_size(path, ec);
     if (ec) {
       problems.push_back(f.path + ": falta");
@@ -439,6 +588,7 @@ bool InstallFromFolder(const fs::path& folder, const fs::path& exe_folder, Job& 
 
 // --- The window ---------------------------------------------------------------------------------------------------
 
+#if defined(_WIN32)
 enum : int { kIdIso = 101, kIdFolder = 102, kIdQuit = 103, kTimer = 1 };
 
 struct Window {
@@ -675,6 +825,198 @@ void RunWindow() {
   DeleteObject(w.title_font);
   CoUninitialize();
 }
+#else  // Linux
+
+// mk9-lauta (2026-11-13): Linux: a small window of the game's (mk9_small_window.h: SDL's, drawn with Dear ImGui and the
+// screens' Barlow fonts); the same words, buttons, bar and steps as Windows' window. The ISO or the folder may also be
+// dropped on the window: a desktop with neither the XDG portal nor zenity has no file dialog.
+
+struct Window {
+  fs::path exe_folder;
+  Job job;
+  std::thread worker;
+  fs::path chosen;
+  uint64_t closing_at = 0;  // SDL_GetTicks' ms
+  bool auto_started = false;
+  bool quit = false;
+  bool show_bar = false;
+  float progress = 0.0f;
+  std::string status;  // the status line
+  std::atomic<bool> dialog_open{false};
+  std::mutex picked_mutex;
+  std::optional<std::pair<bool, fs::path>> picked;  // a dialog's answer (an image?, its path), for the loop
+  bool dialog_failed = false;                       // picked_mutex
+};
+Window* g_window = nullptr;
+
+void Start(bool image, const fs::path& path) {
+  Window& w = *g_window;
+  if (w.job.running) return;
+  if (w.worker.joinable()) w.worker.join();
+  w.job.done = false;
+  w.job.ok = false;
+  w.job.cancel = false;
+  w.job.bytes_done = 0;
+  w.job.bytes_total = 0;
+  w.job.running = true;
+  w.show_bar = true;
+  w.progress = 0.0f;
+  REXLOG_INFO("[installer] from {}", path.string());
+  w.worker = std::thread([image, path] {
+    Window& w = *g_window;
+    const bool ok = image ? InstallFromDisc(path, w.exe_folder, w.job) : InstallFromFolder(path, w.exe_folder, w.job);
+    w.job.ok = ok;
+    w.job.running = false;
+    w.job.done = true;
+  });
+}
+
+// SDL's dialog's answer (on whatever thread SDL gives it: zenity's is a thread of its own).
+void SDLCALL Picked(void* image, const char* const* files, int) {
+  Window& w = *g_window;
+  std::lock_guard lock(w.picked_mutex);
+  w.dialog_open = false;
+  if (!files) {
+    REXLOG_WARN("[installer] the file dialog did not open: {}", SDL_GetError());
+    w.dialog_failed = true;
+    return;
+  }
+  if (files[0]) w.picked = std::make_pair(image != nullptr, fs::path(files[0]));
+}
+
+void Pick(bool folder) {
+  Window& w = *g_window;
+  if (w.dialog_open.exchange(true)) return;
+  static const SDL_DialogFileFilter kTypes[] = {{"Imagen de disco de Xbox 360 (*.iso)", "iso;ISO"},
+                                                {"Todos los archivos", "*"}};
+  const SDL_PropertiesID props = SDL_CreateProperties();
+  SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_WINDOW_POINTER, small_window::Current());
+  if (folder) {
+    SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING,
+                          "Elegí la carpeta del juego (la que tiene default.xex)");
+  } else {
+    SDL_SetStringProperty(props, SDL_PROP_FILE_DIALOG_TITLE_STRING, "Elegí la ISO del juego");
+    SDL_SetPointerProperty(props, SDL_PROP_FILE_DIALOG_FILTERS_POINTER, const_cast<SDL_DialogFileFilter*>(kTypes));
+    SDL_SetNumberProperty(props, SDL_PROP_FILE_DIALOG_NFILTERS_NUMBER, 2);
+  }
+  SDL_ShowFileDialogWithProperties(folder ? SDL_FILEDIALOG_OPENFOLDER : SDL_FILEDIALOG_OPENFILE, Picked,
+                                   folder ? nullptr : reinterpret_cast<void*>(1), props);
+  SDL_DestroyProperties(props);
+}
+
+// What Windows' timer does (every frame here), then the window's contents. False: the window closes.
+bool Frame(const small_window::Look& look) {
+  Window& w = *g_window;
+  if (!w.auto_started) {
+    w.auto_started = true;
+    if (const char* test = std::getenv("MK9_TEST_INSTALL"); test && *test) {
+      const fs::path path(test);
+      std::error_code ec;
+      Start(!fs::is_directory(path, ec), path);
+    }
+  }
+  if (w.quit || (w.closing_at && SDL_GetTicks() >= w.closing_at)) return false;
+  {
+    std::lock_guard lock(w.picked_mutex);
+    if (w.picked && !w.job.running && !w.closing_at) Start(w.picked->first, w.picked->second);
+    w.picked.reset();
+    if (w.dialog_failed) {
+      w.dialog_failed = false;
+      w.status = "No se pudo abrir el selector de archivos de tu escritorio: arrastrá la ISO o la carpeta a esta "
+                 "ventana.";
+    }
+  }
+  const uint64_t total = w.job.bytes_total, done = w.job.bytes_done;
+  std::string status;
+  {
+    std::lock_guard lock(w.job.mutex);
+    status = w.job.status;
+  }
+  if (w.job.running) {
+    const int permille = total ? int(done * 1000 / total) : 0;
+    w.progress = float(permille) / 1000.0f;
+    w.status = total ? status + "  (" + std::to_string(permille / 10) + " %, " + std::to_string(done >> 20) + " de " +
+                           std::to_string(total >> 20) + " MB)"
+                     : status;
+  } else if (w.job.done) {
+    w.job.done = false;
+    if (w.worker.joinable()) w.worker.join();
+    if (w.job.ok) {
+      w.progress = 1.0f;
+      w.status = "¡Listo! Arrancando el juego...";
+      REXLOG_INFO("[installer] done: {}", w.job.result.string());
+      w.chosen = w.job.result;
+      w.closing_at = SDL_GetTicks() + 900;
+    } else {
+      w.status = status;
+      REXLOG_WARN("[installer] {}", status);
+    }
+  }
+
+  const float s = look.scale;
+  ImGui::PushFont(look.title, 34.0f * s);
+  ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.25f, 1.0f), "mk9-lauta");
+  ImGui::PopFont();
+  ImGui::Spacing();
+  ImGui::TextWrapped(
+      "Para jugar hace falta tu copia de Mortal Kombat Komplete Edition de Xbox 360. Elegí la imagen .iso del disco, "
+      "o la carpeta donde ya la tenés extraída (la que tiene default.xex). Se revisa que sea la versión correcta y se "
+      "prepara una sola vez: desde la ISO se copian ~7 GB al lado del juego. También podés arrastrar la ISO o la "
+      "carpeta a esta ventana.");
+  ImGui::Spacing();
+  ImGui::Spacing();
+  const bool busy = w.job.running || w.closing_at;
+  const ImVec2 button(200.0f * s, 36.0f * s);
+  ImGui::BeginDisabled(busy);
+  if (ImGui::Button("Elegir la ISO...", button)) Pick(false);
+  ImGui::SameLine();
+  if (ImGui::Button("Elegir una carpeta...", button)) Pick(true);
+  ImGui::EndDisabled();
+  ImGui::SameLine(ImGui::GetWindowWidth() - 120.0f * s - ImGui::GetStyle().WindowPadding.x);
+  ImGui::BeginDisabled(w.closing_at != 0);
+  if (ImGui::Button(w.job.running ? "Cancelar" : "Salir", ImVec2(120.0f * s, 36.0f * s))) {
+    if (w.job.running) {
+      w.job.cancel = true;
+    } else {
+      w.quit = true;
+    }
+  }
+  ImGui::EndDisabled();
+  ImGui::Spacing();
+  if (w.show_bar) ImGui::ProgressBar(w.progress, ImVec2(-1.0f, 22.0f * s), "");
+  ImGui::TextWrapped("%s", w.status.c_str());
+  return true;
+}
+
+void RunWindow() {
+  Window& w = *g_window;
+  const bool opened = small_window::Run(
+      "mk9-lauta - Instalación", 620, 330, Frame,
+      [&w] {
+        // the X: a job running is cancelled (the window stays, as on Windows); else it closes
+        if (w.job.running) {
+          w.job.cancel = true;
+          return false;
+        }
+        return !w.closing_at;
+      },
+      [&w](const fs::path& path) {
+        if (w.job.running || w.closing_at) return;
+        std::error_code ec;
+        Start(!fs::is_directory(path, ec), path);
+      });
+  if (!opened) {
+    std::fprintf(stderr,
+                 "mk9: no se encontraron los archivos del juego y no se puede abrir la ventana del instalador (%s).\n"
+                 "     Abrí el juego desde tu escritorio, o poné la carpeta game_root al lado del programa.\n",
+                 SDL_GetError());
+  }
+  if (w.worker.joinable()) {
+    w.job.cancel = true;
+    w.worker.join();
+  }
+}
+#endif
 
 }  // namespace
 
@@ -697,8 +1039,13 @@ fs::path Run(const fs::path& exe_folder) {
   window.exe_folder = exe_folder;
   g_window = &window;
   REXLOG_INFO("[installer] no game files found: the installer opens");
+#if defined(_WIN32)
   std::thread ui(RunWindow);  // its own thread: a COM apartment and a message loop of its own
   ui.join();
+#else
+  REXLOG_INFO("[installer] SHA-256 by {}", mk9_sha256_engine());
+  RunWindow();  // SDL's window: on the main thread (this one), as SDL asks
+#endif
   g_window = nullptr;
   return window.chosen;
 }

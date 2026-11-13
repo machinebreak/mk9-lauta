@@ -34,6 +34,12 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#elif defined(__linux__) && !defined(__SWITCH__)
+#include <string>
+
+#include <unistd.h>
+
+#include <SDL3/SDL.h>
 #endif
 
 namespace renut::gpu::overlay {
@@ -48,7 +54,7 @@ ImGuiContext *g_context = nullptr;
 ImFont *g_title_font = nullptr;
 ImFont *g_strong_font = nullptr;
 
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__SWITCH__))
 // mk9-lauta (2026-11-11, F1): the screens' fonts (app/thirdparty/barlow, SIL OFL 1.1; ~320 KB)
 const unsigned char kBarlowRegular[] = {
 #embed "../../../../thirdparty/barlow/Barlow-Regular.ttf"
@@ -59,7 +65,9 @@ const unsigned char kBarlowSemiBold[] = {
 const unsigned char kBarlowCondensedBold[] = {
 #embed "../../../../thirdparty/barlow/BarlowCondensed-Bold.ttf"
 };
+#endif
 
+#if defined(_WIN32)
 // One of the fonts above, at the screens' 18 pixels, and Segoe UI merged after it (its glyphs where it has none).
 ImFont *AddEmbeddedFont(ImGuiIO &io, const unsigned char *data, size_t size, const char *name, bool segoe) {
   ImFontConfig config;
@@ -73,6 +81,45 @@ ImFont *AddEmbeddedFont(ImGuiIO &io, const unsigned char *data, size_t size, con
     // 20: its letters as big as Barlow's at 18 (a pixel size is ascent + descent: Segoe UI's line is taller for its
     // letters, 1.33 em against 1.2)
     io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf", 20.0f, &merge);
+  }
+  return font;
+}
+#elif defined(__linux__) && !defined(__SWITCH__)
+// The distribution's font for what Barlow lacks (a player's name in another alphabet), as Segoe UI on Windows: DejaVu
+// Sans or Noto Sans where they usually are (Debian and Ubuntu, Arch and SteamOS, Fedora), at the size that makes its
+// letters as big as Barlow's at 18. Null: none (Barlow alone).
+struct FallbackFont {
+  const char *path = nullptr;
+  float size = 18.0f;
+};
+FallbackFont FindFallbackFont() {
+  static const FallbackFont kFonts[] = {
+      {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 18.0f},
+      {"/usr/share/fonts/TTF/DejaVuSans.ttf", 18.0f},
+      {"/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", 18.0f},
+      {"/usr/share/fonts/dejavu/DejaVuSans.ttf", 18.0f},
+      {"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", 20.0f},
+      {"/usr/share/fonts/noto/NotoSans-Regular.ttf", 20.0f},
+      {"/usr/share/fonts/google-noto/NotoSans-Regular.ttf", 20.0f},
+  };
+  for (const FallbackFont &font : kFonts) {
+    if (access(font.path, R_OK) == 0)
+      return font;
+  }
+  return {};
+}
+
+ImFont *AddEmbeddedFont(ImGuiIO &io, const unsigned char *data, size_t size, const char *name,
+                        const FallbackFont &fallback) {
+  ImFontConfig config;
+  config.FontDataOwnedByAtlas = false;  // static: the atlas must not free it
+  std::snprintf(config.Name, sizeof(config.Name), "%s", name);
+  ImFont *font = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char *>(data), int(size), 18.0f, &config);
+  if (font && fallback.path) {
+    ImFontConfig merge;
+    merge.MergeMode = true;
+    std::snprintf(merge.Name, sizeof(merge.Name), "system font after %s", name);
+    io.Fonts->AddFontFromFileTTF(fallback.path, fallback.size, &merge);
   }
   return font;
 }
@@ -449,6 +496,258 @@ void BuildOnUIThread() {
   g_build_pending.store(false, std::memory_order_release);
 }
 
+#elif defined(__linux__) && !defined(__SWITCH__)
+
+// --- Window input and the build pump (Linux) --------------------------------
+// mk9-lauta (2026-11-13): the SDK's window is SDL's here. An SDL event filter sees its events before the SDK does
+// (SDL_PushEvent asks the filter first, on the thread that pumps the window system's events): the overlay's input is
+// queued for the next build, and a key typed into the overlay or a close the player has not confirmed is taken out,
+// as Windows' window procedure does. The build runs on the UI thread (SDL's main thread here) every 16 ms.
+
+UIThreadRunner g_run_on_ui;
+std::atomic<bool> g_build_pending{false};
+std::atomic<bool> g_stop{true};
+std::thread g_pump;
+SDL_EventFilter g_previous_filter = nullptr;
+void *g_previous_userdata = nullptr;
+std::atomic<SDL_WindowID> g_window_id{0};   // the game's window (0: not known yet, every window's events taken)
+std::atomic<SDL_Window *> g_sdl_window{nullptr};
+std::atomic<float> g_pixel_density{1.0f};   // window points to pixels (the overlay works in pixels, as on Windows)
+bool g_text_input_ours = false;             // UI thread: SDL's text input switched on for the overlay's text field
+thread_local bool t_close_refused = false;  // the close just refused: SDL's quit that follows it goes too
+
+// An SDL event the overlay's ImGui takes, copied as it arrived.
+struct InputEvent {
+  uint32_t type = 0;
+  float x = 0.0f, y = 0.0f;  // the mouse (window points), the wheel's amounts
+  uint8_t button = 0;
+  SDL_Keycode key = 0;
+  SDL_Keymod mod = 0;
+  std::string text;
+};
+constexpr size_t kMaxQueuedInput = 4096;
+std::mutex g_input_mutex;
+std::vector<InputEvent> g_input;
+
+// The game's window (SDL's first: the SDK has one), found on the UI thread.
+SDL_Window *GameWindow() {
+  SDL_Window *window = g_sdl_window.load(std::memory_order_acquire);
+  if (window)
+    return window;
+  int count = 0;
+  SDL_Window **windows = SDL_GetWindows(&count);
+  window = windows && count > 0 ? windows[0] : nullptr;
+  SDL_free(windows);
+  if (window) {
+    g_window_id.store(SDL_GetWindowID(window), std::memory_order_release);
+    g_sdl_window.store(window, std::memory_order_release);
+  }
+  return window;
+}
+
+ImGuiKey KeyFromKeycode(SDL_Keycode key) {
+  if (key >= SDLK_A && key <= SDLK_Z)
+    return ImGuiKey(ImGuiKey_A + int(key - SDLK_A));
+  if (key >= SDLK_0 && key <= SDLK_9)
+    return ImGuiKey(ImGuiKey_0 + int(key - SDLK_0));
+  if (key >= SDLK_F1 && key <= SDLK_F12)
+    return ImGuiKey(ImGuiKey_F1 + int(key - SDLK_F1));
+  switch (key) {
+  case SDLK_TAB: return ImGuiKey_Tab;
+  case SDLK_LEFT: return ImGuiKey_LeftArrow;
+  case SDLK_RIGHT: return ImGuiKey_RightArrow;
+  case SDLK_UP: return ImGuiKey_UpArrow;
+  case SDLK_DOWN: return ImGuiKey_DownArrow;
+  case SDLK_PAGEUP: return ImGuiKey_PageUp;
+  case SDLK_PAGEDOWN: return ImGuiKey_PageDown;
+  case SDLK_HOME: return ImGuiKey_Home;
+  case SDLK_END: return ImGuiKey_End;
+  case SDLK_INSERT: return ImGuiKey_Insert;
+  case SDLK_DELETE: return ImGuiKey_Delete;
+  case SDLK_BACKSPACE: return ImGuiKey_Backspace;
+  case SDLK_SPACE: return ImGuiKey_Space;
+  case SDLK_RETURN:
+  case SDLK_KP_ENTER: return ImGuiKey_Enter;
+  case SDLK_ESCAPE: return ImGuiKey_Escape;
+  default: return ImGuiKey_None;
+  }
+}
+
+bool OurWindow(SDL_WindowID id) {
+  const SDL_WindowID ours = g_window_id.load(std::memory_order_acquire);
+  return !ours || id == ours;
+}
+
+void Queue(InputEvent &&e) {
+  std::lock_guard lock(g_input_mutex);
+  if (g_input.size() < kMaxQueuedInput)
+    g_input.push_back(std::move(e));
+}
+
+// Sees every SDL event first: true lets it on to the SDK.
+bool SDLCALL OverlayEventFilter(void *, SDL_Event *event) {
+  bool keep = true;
+  const bool typing = g_wants_keyboard.load(std::memory_order_relaxed);
+  switch (event->type) {
+  case SDL_EVENT_MOUSE_MOTION:
+    if (OurWindow(event->motion.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      e.x = event->motion.x;
+      e.y = event->motion.y;
+      Queue(std::move(e));
+    }
+    break;
+  case SDL_EVENT_MOUSE_BUTTON_DOWN:
+  case SDL_EVENT_MOUSE_BUTTON_UP:
+    if (OurWindow(event->button.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      e.button = event->button.button;
+      Queue(std::move(e));
+    }
+    break;
+  case SDL_EVENT_MOUSE_WHEEL:
+    if (OurWindow(event->wheel.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      const float flip = event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
+      e.x = event->wheel.x * flip;
+      e.y = event->wheel.y * flip;
+      Queue(std::move(e));
+    }
+    break;
+  case SDL_EVENT_KEY_DOWN:
+  case SDL_EVENT_KEY_UP:
+    if (OurWindow(event->key.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      e.key = event->key.key;
+      e.mod = event->key.mod;
+      Queue(std::move(e));
+      if (event->type == SDL_EVENT_KEY_DOWN && typing)
+        keep = false;  // typed into the overlay (its releases still go on, so no key stays down)
+    }
+    break;
+  case SDL_EVENT_TEXT_INPUT:
+    if (OurWindow(event->text.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      e.text = event->text.text ? event->text.text : "";
+      Queue(std::move(e));
+      if (typing)
+        keep = false;
+    }
+    break;
+  case SDL_EVENT_WINDOW_FOCUS_GAINED:
+  case SDL_EVENT_WINDOW_FOCUS_LOST:
+    if (OurWindow(event->window.windowID)) {
+      InputEvent e;
+      e.type = event->type;
+      Queue(std::move(e));
+    }
+    break;
+  case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+    // mk9-lauta: the window's close asks first (the filter's dialog), unless CloseNow sent it
+    if (OurWindow(event->window.windowID) && !g_close_now.load(std::memory_order_relaxed)) {
+      if (const CloseFilter filter = g_close_filter.load(std::memory_order_acquire); filter && !filter()) {
+        keep = false;
+        t_close_refused = true;  // SDL sends its quit right after this (the last window's close)
+        return false;
+      }
+    }
+    break;
+  case SDL_EVENT_QUIT:
+    // the quit SDL adds to a close just refused goes with it; any other (a signal: the session ending) goes on
+    if (t_close_refused) {
+      t_close_refused = false;
+      return false;
+    }
+    break;
+  default:
+    break;
+  }
+  if (event->type != SDL_EVENT_QUIT)
+    t_close_refused = false;
+  if (keep && g_previous_filter)
+    keep = g_previous_filter(g_previous_userdata, event);
+  return keep;
+}
+
+void ApplyQueuedInput(ImGuiIO &io) {
+  std::vector<InputEvent> input;
+  {
+    std::lock_guard lock(g_input_mutex);
+    input.swap(g_input);
+  }
+  const float density = g_pixel_density.load(std::memory_order_relaxed);
+  for (const InputEvent &e : input) {
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_MOTION:
+      io.AddMousePosEvent(e.x * density, e.y * density);
+      break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+      const int button = e.button == SDL_BUTTON_LEFT ? 0 : e.button == SDL_BUTTON_RIGHT ? 1
+                         : e.button == SDL_BUTTON_MIDDLE ? 2 : -1;
+      if (button >= 0)
+        io.AddMouseButtonEvent(button, e.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+      break;
+    }
+    case SDL_EVENT_MOUSE_WHEEL:
+      io.AddMouseWheelEvent(-e.x, e.y);
+      break;
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP: {
+      io.AddKeyEvent(ImGuiMod_Ctrl, (e.mod & SDL_KMOD_CTRL) != 0);
+      io.AddKeyEvent(ImGuiMod_Shift, (e.mod & SDL_KMOD_SHIFT) != 0);
+      io.AddKeyEvent(ImGuiMod_Alt, (e.mod & SDL_KMOD_ALT) != 0);
+      const ImGuiKey key = KeyFromKeycode(e.key);
+      if (key != ImGuiKey_None)
+        io.AddKeyEvent(key, e.type == SDL_EVENT_KEY_DOWN);
+      break;
+    }
+    case SDL_EVENT_TEXT_INPUT:
+      io.AddInputCharactersUTF8(e.text.c_str());
+      break;
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+      io.AddFocusEvent(e.type == SDL_EVENT_WINDOW_FOCUS_GAINED);
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+// The pump's call, on the UI thread (SDL's main thread).
+void BuildOnUIThread() {
+  SDL_Window *window = GameWindow();
+  // a minimized window: laid out as the window was (or at 1280x720), as on Windows
+  static float last_w = 1280.0f, last_h = 720.0f;
+  float w = last_w, h = last_h;
+  int pw = 0, ph = 0;
+  if (window && !(SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED) && SDL_GetWindowSizeInPixels(window, &pw, &ph) &&
+      pw >= 2 && ph >= 2) {
+    last_w = w = float(pw);
+    last_h = h = float(ph);
+  }
+  if (window) {
+    const float density = SDL_GetWindowPixelDensity(window);
+    g_pixel_density.store(density > 0.0f ? density : 1.0f, std::memory_order_relaxed);
+  }
+  BuildFrame(w, h);
+  // the overlay's text field: SDL gives typed characters (text input events) only while its text input is on
+  const bool typing = g_wants_keyboard.load(std::memory_order_relaxed);
+  if (window && typing && !g_text_input_ours && !SDL_TextInputActive(window)) {
+    g_text_input_ours = SDL_StartTextInput(window);
+  } else if (window && !typing && g_text_input_ours) {
+    SDL_StopTextInput(window);
+    g_text_input_ours = false;
+  }
+  g_build_pending.store(false, std::memory_order_release);
+}
+
 #else
 
 void ApplyQueuedInput(ImGuiIO &) {}
@@ -555,11 +854,29 @@ ImFont *TitleFont() { return g_title_font; }
 
 ImFont *StrongFont() { return g_strong_font; }
 
+const unsigned char *EmbeddedFont(int which, size_t *size) {
+#if defined(_WIN32) || (defined(__linux__) && !defined(__SWITCH__))
+  switch (which) {
+  case 0: *size = sizeof(kBarlowRegular); return kBarlowRegular;
+  case 1: *size = sizeof(kBarlowSemiBold); return kBarlowSemiBold;
+  case 2: *size = sizeof(kBarlowCondensedBold); return kBarlowCondensedBold;
+  default: break;
+  }
+#endif
+  *size = 0;
+  return nullptr;
+}
+
 float DpiScale() {
 #if defined(_WIN32)
   if (g_window) {
     if (const UINT dpi = GetDpiForWindow(g_window); dpi >= 96)
       return float(dpi) / 96.0f;
+  }
+#elif defined(__linux__) && !defined(__SWITCH__)
+  if (SDL_Window *window = g_sdl_window.load(std::memory_order_acquire)) {
+    if (const float scale = SDL_GetWindowDisplayScale(window); scale >= 1.0f)
+      return scale;
   }
 #endif
   return 1.0f;
@@ -574,6 +891,16 @@ void CloseNow() {
   g_close_now.store(true, std::memory_order_relaxed);
   if (g_window)
     PostMessageW(g_window, WM_CLOSE, 0, 0);
+#elif defined(__linux__) && !defined(__SWITCH__)
+  // as the window's X does: SDL's close request, then its quit (the last window)
+  g_close_now.store(true, std::memory_order_relaxed);
+  SDL_Event close{};
+  close.type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+  close.window.windowID = g_window_id.load(std::memory_order_acquire);
+  SDL_PushEvent(&close);
+  SDL_Event quit{};
+  quit.type = SDL_EVENT_QUIT;
+  SDL_PushEvent(&quit);
 #endif
 }
 
@@ -589,13 +916,18 @@ void RemoveDialog(Dialog *dialog) {
 }
 
 bool Start(UIThreadRunner run_on_ui_thread) {
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && !defined(__SWITCH__))
   if (g_context)
     return true;
+#if defined(_WIN32)
   plume::RenderWindow window{};
   if (!run_on_ui_thread || !GetNativeRenderWindow(window))
     return false;
   g_window = static_cast<HWND>(window);
+#else
+  if (!run_on_ui_thread)
+    return false;
+#endif
   g_run_on_ui = std::move(run_on_ui_thread);
 
   // CreateContext leaves any context that was current current.
@@ -685,16 +1017,30 @@ bool Start(UIThreadRunner run_on_ui_thread) {
     // The same on every computer: before them the screens took Windows' Segoe UI, and where it is missing (Wine, the
     // Steam Deck) ImGui's own font, ASCII only, drew no accents. Segoe UI, where it is, comes after each for the glyphs
     // Barlow lacks (a player's name in another alphabet).
+#if defined(_WIN32)
     const bool segoe = GetFileAttributesW(L"C:/Windows/Fonts/segoeui.ttf") != INVALID_FILE_ATTRIBUTES;
     io.FontDefault = AddEmbeddedFont(io, kBarlowRegular, sizeof(kBarlowRegular), "Barlow", segoe);
     g_strong_font = AddEmbeddedFont(io, kBarlowSemiBold, sizeof(kBarlowSemiBold), "Barlow SemiBold", segoe);
     g_title_font =
         AddEmbeddedFont(io, kBarlowCondensedBold, sizeof(kBarlowCondensedBold), "Barlow Condensed Bold", segoe);
+#else
+    const FallbackFont fallback = FindFallbackFont();
+    io.FontDefault = AddEmbeddedFont(io, kBarlowRegular, sizeof(kBarlowRegular), "Barlow", fallback);
+    g_strong_font = AddEmbeddedFont(io, kBarlowSemiBold, sizeof(kBarlowSemiBold), "Barlow SemiBold", fallback);
+    g_title_font =
+        AddEmbeddedFont(io, kBarlowCondensedBold, sizeof(kBarlowCondensedBold), "Barlow Condensed Bold", fallback);
+    RGPU_INFO("Overlay fonts: Barlow{}{}", fallback.path ? ", then " : "", fallback.path ? fallback.path : "");
+#endif
   }
   g_last_build = std::chrono::steady_clock::now();
 
+#if defined(_WIN32)
   g_original_proc = reinterpret_cast<WNDPROC>(
       SetWindowLongPtrW(g_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(OverlayWindowProc)));
+#else
+  SDL_GetEventFilter(&g_previous_filter, &g_previous_userdata);
+  SDL_SetEventFilter(OverlayEventFilter, nullptr);
+#endif
 
   // A frame every 16 ms, on the UI thread; one queued at a time.
   g_stop.store(false, std::memory_order_release);
@@ -721,6 +1067,14 @@ void Stop() {
       GetWindowLongPtrW(g_window, GWLP_WNDPROC) == reinterpret_cast<LONG_PTR>(OverlayWindowProc)) {
     SetWindowLongPtrW(g_window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g_original_proc));
   }
+#elif defined(__linux__) && !defined(__SWITCH__)
+  g_stop.store(true, std::memory_order_release);
+  if (g_pump.joinable())
+    g_pump.join();
+  SDL_EventFilter filter = nullptr;
+  void *userdata = nullptr;
+  if (SDL_GetEventFilter(&filter, &userdata) && filter == OverlayEventFilter)
+    SDL_SetEventFilter(g_previous_filter, g_previous_userdata);
 #endif
 }
 
