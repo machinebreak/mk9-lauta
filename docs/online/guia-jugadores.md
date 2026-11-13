@@ -69,7 +69,9 @@ en la pelea.
   cada uno mueve su mando a la izquierda (equipo 1) o a la derecha (equipo 2) y aprieta A; el primero de cada lado
   empieza la pelea y el otro es su compañero. Después cada uno elige su luchador con su propio cursor. En la pelea
   cada uno maneja el suyo, y el relevo (LB) lo pide el que está peleando. El rollback es el mismo que en el dos contra
-  dos de a dos: en la pelea hay los mismos cuatro luchadores, sólo cambia quién aprieta los botones.
+  dos de a dos: en la pelea hay los mismos cuatro luchadores, sólo cambia quién aprieta los botones. Si son tres (dos
+  en una PC y uno en la otra), es igual con **3 JUGADORES**: el que queda solo en su equipo elige dos luchadores, como
+  en el dos contra dos de a dos.
 - En la selección de personajes y debajo de las barras de vida aparece la foto, la bandera y el nombre de cada
   jugador. En **F2 > Online** se ocultan las fotos o los nombres en la pelea.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
