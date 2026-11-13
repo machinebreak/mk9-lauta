@@ -222,6 +222,11 @@ dos archivos se ve en qué cuadro se separaron los juegos.
 
 ## PCs con poca placa de video o poca memoria
 
+- Hace falta una placa de video con DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon
+  HD 7000 o más nueva, o el gráfico integrado de un Intel Core de 6.ª generación en adelante (HD 520/530, UHD) o de un
+  AMD Ryzen. Los integrados Intel HD 2500, 4000, 4400, 4600, 5000, 5500 y 6000 (Intel de 2.ª a 5.ª generación, como el
+  i3-4160) no alcanzan: ahí el juego avisa al abrir, y hace falta una placa aparte (sirve una usada barata, como una
+  GTX 750 Ti, una GT 1030 o una RX 550).
 - Elegí la calidad **Muy baja** o **Baja** y activá **Mostrar FPS** para ver cómo va.
 - **Resolución dinámica**: si la PC no llega a 60 (un X-Ray, muchos efectos), baja la resolución interna un escalón
   (1080p, 720p, 480p) y la vuelve a subir cuando sobra; nunca pasa de la que elegiste. Viene activada en Alta y

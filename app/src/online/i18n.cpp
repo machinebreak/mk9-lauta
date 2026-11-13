@@ -126,6 +126,12 @@ const std::unordered_map<std::string_view, Text>& Table() {
         "controller to a side and presses A; tag with LB.",
         "Os quatro: no menu principal, RB até 4 JUGADORES > MODO VERSUS. Em ELIGE TU EQUIPO cada um move seu "
         "controle para um lado e aperta A; a troca é com LB."}},
+      {"Los tres: en el menú principal, RB hasta 3 JUGADORES > MODO VERSUS. En ELIGE TU EQUIPO cada uno mueve su "
+       "mando a un lado y aprieta A; el que queda solo elige dos luchadores.",
+       {"All three: in the main menu, RB until 3 JUGADORES > MODO VERSUS. In ELIGE TU EQUIPO each one moves their "
+        "controller to a side and presses A; the one alone on a team picks two fighters.",
+        "Os três: no menu principal, RB até 3 JUGADORES > MODO VERSUS. Em ELIGE TU EQUIPO cada um move seu "
+        "controle para um lado e aperta A; quem fica sozinho escolhe dois lutadores."}},
       {"%s y otro jugador juegan desde la misma PC.",
        {"%s and another player play from the same PC.", "%s e outro jogador jogam do mesmo PC."}},
       {"%s está listo", {"%s is ready", "%s está pronto"}},

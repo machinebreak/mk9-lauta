@@ -575,10 +575,15 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
       ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
                                  "pantalla de 2 jugadores. Después cada uno elige su luchador."));
-      if (room.my_players == 2 && room.other_players == 2) {
-        // mk9-lauta (2026-11-13): the game's own four-player versus (main menu, RB: 4 JUGADORES)
+      // mk9-lauta (2026-11-13): the game's own versus for three or four (main menu, RB: 3 or 4 JUGADORES); the
+      // session's game is another process: the room's my_players starts at 1 there, the session knows
+      if (const int people = info.local_players + info.peer_players; people == 4) {
         ImGui::TextWrapped("%s", T("Los cuatro: en el menú principal, RB hasta 4 JUGADORES > MODO VERSUS. En ELIGE TU "
                                    "EQUIPO cada uno mueve su mando a un lado y aprieta A; el relevo es con LB."));
+      } else if (people == 3) {
+        ImGui::TextWrapped("%s", T("Los tres: en el menú principal, RB hasta 3 JUGADORES > MODO VERSUS. En ELIGE TU "
+                                   "EQUIPO cada uno mueve su mando a un lado y aprieta A; el que queda solo elige dos "
+                                   "luchadores."));
       }
       if (ImGui::Button(T("Terminar la sesión y volver al lobby"))) LeaveSession();
     } else if (room.phase == room::Phase::kTogether) {

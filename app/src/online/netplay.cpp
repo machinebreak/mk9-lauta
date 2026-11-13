@@ -2636,6 +2636,8 @@ SessionInfo Info() {
   // two games apart for good: a lone frame that differed (and matched again) says nothing to the players
   info.desynced = g.desync_at >= 0 && g.desync_frames >= 20;
   info.peer_release = g.peer_release;
+  info.local_players = g.local_players;
+  info.peer_players = g.peer_players;
   // the connection's indicator
   const int n = std::min(g.rtt_count, 8);
   if (n >= 2) {

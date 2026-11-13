@@ -81,7 +81,7 @@ or settings.
 | | What you need |
 |---|---|
 | **OS** | Windows 10 or 11, 64-bit |
-| **Graphics** | Direct3D 12 or Vulkan capable (integrated graphics work) |
+| **Graphics** | Direct3D 12 (Shader Model 6) or Vulkan 1.2: NVIDIA GTX 600 or newer, AMD Radeon HD 7000 or newer, or Intel integrated from the 6th generation on (HD 520/530, UHD) or AMD Ryzen. Intel HD 4000/4400/4600 are not enough |
 | **Memory** | 4 GB of RAM |
 | **Disk** | About 8 GB free |
 | **Game** | Your copy of Mortal Kombat Komplete Edition for Xbox 360, as an `.iso` (European release) |
@@ -93,6 +93,8 @@ or settings.
    one with its code.
 3. When both players press **Estoy listo** (ready), the game restarts already connected. One player picks **VERSUS**
    (one vs one, two vs two or test your luck), the other joins with START, and each picks a fighter.
+4. Four of you, two at each PC? Before "Estoy listo" tick **Somos dos en esta PC**, and in the main menu press RB
+   until **4 JUGADORES**: each one picks a team and a fighter.
 
 Both players need the same version; the game updates itself. The full players' guide (in Spanish) is in
 [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the zip's `LEEME.txt`.

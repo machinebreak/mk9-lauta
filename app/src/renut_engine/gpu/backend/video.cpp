@@ -927,10 +927,13 @@ bool Video::CreateHostDevice() {
     // mk9-nx (2026-11-08): neither works: say so in the players' language instead of a black window
     rex::ShowSimpleMessageBox(
         rex::SimpleMessageBoxType::Error,
-        "Tu placa de video no pudo arrancar el juego: hace falta una compatible con DirectX 12 o Vulkan (casi todas "
-        "desde 2013: NVIDIA GeForce GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, Intel HD Graphics 500 o más "
-        "nueva).\n\nSi la tuya lo es, actualizá su driver desde la página de NVIDIA, AMD o Intel y volvé a abrir el "
-        "juego.");
+        "Tu placa de video no pudo arrancar el juego: hace falta una compatible con DirectX 12 (Shader Model 6) o "
+        "Vulkan 1.2 (casi todas desde 2013: NVIDIA GeForce GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, o el "
+        "gráfico integrado de un Intel Core de 6.ª generación en adelante, HD 520/530 o UHD).\n\nLos gráficos "
+        "integrados Intel HD 2500, 4000, 4400, 4600, 5000, 5500 y 6000 (procesadores Intel de 2.ª a 5.ª generación, "
+        "como el i3-4160) no alcanzan: ahí hace falta una placa de video aparte (sirve una usada barata, como una "
+        "GTX 750 Ti, una GT 1030 o una RX 550).\n\nSi la tuya es compatible, actualizá su driver desde la página "
+        "de NVIDIA, AMD o Intel y volvé a abrir el juego.");
     std::_Exit(1);
 #endif
     return false;

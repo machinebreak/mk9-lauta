@@ -27,6 +27,9 @@
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
                       "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in; "
                       "'watch' watches the first room playing (its Watch button)");
+REXCVAR_DEFINE_INT32(mk9_online_test_players, 1, "MK9 Online",
+                     "Tests: with mk9_online_test, the people at this PC the room says before it is ready (2: the "
+                     "\"Somos dos en esta PC\" box)");
 
 namespace mk9::room {
 namespace {
@@ -583,7 +586,10 @@ static void TestStep() {
     }
     return;
   }
-  if (s.phase == Phase::kTogether && !s.my_ready) SetReady(true);
+  if (s.phase == Phase::kTogether && !s.my_ready) {
+    if (const int players = REXCVAR_GET(mk9_online_test_players); players != s.my_players) SetPlayers(players);
+    SetReady(true);
+  }
 }
 
 void Pump() {

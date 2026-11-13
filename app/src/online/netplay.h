@@ -123,6 +123,9 @@ struct SessionInfo {
   bool replay = false;
   // mk9-lauta (2026-11-11, A3): the folder of this session's desync report (logs\desync_<date>_p<N>; empty: none)
   std::string desync_report;
+  // mk9-lauta (2026-11-13): the people at this machine and at the other one (mk9_net_local_players; a spectator: the
+  // host's and the guest's)
+  int local_players = 1, peer_players = 1;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,
