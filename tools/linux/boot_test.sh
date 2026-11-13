@@ -4,14 +4,17 @@
 #
 #   tools/linux/boot_test.sh [-t SECONDS] [-s "S1 S2 ..."] [-- extra --cvar=value ...]
 #     -t  run time in seconds (default 45)
-#     -s  snapshots of the game image at these seconds after start (out/pc/captures/snap_<s>s.png; taken by the
+#     -s  snapshots of the game image at these seconds after start (<build>/captures/snap_<s>s.png; taken by the
 #         game from the presenter's guest output, cvar mk9_snapshot_s)
 #
-# The SDK's shared libraries are loaded from sdk/out/linux-amd64. Log: out/pc/boot.log (the whole run). Exit status: 0 if the game was still running at the end (then stopped),
+# The SDK's shared libraries are loaded from sdk/out/linux-amd64. Log: <build>/boot.log (the whole run). Exit status: 0 if the game was still running at the end (then stopped),
 # otherwise the game's own exit status.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-exe="$root/out/pc/mk9"
+# mk9-lauta (2026-11-13): the native Linux build's (tools/linux/build_linux.sh), else the older out/pc
+run="${RUN:-$root/out/linux}"
+[ -x "$run/mk9" ] || run="$root/out/pc"
+exe="$run/mk9"
 seconds=45
 shots=""
 while getopts "t:s:" opt; do
@@ -23,15 +26,15 @@ while getopts "t:s:" opt; do
 done
 shift $((OPTIND - 1))
 [ "${1:-}" = "--" ] && shift
-[ -x "$exe" ] || { echo "$exe not built (cmake --build out/pc)" >&2; exit 2; }
+[ -x "$exe" ] || { echo "$exe not built (tools/linux/build_linux.sh)" >&2; exit 2; }
 
-log="$root/out/pc/boot.log"
+log="$run/boot.log"
 rm -f "$log"  # the SDK appends to an existing log file: one run per log
-mkdir -p "$root/out/pc/captures"
+mkdir -p "$run/captures"
 # A free display number for the hidden X server.
 disp=99
 while [ -e "/tmp/.X11-unix/X$disp" ] || [ -e "/tmp/.X$disp-lock" ]; do disp=$((disp + 1)); done
-Xvfb ":$disp" -screen 0 1280x720x24 -nolisten tcp > "$root/out/pc/xvfb.log" 2>&1 &
+Xvfb ":$disp" -screen 0 1280x720x24 -nolisten tcp > "$run/xvfb.log" 2>&1 &
 xvfb=$!
 trap 'kill $xvfb 2>/dev/null' EXIT
 for _ in $(seq 50); do [ -e "/tmp/.X11-unix/X$disp" ] && break; sleep 0.1; done
@@ -39,10 +42,10 @@ for _ in $(seq 50); do [ -e "/tmp/.X11-unix/X$disp" ] && break; sleep 0.1; done
 # The guest memory is a /dev/shm/xenia_memory_* file of ~4.8 GB; a run that is killed leaves it behind and a full
 # /dev/shm makes the next start die with SIGBUS. Note the ones that exist now and remove this run's afterwards.
 shm_before="$(ls /dev/shm 2>/dev/null | grep '^xenia_memory_' || true)"
-cd "$root/out/pc"
+cd "$run"
 snap_args=()
 [ -n "$shots" ] && snap_args=(--mk9_snapshot_s="$(echo $shots | tr ' ' ',')")
-DISPLAY=":$disp" LD_LIBRARY_PATH="$root/sdk/out/linux-amd64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$exe" --audio_mute=true --window_start_minimized=false --log_file="$log" "${snap_args[@]}" "$@" > "$root/out/pc/stdout.log" 2>&1 &
+DISPLAY=":$disp" LD_LIBRARY_PATH="$root/sdk/out/linux-amd64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$exe" --audio_mute=true --window_start_minimized=false --log_file="$log" "${snap_args[@]}" "$@" > "$run/stdout.log" 2>&1 &
 game=$!
 start=$(date +%s)
 status=0
@@ -56,12 +59,12 @@ while kill -0 $game 2>/dev/null; do
 done
 if ! wait $game 2>/dev/null; then status=$?; fi
 [ $(( $(date +%s) - start )) -lt "$seconds" ] && echo "== the game exited by itself after $(( $(date +%s) - start ))s, status $status"
-for f in "$root"/out/pc/captures/snap_*s.ppm; do
+for f in "$run"/captures/snap_*s.ppm; do
   [ -e "$f" ] && ffmpeg -loglevel error -y -i "$f" "${f%.ppm}.png" && rm -f "$f"
 done
 for f in $(ls /dev/shm 2>/dev/null | grep '^xenia_memory_' || true); do
   echo "$shm_before" | grep -qx "$f" || rm -f "/dev/shm/$f"
 done
 echo "== end of $log"
-tail -n 40 "$log" 2>/dev/null || tail -n 40 "$root/out/pc/stdout.log"
+tail -n 40 "$log" 2>/dev/null || tail -n 40 "$run/stdout.log"
 exit 0
