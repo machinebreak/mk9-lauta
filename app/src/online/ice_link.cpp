@@ -279,9 +279,15 @@ std::unique_ptr<IceLink> IceLink::Create(const std::string& room, bool host, con
   impl->id = id;
   impl->relay_only = REXCVAR_GET(mk9_ice_relay_only);
   impl->TakeServers(lobby::IceServers());
-  REXLOG_INFO("[ice] room {} as the {}: STUN {}, {} TURN server(s){}", room, host ? "host" : "guest",
-              impl->stun_host.empty() ? "none" : impl->stun_host, impl->turn.size(),
-              impl->relay_only ? " (relay only: test)" : "");
+  if (impl->turn.empty()) {
+    REXLOG_WARN("[ice] room {} as the {}: STUN {}, no TURN server: behind some providers' networks the two games "
+                "will not find each other", room, host ? "host" : "guest",
+                impl->stun_host.empty() ? "none" : impl->stun_host);
+  } else {
+    REXLOG_INFO("[ice] room {} as the {}: STUN {}, {} TURN server(s){}", room, host ? "host" : "guest",
+                impl->stun_host.empty() ? "none" : impl->stun_host, impl->turn.size(),
+                impl->relay_only ? " (relay only: test)" : "");
+  }
   if (!host) {
     std::random_device rd;
     impl->session = (uint64_t(rd()) << 32 | rd()) & 0x1FFFFFFFFFFFFFull;  // JSON-safe

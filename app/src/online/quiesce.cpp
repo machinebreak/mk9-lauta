@@ -243,6 +243,13 @@ bool Settle(PPCContext& ctx, uint8_t* base) {
   return g_parked;
 }
 
+// mk9-lauta (2026-11-13): only the thread pools' work and the scene query batches finished (Settle's drain), no render
+// flush and no park: what a lockstep frame needs to see work in the background end at the same frame on every machine.
+void DrainPools(PPCContext& ctx, uint8_t* base) {
+  g_drain_failed = false;
+  Drain(ctx, base);
+}
+
 void Release() {
   if (g_parked) rex::system::park::End();
   g_parked = false;

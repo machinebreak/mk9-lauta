@@ -975,3 +975,60 @@ preguntan con la nativa `8247e408` (`sub_829B0520`: `[[0x833848D4] + 8]`; la Esc
   de los scripts y sus condiciones `R`, y la línea y el segundo argumento de cada nativa); `mk9_log_loads` (cada
   paquete pedido, con su cuadro); `mk9_hang_stacks_s` (Windows: sin cuadros por N s, las pilas de todos los hilos en
   `logs/pilas_<pid>_N.txt`, `tools/online/stacks_report.py`). Protocolo 11.
+
+
+### Las salas que no conectaban con algunos proveedores, y "X se fue de la sesión" (1.1.0, 2026-11-13)
+
+Los logs de jugadores de Claro mostraban `[lobby] could not reach ... (dns: WinHTTP error 12007)`: el DNS de su
+conexión no encuentra `107-172-143-35.sslip.io`. El lobby ya se conectaba igual, a la dirección (el proxy local de
+`lobby.cpp`, desde 0.5), pero el pedido de los servidores de ICE (`/ice`, `lobby::IceServers`) iba por nombre: fallaba,
+la sala arrancaba con `STUN none, 0 TURN server(s)` y, detrás de un CGNAT, los dos juegos no se encontraban nunca (el
+"se fue de la sesión" al entrar a una sala era eso: el otro esperaba un camino que no llegaba).
+
+- `/ice` también va a la dirección cuando el nombre no resuelve (`FetchIce(url, by_address)`), y lo recuerda para el
+  resto del juego (`lobby::ByAddress`).
+- La lista que dio el lobby queda en `cache\ice_servers.json`; si un pedido falla del todo, se usa esa (hasta 10 h:
+  las credenciales de TURN duran 12).
+- El juego que arranca la sesión recibe `--mk9_lobby_by_address=true` (`session.cpp`): no vuelve a probar el DNS que
+  ya falló.
+- Una sala sin TURN lo dice en el log (`[ice] ... no TURN server`), para verlo en el primer reporte.
+
+Probado con un lobby cuyo nombre no resuelve: `/ice` llega por la dirección y la sala arranca con sus servidores.
+
+### Dos personas en cada PC: el 4 JUGADORES del juego (1.1.0, 2026-11-13)
+
+El juego original ya trae el dos contra dos de a cuatro: en el menú principal, RB pasa de 1 a 2, 3 y **4 JUGADORES**;
+su **MODO VERSUS** abre **ELIGE TU EQUIPO** (cada mando a la izquierda o a la derecha, el primero de cada lado empieza
+la pelea) y en la selección cada uno mueve su cursor y elige su luchador. En la pelea cada mando maneja el suyo: el
+relevo (LB) lo pide el que está peleando. Con 3 JUGADORES, el que queda solo en su equipo elige dos luchadores, como en
+el tag de a dos. Sólo hacía falta que la sesión lleve dos mandos por máquina:
+
+- **`mk9_net_local_players` (1 o 2).** La sala lo marca ("Somos dos en esta PC"), y el juego de la sesión lo recibe
+  (`--mk9_net_local_players=2`). El HELLO lo dice (bit 4 de los ajustes) y cada máquina sabe cuántos hay en la otra.
+- **Los paquetes.** Una máquina con dos manda 30 bytes por cuadro en vez de 18: el pad de siempre y los 12 bytes del
+  `X_INPUT_GAMEPAD` del segundo (`Pad::bytes2`); hasta 40 cuadros por paquete. La predicción y las comparaciones usan
+  los dos pads.
+- **Los usuarios de XInput.** 0 es el del host y 1 el del invitado, como siempre; 2 es el segundo del host y 3 el
+  segundo del invitado (`OverrideBlock`). Un usuario sin persona del otro lado da "no conectado" en las dos máquinas:
+  un mando que sobra en una PC no entra a la partida.
+- **Grabación y espectadores.** El registro `E` marca qué máquina tiene dos (bits 2 y 3) y sus cuadros van como `G`
+  (30 bytes por pad); el espectador y los replays los leen.
+
+Medido (dos juegos en esta PC, Radeon 760M, 60 fps los dos):
+
+| Prueba | Red | Rollbacks | Más profundo | Cortes | Desync |
+| --- | --- | --- | --- | --- | --- |
+| 4 JUGADORES, pelea con relevos | 60 ± 40 ms, 2 % de pérdida (RTT ~185 ms) | 346 / 375 | 5 cuadros | 0 | 0 |
+| 3 JUGADORES (2 + 1) | 40 ± 20 ms, 1 % | 196 / 382 | 4 | 0 | 0 |
+| SyncTest de 4 (un juego, 6 cuadros atrás cada 12) | - | 350 | 6 | - | 0 de 2094 cuadros |
+| Espectador de una partida de 4 | 40 ± 10 ms | - | - | - | no se separó |
+
+Guardar un cuadro cuesta lo mismo que en el tag de a dos (0,85 ms) y deshacer, 1,6 ms: en la pelea están los mismos
+cuatro luchadores, sólo cambia quién aprieta. El retraso de los botones es el de siempre: depende del ping entre las
+dos PC, no de cuántos haya en cada una.
+
+Un intento descartado: antes de encontrar el 4 JUGADORES, forzar desde C++ la bandera del script de la selección
+(`PlayerSelect.mko`, global `+0x78`: deja entrar a los mandos 3 y 4) y `GFGGameInfo+0x3494` (las personas en la
+consola, que el online del juego pone en 1 o 2: "MKOnline_1Player/2Player") abría el mismo ELIGE TU EQUIPO desde DOS
+CONTRA DOS, pero con 3 personas colgaba el juego al volver con B: el menú del juego lo hace bien y no hace falta tocar
+nada.

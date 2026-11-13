@@ -14,6 +14,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <ctime>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 
@@ -22,6 +25,9 @@
 
 REXCVAR_DEFINE_STRING(mk9_lobby_url, "wss://107-172-143-35.sslip.io/lobby?game=mk9pc", "MK9 Online",
                       "The online lobby: rooms, the global chat, quick match (ws:// or wss://; \"off\" = none: tests)");
+REXCVAR_DEFINE_BOOL(mk9_lobby_by_address, false, "MK9 Online",
+                    "The lobby at its address from the start (a session's game: the game that started it found that "
+                    "this connection's DNS does not know the lobby's name)");
 
 namespace mk9::lobby {
 namespace {
@@ -376,11 +382,53 @@ class Client {
     send_cv_.notify_one();
   }
 
+  // mk9-lauta (2026-11-13): the room's STUN and TURN servers, which a player behind a provider's NAT needs to reach
+  // the other one at all (the relay). The session's game asked for them as it started, while its first try at the
+  // lobby was still finding out that the DNS does not know the lobby's name (Claro and others): /ice went by name,
+  // failed, and the session ran with no STUN and no TURN ("STUN none, 0 TURN server(s)": 30 s of "path not yet",
+  // "se fue de la sesión" on the other side). Now /ice goes to the lobby's address too when the name is not found
+  // (the game that relaunched it says so from the start: mk9_lobby_by_address), tries again once, and the last
+  // answer that came is kept for when none does (Cloudflare's credentials last 12 hours; the lobby keeps an answer
+  // an hour).
   json IceServers() {
+    static const bool by_address_from_start = REXCVAR_GET(mk9_lobby_by_address);
+    if (by_address_from_start) g_by_address = true;
     const Url url = Parse(REXCVAR_GET(mk9_lobby_url));
     if (!url.ok) return json::array();
-    HINTERNET session = OpenSession(g_by_address);
-    if (!session) return json::array();
+    const std::wstring address = AddressInName(url.host);
+    std::string why;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (attempt) std::this_thread::sleep_for(std::chrono::seconds(1));
+      DWORD error = 0;
+      json out = FetchIce(url, g_by_address, &error);
+      if (!out.empty()) return KeepIce(out);
+      if (!g_by_address && !address.empty() && error == ERROR_WINHTTP_NAME_NOT_RESOLVED) {
+        out = FetchIce(url, true, &error);
+        if (!out.empty()) {
+          g_by_address = true;
+          REXLOG_WARN("[ice] this connection's DNS does not find the lobby's name: its STUN and TURN servers asked "
+                      "at its address");
+          return KeepIce(out);
+        }
+      }
+      why = error ? Why(error, 0) : "no answer";
+    }
+    json kept = KeptIce();
+    REXLOG_WARN("[ice] the lobby did not give its STUN and TURN servers ({}): {}", why,
+                kept.empty() ? "none (the connection may not go through)" : "the ones kept from before");
+    return kept;
+  }
+
+ private:
+  // One GET of the lobby's /ice (by name, or by_address through the local proxy): the servers, or an empty array
+  // (error: WinHTTP's error, 0 when the answer was not a list).
+  json FetchIce(const Url& url, bool by_address, DWORD* error) {
+    *error = 0;
+    HINTERNET session = OpenSession(by_address);
+    if (!session) {
+      *error = GetLastError();
+      return json::array();
+    }
     WinHttpSetTimeouts(session, 5000, 5000, 5000, 5000);
     json out = json::array();
     if (HINTERNET connect = WinHttpConnect(session, url.host.c_str(), url.port, 0)) {
@@ -398,14 +446,54 @@ class Client {
           }
           out = json::parse(body, nullptr, false);
           if (!out.is_array()) out = json::array();
+        } else {
+          *error = GetLastError();
         }
         WinHttpCloseHandle(request);
+      } else {
+        *error = GetLastError();
       }
       WinHttpCloseHandle(connect);
+    } else {
+      *error = GetLastError();
     }
     WinHttpCloseHandle(session);
     return out;
   }
+
+  // The last /ice answer that came, kept beside the game (cache\ice_servers.json) with when it came.
+  static std::filesystem::path IceFile() {
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    return std::filesystem::path(exe).parent_path() / L"cache" / L"ice_servers.json";
+  }
+
+  json KeepIce(const json& servers) {
+    std::error_code ec;
+    std::filesystem::create_directories(IceFile().parent_path(), ec);
+    const json kept = {{"at", int64_t(std::time(nullptr))}, {"servers", servers}};
+    if (std::FILE* f = _wfopen(IceFile().c_str(), L"wb")) {
+      const std::string text = kept.dump();
+      std::fwrite(text.data(), 1, text.size(), f);
+      std::fclose(f);
+    }
+    return servers;
+  }
+
+  json KeptIce() {
+    std::FILE* f = _wfopen(IceFile().c_str(), L"rb");
+    if (!f) return json::array();
+    std::string text;
+    char buffer[4096];
+    for (size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) text.append(buffer, n);
+    std::fclose(f);
+    const json kept = json::parse(text, nullptr, false);
+    if (!kept.is_object() || !kept.contains("at") || !kept.contains("servers")) return json::array();
+    const int64_t age = int64_t(std::time(nullptr)) - kept.value("at", int64_t(0));
+    if (age < 0 || age > 10 * 3600 || !kept["servers"].is_array()) return json::array();
+    return kept["servers"];
+  }
+
 
  private:
   void Run() {
@@ -452,6 +540,8 @@ class Client {
       return false;
     }
     const std::wstring address = AddressInName(url.host);
+    static const bool by_address_from_start = REXCVAR_GET(mk9_lobby_by_address);
+    if (by_address_from_start && !address.empty()) g_by_address = true;
     if (Attempt(text, url, address, g_by_address)) return true;
     // the name not found: its address straight away (the provider's DNS), and from now on
     if (!g_by_address && !address.empty() && LastWhy() == "dns" && Attempt(text, url, address, true)) {
@@ -790,5 +880,6 @@ bool PollEvent(Event* event) { return TheClient().PollEvent(event); }
 bool PollIce(Event* event) { return TheClient().PollIce(event); }
 bool PollProfile(Event* event) { return TheClient().PollProfile(event); }
 nlohmann::json IceServers() { return TheClient().IceServers(); }
+bool ByAddress() { return g_by_address.load(); }
 
 }  // namespace mk9::lobby

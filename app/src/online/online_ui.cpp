@@ -575,8 +575,26 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
       ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
                                  "pantalla de 2 jugadores. Después cada uno elige su luchador."));
+      if (room.my_players == 2 && room.other_players == 2) {
+        // mk9-lauta (2026-11-13): the game's own four-player versus (main menu, RB: 4 JUGADORES)
+        ImGui::TextWrapped("%s", T("Los cuatro: en el menú principal, RB hasta 4 JUGADORES > MODO VERSUS. En ELIGE TU "
+                                   "EQUIPO cada uno mueve su mando a un lado y aprieta A; el relevo es con LB."));
+      }
       if (ImGui::Button(T("Terminar la sesión y volver al lobby"))) LeaveSession();
     } else if (room.phase == room::Phase::kTogether) {
+      // mk9-lauta (2026-11-13): two at this PC (two against two with four players: two at each PC)
+      bool two = room.my_players == 2;
+      ImGui::BeginDisabled(room.my_ready);
+      if (ImGui::Checkbox(T("Somos dos en esta PC (dos contra dos de a cuatro)"), &two)) room::SetPlayers(two ? 2 : 1);
+      ImGui::EndDisabled();
+      if (two) {
+        ImGui::TextColored(kGrey, "%s", T("El mando 1 es uno y el mando 2 (o el teclado como jugador 2, en F2 > "
+                                          "Controles) es el otro. Si en la otra PC también son dos, juegan los "
+                                          "cuatro en 4 JUGADORES > MODO VERSUS."));
+      }
+      if (room.other_players == 2) {
+        ImGui::TextColored(kGold, T("%s y otro jugador juegan desde la misma PC."), room.other.c_str());
+      }
       if (ImGui::Button(Label(room.my_ready ? "Cancelar listo" : "Estoy listo").c_str())) room::SetReady(!room.my_ready);
       ImGui::SameLine();
       ImGui::TextColored(room.other_ready ? kGreen : kGrey, T(room.other_ready ? "%s está listo" : "%s todavía no está listo"),

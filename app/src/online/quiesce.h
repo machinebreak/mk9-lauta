@@ -36,6 +36,9 @@ void Observe(const uint8_t* base, uint64_t game_frame);
 // allowed (logged): the boundary goes on unparked. Release ends it either way.
 bool Settle(PPCContext& ctx, uint8_t* base);
 void Release();
+// mk9-lauta (2026-11-13): only Settle's drain (the pools' work and the scene query batches finished): no render flush,
+// no park. Game thread; ctx as Settle's.
+void DrainPools(PPCContext& ctx, uint8_t* base);
 
 struct Stats {
   uint64_t settles = 0, unparked = 0, collected = 0, pool_waits = 0;

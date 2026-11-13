@@ -10,7 +10,9 @@
 //   40 LS_RIGHT 2     left stick fully right for 2 s
 //
 // Buttons: A B X Y START BACK LB RB LT RT UP DOWN LEFT RIGHT LS RS (stick clicks), LS_UP LS_DOWN LS_LEFT LS_RIGHT,
-// RS_UP RS_DOWN RS_LEFT RS_RIGHT. '#' starts a comment. Times count from the creation of the input system, which is
+// RS_UP RS_DOWN RS_LEFT RS_RIGHT. mk9-lauta (2026-11-13): "P2:" before them (P2:A, P3:LEFT, P4:X+Y) is the second,
+// third or fourth scripted pad, a device each, on players 2-4 the way pads are (mk9_controls.cpp); none is the
+// first, on player 1. '#' starts a comment. Times count from the creation of the input system, which is
 // within a second of the process start (the snapshot times of mk9_snapshot_s count from about the same point).
 // Every press and release is logged ("[script] ..."), so the log lines up with snapshots.
 
@@ -31,6 +33,7 @@
 #include <rex/input/input_driver.h>
 #include <rex/input/input_system.h>
 #include <rex/logging.h>
+#include <fmt/format.h>
 
 #include "mk9_controls.h"
 #include "online/snapshot.h"
@@ -54,9 +57,17 @@ using namespace rex;  // X_STATUS, X_RESULT and their values
 using rex::input::DeviceId;
 using rex::input::DeviceInfo;
 
-constexpr DeviceId kScriptDevice = static_cast<DeviceId>(0x55534634);  // "MK9"
+constexpr DeviceId kScriptDevice = static_cast<DeviceId>(0x55534634);  // "MK9": pad 1; pad N is this + N - 1
+constexpr int kScriptPads = 4;
+
+// The scripted pad a device is (0-3), or -1 when it is not one.
+int PadOf(DeviceId id) {
+  const uint32_t n = uint32_t(id) - uint32_t(kScriptDevice);
+  return n < uint32_t(kScriptPads) ? int(n) : -1;
+}
 
 struct Event {
+  int pad = 0;  // 0-3: P1 (none), P2:, P3:, P4:
   double start_s = 0;
   double hold_s = 0.15;
   uint16_t buttons = 0;
@@ -107,6 +118,11 @@ void ParseLine(std::string line, std::vector<Event>& out) {
   std::string names;
   if (!(in >> e.start_s >> names)) return;
   in >> e.hold_s;
+  if (names.size() > 3 && (names[0] == 'P' || names[0] == 'p') && names[1] >= '1' && names[1] <= '4' &&
+      names[2] == ':') {
+    e.pad = names[1] - '1';
+    names = names.substr(3);
+  }
   std::istringstream parts(names);
   for (std::string name; std::getline(parts, name, '+');) {
     std::transform(name.begin(), name.end(), name.begin(), ::toupper);
@@ -123,20 +139,28 @@ class ScriptInputDriver final : public rex::input::InputDriver {
  public:
   explicit ScriptInputDriver(std::vector<Event> events)
       : InputDriver(nullptr, 0), events_(std::move(events)), start_(std::chrono::steady_clock::now()),
-        logged_(events_.size(), 0) {}
+        logged_(events_.size(), 0) {
+    used_[0] = true;  // pad 1 always (the tests' player 1)
+    for (const Event& e : events_) used_[e.pad] = true;
+  }
 
   X_STATUS Setup() override { return X_STATUS_SUCCESS; }
 
+  // A device for each pad the script uses: "Script" (pad 1), "Script 2"... (mk9_controls.cpp seats them).
   void EnumerateDevices(std::vector<DeviceInfo>& out) override {
-    DeviceInfo info;
-    info.id = kScriptDevice;
-    info.name = "Script";
-    info.synthetic = true;
-    out.push_back(info);
+    for (int pad = 0; pad < kScriptPads; ++pad) {
+      if (!used_[pad]) continue;
+      DeviceInfo info;
+      info.id = static_cast<DeviceId>(uint32_t(kScriptDevice) + uint32_t(pad));
+      info.name = pad ? "Script " + std::to_string(pad + 1) : std::string("Script");
+      info.synthetic = true;
+      out.push_back(info);
+    }
   }
 
   X_RESULT GetDeviceState(DeviceId id, rex::input::X_INPUT_STATE* out_state) override {
-    if (id != kScriptDevice) return X_ERROR_DEVICE_NOT_CONNECTED;
+    const int pad = PadOf(id);
+    if (pad < 0 || !used_[pad]) return X_ERROR_DEVICE_NOT_CONNECTED;
     if (!out_state) return X_ERROR_SUCCESS;
     const int64_t synctest_frame = mk9::snapshot::SyncTestScriptFrame();
     const double now = synctest_frame >= 0 && REXCVAR_GET(mk9_input_script_frames) ? double(synctest_frame) / 60.0
@@ -149,6 +173,7 @@ class ScriptInputDriver final : public rex::input::InputDriver {
     std::lock_guard lock(mutex_);
     for (size_t i = 0; i < events_.size(); ++i) {
       const auto& e = events_[i];
+      if (e.pad != pad) continue;
       const bool active = now >= e.start_s && now < e.start_s + e.hold_s;
       if (active) {
         buttons |= e.buttons;
@@ -162,22 +187,24 @@ class ScriptInputDriver final : public rex::input::InputDriver {
       // 0 = not yet, 1 = pressed, 2 = released: log each transition once.
       if (active && logged_[i] == 0) {
         logged_[i] = 1;
-        REXLOG_INFO("[script] {:.2f} s: press {} (for {:.2f} s)", now, e.text, e.hold_s);
+        REXLOG_INFO("[script] {:.2f} s: press {}{} (for {:.2f} s)", now, e.pad ? fmt::format("P{}:", e.pad + 1) : "",
+                    e.text, e.hold_s);
       } else if (!active && now >= e.start_s + e.hold_s && logged_[i] < 2) {
         logged_[i] = 2;
-        REXLOG_INFO("[script] {:.2f} s: release {}", now, e.text);
+        REXLOG_INFO("[script] {:.2f} s: release {}{}", now, e.pad ? fmt::format("P{}:", e.pad + 1) : "", e.text);
       }
     }
     const uint64_t key = uint64_t(buttons) | uint64_t(lt) << 16 | uint64_t(rt) << 24 |
                          uint64_t(uint16_t(lx)) << 32 | uint64_t(uint16_t(ly)) << 48;
-    if (key != last_key_ || rx != last_rx_ || ry != last_ry_) {
-      ++packet_;
-      last_key_ = key;
-      last_rx_ = rx;
-      last_ry_ = ry;
+    PadState& last = last_[pad];
+    if (key != last.key || rx != last.rx || ry != last.ry) {
+      ++last.packet;
+      last.key = key;
+      last.rx = rx;
+      last.ry = ry;
     }
     std::memset(out_state, 0, sizeof(*out_state));
-    out_state->packet_number = packet_;
+    out_state->packet_number = last.packet;
     out_state->gamepad.buttons = buttons;
     out_state->gamepad.left_trigger = lt;
     out_state->gamepad.right_trigger = rt;
@@ -189,7 +216,7 @@ class ScriptInputDriver final : public rex::input::InputDriver {
   }
 
   X_RESULT GetDeviceCapabilities(DeviceId id, uint32_t, rex::input::X_INPUT_CAPABILITIES* out_caps) override {
-    if (id != kScriptDevice) return X_ERROR_DEVICE_NOT_CONNECTED;
+    if (PadOf(id) < 0 || !used_[PadOf(id)]) return X_ERROR_DEVICE_NOT_CONNECTED;
     if (out_caps) {
       std::memset(out_caps, 0, sizeof(*out_caps));
       out_caps->type = 0x01;      // XINPUT_DEVTYPE_GAMEPAD
@@ -206,11 +233,11 @@ class ScriptInputDriver final : public rex::input::InputDriver {
   }
 
   X_RESULT SetDeviceVibration(DeviceId id, rex::input::X_INPUT_VIBRATION*) override {
-    return id == kScriptDevice ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED;
+    return PadOf(id) >= 0 && used_[PadOf(id)] ? X_ERROR_SUCCESS : X_ERROR_DEVICE_NOT_CONNECTED;
   }
 
   X_RESULT GetDeviceKeystroke(DeviceId id, uint32_t, rex::input::X_INPUT_KEYSTROKE*) override {
-    return id == kScriptDevice ? X_ERROR_EMPTY : X_ERROR_DEVICE_NOT_CONNECTED;
+    return PadOf(id) >= 0 && used_[PadOf(id)] ? X_ERROR_EMPTY : X_ERROR_DEVICE_NOT_CONNECTED;
   }
 
  private:
@@ -218,9 +245,13 @@ class ScriptInputDriver final : public rex::input::InputDriver {
   std::chrono::steady_clock::time_point start_;
   std::mutex mutex_;
   std::vector<uint8_t> logged_;
-  uint32_t packet_ = 1;
-  uint64_t last_key_ = 0;
-  int16_t last_rx_ = 0, last_ry_ = 0;
+  struct PadState {
+    uint32_t packet = 1;
+    uint64_t key = 0;
+    int16_t rx = 0, ry = 0;
+  };
+  PadState last_[kScriptPads];
+  bool used_[kScriptPads] = {};
 };
 
 std::vector<Event> LoadScript() {
@@ -246,7 +277,10 @@ std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
   if (!tool_mode) {
     auto events = LoadScript();
     if (!events.empty()) {
-      REXLOG_INFO("[script] scripted gamepad on player 1: {} events, last at {:.1f} s", events.size(),
+      int pads = 1;
+      for (const Event& e : events) pads = std::max(pads, e.pad + 1);
+      REXLOG_INFO("[script] scripted gamepad on player 1{}: {} events, last at {:.1f} s",
+                  pads > 1 ? fmt::format(" (and pads 2-{} on the next players)", pads) : std::string(), events.size(),
                   events.back().start_s);
       input->AddDriver(std::make_unique<ScriptInputDriver>(std::move(events)));
     }

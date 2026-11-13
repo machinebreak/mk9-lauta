@@ -14,7 +14,7 @@ namespace mk9::session {
 // Starts the room's session and ends this game. mk9-lauta (2026-11-10): a host's room in the lobby's list (listed)
 // stays in it while it plays, with its title (spectators find it there: feed.h).
 [[noreturn]] void Launch(const std::string& room, bool host, const std::string& name, const std::string& title,
-                         bool listed);
+                         bool listed, int players = 1);
 // mk9-lauta (2026-11-10): starts the game again watching the room's session (a profile of its own made anew, as the
 // players') and ends this one.
 [[noreturn]] void Watch(const std::string& room, const std::string& name);

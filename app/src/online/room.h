@@ -55,6 +55,9 @@ struct State {
   std::string p1, p2, p1_country, p2_country, p1_avatar, p2_avatar;
   int watchers = 0;
   bool my_ready = false, other_ready = false;
+  // mk9-lauta (2026-11-13): players at each machine (2: two against two with four players, the second at the same
+  // PC; mk9_net_local_players in the session); the other's as it said (1 until then, or an older release)
+  int my_players = 1, other_players = 1;
   std::vector<Line> chat;
   std::string status;         // a line for the screen
   uint64_t version = 0;
@@ -65,6 +68,8 @@ void JoinRoom(const std::string& code);
 void QuickMatch();
 void Leave();
 void SetReady(bool ready);
+// mk9-lauta (2026-11-13): one or two players at this machine (said to the other one).
+void SetPlayers(int players);
 void Say(const std::string& text);
 State Snapshot();
 // Every overlay frame (the UI thread): the relayed messages, the keepalives, the start.

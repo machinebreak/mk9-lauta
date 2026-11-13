@@ -88,7 +88,11 @@ bool PollIce(Event* event);
 bool PollProfile(Event* event);
 
 // The ICE servers for a room's path (GET /ice on the lobby's host: STUN, and TURN with credentials of hours), as the
-// WebRTC API takes them: [{urls: [...], username, credential}]. Blocks; empty on failure.
+// WebRTC API takes them: [{urls: [...], username, credential}]. Blocks (by the lobby's address too when the DNS does
+// not know its name; the last answer kept when none comes); empty on failure.
 nlohmann::json IceServers();
+// This game reaches the lobby at its address (its DNS does not know the lobby's name): a game started from here
+// (a session's, a spectator's, the way back) gets --mk9_lobby_by_address and goes there from the start.
+bool ByAddress();
 
 }  // namespace mk9::lobby

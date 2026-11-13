@@ -20,6 +20,8 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "online/lobby.h"
+
 REXCVAR_DECLARE(std::string, mk9_online_name);
 
 namespace mk9::session {
@@ -75,7 +77,8 @@ std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropp
     if (a.rfind(L"--mk9_net_room", 0) == 0 || a.rfind(L"--mk9_net_role", 0) == 0 ||
         a.rfind(L"--mk9_online_name", 0) == 0 || a.rfind(L"--mk9_online_show", 0) == 0 ||
         a.rfind(L"--mk9_online_test=", 0) == 0 || a.find(L"online_session") != std::wstring::npos ||
-        a.rfind(L"--mk9_net_replay", 0) == 0 ||
+        a.rfind(L"--mk9_net_replay", 0) == 0 || a.rfind(L"--mk9_lobby_by_address", 0) == 0 ||
+        a.rfind(L"--mk9_net_local_players", 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const wchar_t* o) { return a.rfind(o, 0) == 0; }) ||
         std::any_of(dropping.begin(), dropping.end(), [&](const wchar_t* o) { return a.rfind(o, 0) == 0; })) {
@@ -84,6 +87,9 @@ std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropp
     out.push_back(a);
   }
   if (argv) LocalFree(argv);
+  // mk9-lauta (2026-11-13): this connection's DNS does not know the lobby's name: the next game goes to its address
+  // from the start (lobby.h ByAddress), its /ice included (a session that asked by name ran with no TURN)
+  if (lobby::ByAddress()) out.push_back(L"--mk9_lobby_by_address=true");
   return out;
 }
 
@@ -112,7 +118,8 @@ std::vector<std::wstring> OwnOptions(std::initializer_list<const wchar_t*> dropp
 
 }  // namespace
 
-void Launch(const std::string& room, bool host, const std::string& name, const std::string& title, bool listed) {
+void Launch(const std::string& room, bool host, const std::string& name, const std::string& title, bool listed,
+            int players) {
   // a profile made anew: both games start from the same save (the role's own, so two games on one PC do not share it)
   const std::filesystem::path profile = ExeDir() / (host ? "online_session_host" : "online_session_guest");
   std::error_code ec;
@@ -122,6 +129,7 @@ void Launch(const std::string& room, bool host, const std::string& name, const s
   options.push_back(L"--mk9_net_room=" + Wide(room));
   options.push_back(std::wstring(L"--mk9_net_role=") + (host ? L"host" : L"guest"));
   options.push_back(L"--mk9_online_name=" + Wide(name));
+  if (players == 2) options.push_back(L"--mk9_net_local_players=2");  // two at this PC (netplay.h)
   if (host && listed) {
     options.push_back(L"--mk9_net_room_listed=true");
     if (!title.empty()) options.push_back(L"--mk9_net_room_title=" + Wide(title));

@@ -112,6 +112,22 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"Terminar la sesión y volver al lobby", {"End the session and go back to the lobby", "Encerrar a sessão e voltar ao lobby"}},
       {"Cancelar listo", {"Not ready", "Cancelar pronto"}},
       {"Estoy listo", {"I'm ready", "Estou pronto"}},
+      {"Somos dos en esta PC (dos contra dos de a cuatro)",
+       {"Two of us at this PC (two vs two with four players)", "Somos dois neste PC (dois contra dois com quatro)"}},
+      {"El mando 1 es uno y el mando 2 (o el teclado como jugador 2, en F2 > Controles) es el otro. Si en la otra PC "
+       "también son dos, juegan los cuatro en 4 JUGADORES > MODO VERSUS.",
+       {"Controller 1 is one player and controller 2 (or the keyboard as player 2, in F2 > Controles) is the other. If "
+        "there are two at the other PC too, the four play in 4 JUGADORES > MODO VERSUS.",
+        "O controle 1 é um e o controle 2 (ou o teclado como jogador 2, em F2 > Controles) é o outro. Se no outro PC "
+        "também são dois, os quatro jogam em 4 JUGADORES > MODO VERSUS."}},
+      {"Los cuatro: en el menú principal, RB hasta 4 JUGADORES > MODO VERSUS. En ELIGE TU EQUIPO cada uno mueve su "
+       "mando a un lado y aprieta A; el relevo es con LB.",
+       {"All four: in the main menu, RB until 4 JUGADORES > MODO VERSUS. In ELIGE TU EQUIPO each one moves their "
+        "controller to a side and presses A; tag with LB.",
+        "Os quatro: no menu principal, RB até 4 JUGADORES > MODO VERSUS. Em ELIGE TU EQUIPO cada um move seu "
+        "controle para um lado e aperta A; a troca é com LB."}},
+      {"%s y otro jugador juegan desde la misma PC.",
+       {"%s and another player play from the same PC.", "%s e outro jogador jogam do mesmo PC."}},
       {"%s está listo", {"%s is ready", "%s está pronto"}},
       {"%s todavía no está listo", {"%s is not ready yet", "%s ainda não está pronto"}},
       {"Cuando los dos estén listos, el juego arranca de nuevo ya conectado.",

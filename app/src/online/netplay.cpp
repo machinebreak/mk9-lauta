@@ -156,6 +156,13 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_INT32(mk9_net_local_players, 1, "MK9 Online",
+                     "Players at this machine in a session: 2 = two against two with four players, two at each "
+                     "machine (the second pad is the game's player 3 on the host, player 4 on the guest)")
+    .range(1, 2);
+REXCVAR_DEFINE_STRING(mk9_net_lockstep_rest, "luck", "MK9 Online",
+                      "Test: a lockstep frame's boundary: luck (at rest in Test Your Luck's modes, mk9_net_settle_luck), "
+                      "pools (every lockstep frame: the thread pools' work finished), full (every one at rest), off");
 REXCVAR_DEFINE_BOOL(mk9_net_settle_luck, true, "MK9 Online",
                     "Test Your Luck's modes: every lockstep frame's boundary at rest (quiesce.h: the render thread "
                     "flushed, the thread pools' work finished), so work in the background ends at the same frame on "
@@ -258,13 +265,22 @@ struct Pad {
   uint8_t busy = 0;        // BusyFlag bits of the machine when it was read
   uint8_t ready = 0;       // ReadyFlag bits: the polls that said ready in the frame before
   uint32_t sound = 0;      // a sound callback this machine got (sound_sync.h Announcement; 0: none)
-  bool operator==(const Pad& o) const { return std::memcmp(bytes, o.bytes, 12) == 0; }
+  // mk9-lauta (2026-11-13): the second player at this machine (mk9_net_local_players = 2: two against two with four
+  // players, two at each machine): the game's player 3 (the host's second) or 4 (the guest's)
+  uint8_t bytes2[12] = {};
+  bool operator==(const Pad& o) const {
+    return std::memcmp(bytes, o.bytes, 12) == 0 && std::memcmp(bytes2, o.bytes2, 12) == 0;
+  }
 };
-constexpr int kPadBytes = 18;
+constexpr int kPadBytes = 18;   // a machine's pad on the wire and in a recording ('F')
+constexpr int kPadBytes2 = 30;  // ... with its second player's (a machine with two players; the recording's 'G')
+int PadBytes(int players) { return players >= 2 ? kPadBytes2 : kPadBytes; }
 
 struct Session {
   bool configured = false, failed = false, started = false, ended = false;
   bool host = false;
+  int local_players = 1;  // mk9_net_local_players: this machine's (a spectator: the host's)
+  int peer_players = 1;   // the other machine's, as its HELLO said (a spectator: the guest's)
   std::string room;  // a lobby room's session (else a direct UDP one)
   int player = 0;  // 0 = player 1 (the host), 1 = player 2
   int lockstep_delay = 2, rollback_delay = 1;
@@ -339,6 +355,7 @@ struct Session {
     bool rollback = false;
     int64_t mode_end = -1;  // the fight's mode ended at this frame (from then on as lockstep)
     bool frames_sound = false;  // its sounds' callbacks by frame numbers: the players' words in the recording
+    int players[2] = {1, 1};    // at the host's machine and at the guest's (two: their pads carry the second's)
     std::vector<WatchedFrame> frames;
   };
   std::vector<WatchedEpoch> watched;  // by epoch
@@ -396,6 +413,9 @@ struct Session {
 };
 
 Session g;
+
+// The players at the host's machine (player 0) or the guest's (1): 2 with mk9_net_local_players on that side.
+int PlayersOf(int player) { return player == g.player ? g.local_players : g.peer_players; }
 
 // mk9_net_record: the session's final frames, to a file in logs. Records (little-endian):
 //   header   "MK9NET1\0", u32 version (1; from protocol 10 on, + the protocol x 256: a spectator of another release
@@ -471,11 +491,12 @@ void RecordHeader() {
   RecordValue<uint8_t>(uint8_t(g.rollback_delay));
 }
 
-void RecordPad(const Pad& pad) {
+void RecordPad(const Pad& pad, bool second) {
   RecordPut(pad.bytes, 12);
   RecordValue(pad.busy);
   RecordValue(pad.ready);
   RecordValue(pad.sound);
+  if (second) RecordPut(pad.bytes2, 12);
 }
 
 // The writer's thread (mk9_net_record): the logs' newest sessions kept, the file made, the records written every 2 s
@@ -546,8 +567,10 @@ void RecordEpoch() {
   RecordValue<uint8_t>('E');
   RecordValue<uint32_t>(g.epoch);
   RecordValue<uint64_t>(g.start_game_frame);
-  // bit 0 rollback; bit 1 (mk9-lauta, 2026-11-10): its sounds' callbacks by frame numbers (sound_sync.h kFrames)
-  RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0)));
+  // bit 0 rollback; bit 1 (mk9-lauta, 2026-11-10): its sounds' callbacks by frame numbers (sound_sync.h kFrames);
+  // bits 2 and 3 (2026-11-13): two players at the host's machine, at the guest's (their frames are 'G')
+  RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0) | (PlayersOf(0) == 2 ? 4 : 0) |
+                               (PlayersOf(1) == 2 ? 8 : 0)));
   g_rec.upto = -1;
   RecordHandOver();
 }
@@ -560,10 +583,11 @@ void RecordFinal() {
   const int64_t upto = std::min(FinalUpto(), g.frame - 1);
   for (int64_t f = g_rec.upto + 1; f <= upto; ++f) {
     if (!g.have_remote[size_t(f)]) break;
-    RecordValue<uint8_t>('F');
+    const bool four = g.local_players == 2 || g.peer_players == 2;
+    RecordValue<uint8_t>(four ? 'G' : 'F');
     RecordValue<uint32_t>(uint32_t(f));
-    RecordPad(g.local[size_t(f)]);
-    RecordPad(g.remote[size_t(f)]);
+    RecordPad(g.local[size_t(f)], four);
+    RecordPad(g.remote[size_t(f)], four);
     RecordValue<uint64_t>(g.local_hash[size_t(f)]);
     g_rec.upto = f;
     ++g_rec.frames;
@@ -915,8 +939,10 @@ bool SendHello() {
   const std::string_view release = MK9_LAUTA_VERSION;
   p.push_back(uint8_t(std::min<size_t>(release.size(), 15)));
   p.insert(p.end(), release.begin(), release.begin() + std::min<size_t>(release.size(), 15));
-  // the settings both games must share; bit 1 (mk9-lauta 2026-11-11): Kratos installed (mk9_kratos.h)
-  p.push_back(uint8_t((virtual_time::Enabled() ? 1 : 0) | (mk9::kratos::Installed() ? 2 : 0)));
+  // the settings both games must share; bit 1 (mk9-lauta 2026-11-11): Kratos installed (mk9_kratos.h); bit 2
+  // (2026-11-13): two players at this machine (its pads carry the second's: PadBytes)
+  p.push_back(uint8_t((virtual_time::Enabled() ? 1 : 0) | (mk9::kratos::Installed() ? 2 : 0) |
+                      (g.local_players == 2 ? 4 : 0)));
   const bool sent = g.link->Send(p.data(), p.size());
   g.last_sent_us = NowUs();
   return sent;
@@ -937,7 +963,8 @@ void SendInputs() {
   // empty pad as this frame's input and drop the real one (2026-11-09)
   const int64_t newest = g.local_made_upto;
   int64_t first = std::max<int64_t>(g.peer_acked + 1, 0);
-  first = std::max<int64_t>(first, newest - kMaxPerPacket + 1);
+  // (a machine with two players: 30 bytes a frame, so 40 frames keep a packet as short as 64 of 18)
+  first = std::max<int64_t>(first, newest - (g.local_players == 2 ? 40 : kMaxPerPacket) + 1);
   auto p = Header(kInput);
   Put32(p, g.epoch);
   Put32(p, uint32_t(g.remote_upto + 1));
@@ -949,6 +976,7 @@ void SendInputs() {
     p.push_back(g.local[size_t(f)].busy);
     p.push_back(g.local[size_t(f)].ready);
     Put32(p, g.local[size_t(f)].sound);
+    if (g.local_players == 2) p.insert(p.end(), g.local[size_t(f)].bytes2, g.local[size_t(f)].bytes2 + 12);
   }
   // the newest final frame's sync hash (a fight's frame sends before the frame that just ran has its hash: the one
   // before then)
@@ -1019,6 +1047,12 @@ void Receive() {
       if (left >= 13 && left >= 13 + p[12] && g.peer_release.empty()) {
         g.peer_release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
         REXLOG_INFO("[net] the other player has mk9-lauta {}", g.peer_release);
+        if (left >= 14 + p[12]) {
+          g.peer_players = ((p[13 + p[12]] >> 2) & 1) ? 2 : 1;
+          if (g.peer_players == 2 || g.local_players == 2) {
+            REXLOG_INFO("[net] players at each machine: {} here, {} there", g.local_players, g.peer_players);
+          }
+        }
         // the settings both games must share (a test switch changed on one side)
         if (left >= 14 + p[12] && ((p[13 + p[12]] >> 1) & 1) != (mk9::kratos::Installed() ? 1 : 0)) {
           REXLOG_ERROR("[net] the other player's game {} Kratos and this one {}: the games will go apart (the rooms "
@@ -1043,17 +1077,19 @@ void Receive() {
       const int64_t ack = int64_t(Get32(p)) - 1;
       const int64_t first = Get32(p + 4);
       const int count = p[8];
-      if (left < 13 + count * kPadBytes + 16) continue;
+      const int size = PadBytes(g.peer_players);
+      if (left < 13 + count * size + 16) continue;
       g.peer_acked = std::max(g.peer_acked, ack);
       for (int i = 0; i < count; ++i) {
         const int64_t f = first + i;
         Ensure(f);
         if (g.have_remote[size_t(f)]) continue;
         Pad& pad = g.remote[size_t(f)];
-        std::memcpy(pad.bytes, p + 9 + i * kPadBytes, 12);
-        pad.busy = p[9 + i * kPadBytes + 12];
-        pad.ready = p[9 + i * kPadBytes + 13];
-        pad.sound = Get32(p + 9 + i * kPadBytes + 14);
+        std::memcpy(pad.bytes, p + 9 + i * size, 12);
+        pad.busy = p[9 + i * size + 12];
+        pad.ready = p[9 + i * size + 13];
+        pad.sound = Get32(p + 9 + i * size + 14);
+        if (size == kPadBytes2) std::memcpy(pad.bytes2, p + 9 + i * size + 18, 12);
         g.have_remote[size_t(f)] = 1;
         // a frame that ran on a prediction this input contradicts: the rollback goes back to it
         if (g.rollback && f < g.frame && !(g.used[1 - g.player][size_t(f)] == pad)) {
@@ -1072,16 +1108,16 @@ void Receive() {
       while (size_t(g.remote_upto + 1) < g.have_remote.size() && g.have_remote[size_t(g.remote_upto + 1)]) {
         ++g.remote_upto;
       }
-      const uint8_t* h = p + 9 + count * kPadBytes;
+      const uint8_t* h = p + 9 + count * size;
       const uint32_t hash_frame = Get32(h);
       if (hash_frame != kNoHash && Get64(h + 4) != 0) {
         Ensure(hash_frame);
         g.remote_hash[hash_frame] = Get64(h + 4);
         g.remote_hash_newest = std::max<int64_t>(g.remote_hash_newest, hash_frame);
-        if (left >= 13 + count * kPadBytes + 32) g.remote_fighters[hash_frame] = Get64(h + 24);
+        if (left >= 13 + count * size + 32) g.remote_fighters[hash_frame] = Get64(h + 24);
       }
       g.peer_latest = std::max<int64_t>(g.peer_latest, int64_t(Get32(h + 12)));
-      if (left >= 13 + count * kPadBytes + 24) {
+      if (left >= 13 + count * size + 24) {
         const uint32_t into = uint32_t(h[20]) | uint32_t(h[21]) << 8;
         if (into != 0xFFFF) NotePhase(int64_t(Get32(h + 16)), uint64_t(into) * 10);
         g.peer_phase = double(int16_t(uint16_t(h[22] | h[23] << 8))) / 100.0;
@@ -1213,14 +1249,15 @@ void LoadReplayPads() {
     if (tag == 'E' && at + 14 <= data.size()) {
       g_replay_pads.emplace_back();
       at += 14;
-    } else if (tag == 'F' && at + 1 + 4 + 2 * kPadBytes + 8 <= data.size() && !g_replay_pads.empty()) {
+    } else if ((tag == 'F' || tag == 'G') &&
+               at + 1 + 4 + 2 * PadBytes(tag == 'G' ? 2 : 1) + 8 <= data.size() && !g_replay_pads.empty()) {
       uint32_t frame;
       std::memcpy(&frame, &data[at + 1], 4);
       auto& pads = g_replay_pads.back();
       if (pads.size() <= frame) pads.resize(size_t(frame) + 1);
       std::memcpy(pads[frame].data(), &data[at + 5], 12);
       ++frames;
-      at += 1 + 4 + 2 * kPadBytes + 8;
+      at += 1 + 4 + 2 * PadBytes(tag == 'G' ? 2 : 1) + 8;
     } else if (tag == 'M' && at + 5 <= data.size()) {
       at += 5;
     } else {
@@ -1242,12 +1279,21 @@ void ReplayPad(uint32_t epoch, int64_t frame, Pad* pad) {
 }
 
 // This player's pad: every device of this PC together (the four players' seats merged), so the keyboard and any pad
-// play, whichever seat the options give them offline (mk9_controls.h).
+// play, whichever seat the options give them offline (mk9_controls.h). mk9-lauta (2026-11-13): with two players at
+// this machine, the first seat's devices (the first pad, the keyboard on player 1) are the first player's and the
+// second seat's (the second pad, the keyboard on player 2) the second's.
 Pad ReadLocalPad() {
   Pad pad;
   auto* runtime = REX_KERNEL_STATE() ? REX_KERNEL_STATE()->emulator() : nullptr;
   auto* is = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
   if (!is) return pad;
+  if (g.local_players == 2) {
+    rex::input::X_INPUT_STATE state{};
+    if (is->GetState(0, &state) == 0) std::memcpy(pad.bytes, &state.gamepad, 12);
+    state = {};
+    if (is->GetState(1, &state) == 0) std::memcpy(pad.bytes2, &state.gamepad, 12);
+    return pad;
+  }
   rex::input::X_INPUT_STATE merged{};
   bool any = false;
   for (uint32_t user = 0; user < rex::input::kMaxGuestUsers; ++user) {
@@ -1337,6 +1383,7 @@ bool Configure() {
   g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), -1, 7);
   g.rollback_wanted = REXCVAR_GET(mk9_net_rollback);
   g.delay = g.lockstep_delay;
+  g.local_players = std::clamp(REXCVAR_GET(mk9_net_local_players), 1, 2);
   if (!room.empty()) {
     if (!ConfigureRoom(room, REXCVAR_GET(mk9_net_role))) return false;
     g.player = g.host || g.watching ? 0 : 1;
@@ -1716,6 +1763,17 @@ void AdjustFightDelay() {
 // finished at each boundary (what a rollback's boundary does), what a frame started is done by the next one on all:
 // the players' lockstep frames and a spectator's or a replay's frames out of a fight.
 void SettleForLuck(PPCContext& ctx, uint8_t* base) {
+  static const std::string rest = REXCVAR_GET(mk9_net_lockstep_rest);
+  if (rest == "off") return;
+  if (rest == "pools") {
+    quiesce::DrainPools(ctx, base);
+    return;
+  }
+  if (rest == "full") {
+    quiesce::Settle(ctx, base);
+    quiesce::Release();
+    return;
+  }
   static const bool settle_luck = REXCVAR_GET(mk9_net_settle_luck);
   if (!settle_luck) return;
   const uint32_t info = Load32(base, 0x833848D4);
@@ -1823,7 +1881,10 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
       ReplayPad(g.epoch, g.latest + g.delay, &pad);  // mk9_net_input_replay (tests)
       // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
       // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
-      if (!REXCVAR_GET(mk9_net_pause_in_fights)) pad.bytes[1] &= uint8_t(~0x10);
+      if (!REXCVAR_GET(mk9_net_pause_in_fights)) {
+        pad.bytes[1] &= uint8_t(~0x10);
+        pad.bytes2[1] &= uint8_t(~0x10);  // the second player at this machine's too
+      }
       pad.sound = sound_sync::AnnounceFor(g.latest + g.delay);
       g.local[size_t(g.latest + g.delay)] = pad;
       g.local_made_upto = g.latest + g.delay;
@@ -2084,10 +2145,14 @@ void WatchParse() {
       std::memcpy(&g.watched[epoch].start, r + 5, 8);
       g.watched[epoch].rollback = (r[13] & 1) != 0;
       g.watched[epoch].frames_sound = (r[13] & 2) != 0;
+      g.watched[epoch].players[0] = (r[13] & 4) ? 2 : 1;
+      g.watched[epoch].players[1] = (r[13] & 8) ? 2 : 1;
       g.watch_read += sizeof(r);
-    } else if (tag == 'F') {
-      uint8_t r[1 + 4 + 2 * kPadBytes + 8];
-      if (!read(g.watch_read, r, sizeof(r))) return;
+    } else if (tag == 'F' || tag == 'G') {
+      const int size = tag == 'G' ? kPadBytes2 : kPadBytes;
+      uint8_t r[1 + 4 + 2 * kPadBytes2 + 8];
+      const size_t length = size_t(1 + 4 + 2 * size + 8);
+      if (!read(g.watch_read, r, length)) return;
       uint32_t frame;
       std::memcpy(&frame, r + 1, 4);
       if (g.watched.empty() || frame != g.watched.back().frames.size()) return broken("frame", frame);
@@ -2097,15 +2162,16 @@ void WatchParse() {
         Pad* pads[2] = {&frames[frame].p1, &frames[frame].p2};
         if (g.replay_swap) std::swap(pads[0], pads[1]);
         for (int p = 0; p < 2; ++p) {
-          const uint8_t* at = r + 5 + p * kPadBytes;
+          const uint8_t* at = r + 5 + p * size;
           std::memcpy(pads[p]->bytes, at, 12);
           pads[p]->busy = at[12];
           pads[p]->ready = at[13];
           std::memcpy(&pads[p]->sound, at + 14, 4);
+          if (size == kPadBytes2) std::memcpy(pads[p]->bytes2, at + 18, 12);
         }
-        std::memcpy(&frames[frame].hash, r + 5 + 2 * kPadBytes, 8);
+        std::memcpy(&frames[frame].hash, r + 5 + 2 * size, 8);
       }
-      g.watch_read += sizeof(r);
+      g.watch_read += length;
     } else if (tag == 'M') {
       uint8_t r[5];
       if (!read(g.watch_read, r, sizeof(r))) return;
@@ -2189,6 +2255,8 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     }
     g.started = true;
     StartEpoch(game_frame, 0, false);
+    g.local_players = g.watched[0].players[0];  // the spectator in the host's seat: the host's players and the guest's
+    g.peer_players = g.watched[0].players[1];
     g.seed_pending = true;
     REXLOG_INFO("[watch] the match comes: seed {}, playing it back from game frame {}", g.seed, game_frame);
   } else if (g.at_barrier) {
@@ -2201,6 +2269,8 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
       return;
     }
     StartEpoch(game_frame, next, false);
+    g.local_players = g.watched[next].players[0];
+    g.peer_players = g.watched[next].players[1];
     REXLOG_INFO("[watch] epoch {} at game frame {}", next, game_frame);
   }
   // the frame's inputs; the match's next epoch already there and this one's frames over: this game missed the barrier
@@ -2611,7 +2681,12 @@ void PeerLeft() {
 
 void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1) {
   if (!g.started || g.ended || g.failed || g.frame <= 0) return;
+  // users 0 and 1: the host's and the guest's pads; 2 and 3 (mk9-lauta 2026-11-13): their second players', when that
+  // machine has two (mk9_net_local_players)
   const Pad* pad = user == 0 ? &g.frame_pads[0] : user == 1 ? &g.frame_pads[1] : nullptr;
+  const bool second = user == 2 || user == 3;
+  if (second && PlayersOf(int(user) - 2) == 2) pad = &g.frame_pads[user - 2];
+  const uint8_t* gamepad = pad ? (second ? pad->bytes2 : pad->bytes) : nullptr;
   uint8_t* out = base + data;
   auto put_be32 = [](uint8_t* p, uint32_t v) {
     p[0] = uint8_t(v >> 24);
@@ -2626,8 +2701,8 @@ void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, ui
     // X_INPUT_STATE: packet number, then the gamepad
     std::memset(out, 0, 16);
     if (pad) {
-      put_be32(out, g.packet[user][size_t(g.frame - 1)]);
-      std::memcpy(out + 4, pad->bytes, 12);
+      put_be32(out, g.packet[second ? user - 2 : user][size_t(g.frame - 1)]);
+      std::memcpy(out + 4, gamepad, 12);
     }
   } else if (tag == 0x00FF0002 && size == 20) {
     // X_INPUT_CAPABILITIES of a standard gamepad: type 1, subtype 1, every button and axis, both motors

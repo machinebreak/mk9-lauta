@@ -60,7 +60,10 @@ class Assignment final : public rex::input::DeviceAssignment {
         keyboard_ = device.id;
         listed.push_back({"Teclado", 0, true});
       } else if (device.synthetic) {
-        users_[0].push_back(device.id);  // the stand-in, the test script
+        // the stand-in, the test script (pad 1); mk9-lauta (2026-11-13): its pads 2-4, "Script N", on player N
+        const size_t n = device.name.rfind("Script ", 0) == 0 && device.name.size() == 8 ? size_t(device.name[7] - '1')
+                                                                                          : 0;
+        users_[n < kMaxGuestUsers ? n : 0].push_back(device.id);
       } else {
         const bool seated = device.ordinal < kMaxGuestUsers;
         if (seated) users_[device.ordinal].push_back(device.id);

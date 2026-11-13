@@ -432,6 +432,7 @@ void OnMessageLocked(const json& d) {
     notify::Attention(false);
   } else if (kind == "ready") {
     g.s.other_ready = d.value("on", false);
+    g.s.other_players = d.value("pl", 1) == 2 ? 2 : 1;
     if (g.s.other_ready) notify::Attention(true);
     Touch();
     MaybeStartLocked();
@@ -490,9 +491,17 @@ void SetReady(bool ready) {
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase != Phase::kTogether || g.s.in_session) return;
   g.s.my_ready = ready;
-  SendOther({{"room", "ready"}, {"on", ready}});
+  SendOther({{"room", "ready"}, {"on", ready}, {"pl", g.s.my_players}});
   Touch();
   MaybeStartLocked();
+}
+
+void SetPlayers(int players) {
+  std::lock_guard<std::mutex> lock(g.mutex);
+  if (g.s.phase != Phase::kTogether || g.s.in_session || g.s.my_ready) return;
+  g.s.my_players = players == 2 ? 2 : 1;
+  SendOther({{"room", "ready"}, {"on", false}, {"pl", g.s.my_players}});
+  Touch();
 }
 
 void Say(const std::string& text) {
@@ -596,6 +605,7 @@ void Pump() {
   bool launch = false;
   std::string code, me, title;
   bool host = false, listed = false;
+  int players = 1;
   {
     std::lock_guard<std::mutex> lock(g.mutex);
     const auto now = Clock::now();
@@ -636,11 +646,12 @@ void Pump() {
       host = g.s.host;
       title = g.s.title;
       listed = g.s.open;
+      players = g.s.my_players;
     }
   }
   if (launch) {
     lobby::Stop();
-    session::Launch(code, host, me, title, listed);
+    session::Launch(code, host, me, title, listed, players);
   }
   // mk9-lauta (2026-11-10): the session's host passes the match to whoever watches it (feed.h)
   {

@@ -62,6 +62,14 @@ en la pelea.
   **DOS CONTRA DOS** (cada uno con una pareja de luchadores que se turnan) o **DESAFÍO DE SUERTE** (la pelea con los
   modificadores de la tragamonedas). El otro se suma con START en la pantalla de 2 jugadores, y cada uno elige su
   luchador.
+- **Dos contra dos de a cuatro** (dos personas en cada PC, cada una con su luchador): en la sala, antes de "Estoy
+  listo", cada PC que tiene a alguien al lado marca **"Somos dos en esta PC"** (el mando 1 es uno; el mando 2, o el
+  teclado como jugador 2 en F2 > Controles, es el otro). Ya conectados, el host va al menú principal y aprieta **RB**
+  hasta **4 JUGADORES** (el modo de cuatro del juego original), y entra a **MODO VERSUS**. Aparece **ELIGE TU EQUIPO**:
+  cada uno mueve su mando a la izquierda (equipo 1) o a la derecha (equipo 2) y aprieta A; el primero de cada lado
+  empieza la pelea y el otro es su compañero. Después cada uno elige su luchador con su propio cursor. En la pelea
+  cada uno maneja el suyo, y el relevo (LB) lo pide el que está peleando. El rollback es el mismo que en el dos contra
+  dos de a dos: en la pelea hay los mismos cuatro luchadores, sólo cambia quién aprieta los botones.
 - En la selección de personajes y debajo de las barras de vida aparece la foto, la bandera y el nombre de cada
   jugador. En **F2 > Online** se ocultan las fotos o los nombres en la pelea.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
