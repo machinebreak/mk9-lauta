@@ -51,7 +51,8 @@ REXCVAR_DEFINE_BOOL(mk9_write_trace, false, "MK9 Online",
                     "mk9_synctest: once the timeline has learnt the pages written with no card, log who writes them "
                     "(write_trace.h; use with no rollback, P larger than the run)");
 REXCVAR_DEFINE_STRING(mk9_synctest, "", "MK9 Online",
-                      "F,P,K: from frame F on (0: from the next fight's start), keep the simulation's memory frame by "
+                      "F,P,K[,D]: from frame F on (0: from the next fight's start, D frames after it), keep the "
+                      "simulation's memory frame by "
                       "frame and every P frames roll it back K frames; the frames that run again must give the game's "
                       "same checks (rollback's test). A package load (the fight decided) ends it. With "
                       "mk9_input_script_frames a frame run again gets its first run's scripted input");
@@ -612,6 +613,7 @@ struct SyncTest {
   bool at_fight = false;          // F = 0: from the next fight's start
   bool stopped = false;           // a package load: no rollback any more
   uint64_t from = 0, period = 0, back = 0;
+  uint64_t after_start = 1;       // F = 0: this many frames after the fight's start
   Timeline timeline;
   uint64_t sim = 0;               // the simulation's frame number (goes back with a rollback)
   uint64_t latest = 0;            // the newest simulation frame reached: the frames before it run again
@@ -693,10 +695,11 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t frame) {
   if (sync.empty()) return;
   if (!g_sync.configured) {
     g_sync.configured = true;
-    unsigned long long f = 0, p = 0, k = 0;
-    if (std::sscanf(sync.c_str(), "%llu,%llu,%llu", &f, &p, &k) == 3 && p > k && k > 0) {
+    unsigned long long f = 0, p = 0, k = 0, after = 1;
+    if (std::sscanf(sync.c_str(), "%llu,%llu,%llu,%llu", &f, &p, &k, &after) >= 3 && p > k && k > 0) {
       g_sync.at_fight = f == 0;
-      g_sync.from = f ? f : ~0ull;  // F = 0: set by SyncTestFightStart
+      g_sync.from = f ? f : ~0ull;  // F = 0: set by SyncTestFightStart, a 4th number of frames after the start
+      g_sync.after_start = after ? after : 1;
       g_sync.period = p;
       g_sync.back = k;
     } else {
@@ -783,7 +786,7 @@ int64_t SyncTestScriptFrame() { return g_sync_script_frame.load(std::memory_orde
 
 void SyncTestFightStart(uint64_t frame) {
   if (!g_sync.at_fight || g_sync.from != ~0ull) return;
-  g_sync.from = frame + 1;
+  g_sync.from = frame + g_sync.after_start;
   REXLOG_INFO("[synctest] the fight starts at frame {}: the test runs from frame {}", frame, g_sync.from);
 }
 

@@ -3,7 +3,9 @@
 // appended to logs/rex/rex_crash.log (RexSwitchDumpThreads, sdk/src/core/exception_handler_switch.cpp). Added
 // 2026-10-21 for the main-menu freeze in Ryujinx: every guest thread stopped after a START press with no fault and no
 // log line saying where. Symbolize the image+0x offsets with the ELF: aarch64-none-elf-addr2line -f -C -e mk9.elf.
-// Switch only; elsewhere a debugger does this better.
+// mk9-lauta (2026-11-12): on Windows, with mk9_hang_stacks_s, the same watch hands a stall to the PC stack dumper
+// (profiler/sa2_cpu_profile_pc.h, VolcarPilas: every thread's whole stack in logs/pilas_<pid>_N.txt). For the freezes
+// no debugger was there to see (a rollback test that stopped presenting).
 
 #include <atomic>
 #include <chrono>
@@ -18,11 +20,17 @@
 #include <rex/platform.h>
 
 #include "mk9_hang_watch.h"
+#include "profiler/sa2_cpu_profile_pc.h"
 
 REXCVAR_DEFINE_INT32(mk9_hang_dump_s, 20, "MK9",
                      "Switch: when no frame is presented for this many seconds, write every thread's stack to "
                      "logs/rex/rex_crash.log (again at three times as long in the same stall; at most 4 dumps). "
                      "0 = off")
+    .range(0, 3600);
+
+REXCVAR_DEFINE_INT32(mk9_hang_stacks_s, 0, "MK9",
+                     "Windows: when no frame is presented for this many seconds, write every thread's stack to "
+                     "logs/pilas_<pid>_N.txt (once a stall, at most twice; tests). 0 = off")
     .range(0, 3600);
 
 extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
@@ -35,6 +43,39 @@ extern "C" size_t RexGmSvcState(char* out, size_t cap);  // sdk/src/core/guest_m
 namespace mk9::hang_watch {
 
 void Start() {
+#if defined(_WIN32)
+  if (const int32_t limit_s = REXCVAR_GET(mk9_hang_stacks_s); limit_s > 0) {
+    // Never joined: it lives as long as the process.
+    new std::thread([limit_s] {
+      using clock = std::chrono::steady_clock;
+      uint64_t last_frames = g_mk9_game_frames.load(std::memory_order_relaxed);
+      auto last_change = clock::now();
+      int dumps = 0;
+      bool reported = false;
+      while (dumps < 2) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        const uint64_t frames = g_mk9_game_frames.load(std::memory_order_relaxed);
+        const auto now = clock::now();
+        if (frames != last_frames || frames == 0) {
+          last_frames = frames;
+          last_change = now;
+          reported = false;
+          continue;
+        }
+        const auto stalled_s = std::chrono::duration_cast<std::chrono::seconds>(now - last_change).count();
+        if (reported || stalled_s < limit_s) continue;
+        char reason[96];
+        std::snprintf(reason, sizeof(reason), "no frame presented for %lld s (frame %llu)",
+                      static_cast<long long>(stalled_s), static_cast<unsigned long long>(frames));
+        nfsmw::perfil_pc::VolcarPilas(reason);
+        REXLOG_WARN("[hang] {}: every thread's stack is in logs/pilas_<pid>_N.txt (mk9_hang_stacks_s)", reason);
+        rex::FlushLogging();
+        reported = true;
+        ++dumps;
+      }
+    });
+  }
+#endif
 #if REX_PLATFORM_SWITCH
   const int32_t limit_s = REXCVAR_GET(mk9_hang_dump_s);
   if (limit_s <= 0) return;

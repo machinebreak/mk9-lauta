@@ -92,7 +92,7 @@ or settings.
 2. Use **Partida rápida** (quick match), create a room (public, or private with a code to share with a friend) or join
    one with its code.
 3. When both players press **Estoy listo** (ready), the game restarts already connected. One player picks **VERSUS**
-   (one vs one or two vs two), the other joins with START, and each picks a fighter.
+   (one vs one, two vs two or test your luck), the other joins with START, and each picks a fighter.
 
 Both players need the same version; the game updates itself. The full players' guide (in Spanish) is in
 [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the zip's `LEEME.txt`.

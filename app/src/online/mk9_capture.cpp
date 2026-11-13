@@ -96,6 +96,9 @@ REXCVAR_DEFINE_STRING(mk9_script_log, "", "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_native_log, "", "MK9 Online",
                       "Write the MKO script natives called in the frames of mk9_native_log_frames to this file");
 REXCVAR_DEFINE_STRING(mk9_native_log_frames, "", "MK9 Online", "mk9_native_log: the frames, a-b");
+REXCVAR_DEFINE_BOOL(mk9_script_trace, false, "MK9 Online",
+                    "mk9_native_log also writes the scripts' own calls and conditions, and each native's line and "
+                    "second argument (test)");
 REXCVAR_DEFINE_STRING(mk9_state_hash, "", "MK9 Online",
                       "Write one line per frame to this file: the frame and an xxh3 of each mk9_state_ranges range");
 REXCVAR_DEFINE_STRING(mk9_state_ranges, "83380000-834D0000", "MK9 Online",
@@ -376,8 +379,8 @@ bool GuestPointer(uint32_t addr) { return addr >= 0x40000000u && addr < 0xF00000
 
 // A script function started (mk9_script_log): the script object and the function's number (1-based) in its table
 // (+32 count, +140 the entries; an entry's first word is its name).
-void CaptureScriptCall(const uint8_t* base, uint32_t script, uint32_t index) {
-  if (!g_script_file) return;
+// A script's function by its number, as the C++ starts it ("?" when it cannot be read).
+std::string ScriptFunctionName(const uint8_t* base, uint32_t script, uint32_t index) {
   std::string name = "?";
   if (GuestPointer(script) && index >= 1 && index <= Load32(base, script + 32)) {
     const uint32_t table = Load32(base, script + 140);
@@ -388,6 +391,12 @@ void CaptureScriptCall(const uint8_t* base, uint32_t script, uint32_t index) {
       name.assign(chars, strnlen(chars, 128));
     }
   }
+  return name;
+}
+
+void CaptureScriptCall(const uint8_t* base, uint32_t script, uint32_t index) {
+  if (!g_script_file) return;
+  const std::string name = ScriptFunctionName(base, script, index);
   char head[64];
   std::snprintf(head, sizeof(head), "%llu %s ", static_cast<unsigned long long>(g_frame),
                 std::this_thread::get_id() == g_game_thread ? "g" : "t");
@@ -401,12 +410,16 @@ constexpr uint32_t kScriptVm = 0x8342CDF0;
 // The script native about to run (0 = none or outside mk9_native_log_frames), and its first argument: the bytecode's
 // word after the native's (the native reads it at [[vm + 60] + 4] once the call moved the pc past its own word).
 thread_local uint32_t t_native_arg = 0;
+thread_local uint32_t t_native_arg2 = 0;
+thread_local uint32_t t_native_line = 0;
 
 uint32_t NativeAboutToRun(const uint8_t* base) {
   if (!g_native_file || g_frame < g_native_from || g_frame > g_native_to) return 0;
   const uint32_t vm = Load32(base, kScriptVm);
   const uint32_t pc = GuestPointer(vm) ? Load32(base, vm + 60) : 0;
   t_native_arg = GuestPointer(pc) ? Load32(base, pc + 8) : 0;
+  t_native_arg2 = GuestPointer(pc) ? Load32(base, pc + 12) : 0;
+  t_native_line = GuestPointer(pc) ? Load32(base, pc) >> 16 : 0;
   return GuestPointer(pc) ? Load32(base, pc + 4) : 0;
 }
 
@@ -419,7 +432,8 @@ bool Readable(uint32_t addr, uint32_t n) {
   return heap && heap->QueryRangeAccess(addr, addr + n - 1) != rex::memory::PageAccess::kNoAccess;
 }
 
-// Up to 40 printable characters at a guest address ("" when it is not text).
+// Up to 40 printable characters at a guest address ("" when it is not text): bytes, or big-endian UTF-16 (the text
+// of UE3's FStrings on the 360, which the scripts' string variables hold).
 std::string GuestText(const uint8_t* base, uint32_t addr) {
   std::string out;
   for (uint32_t i = 0; i < 40; ++i) {
@@ -429,7 +443,62 @@ std::string GuestText(const uint8_t* base, uint32_t addr) {
     if (c < 32 || c > 126) return std::string();
     out += c;
   }
+  if (!out.empty() || !Readable(addr, 2) || base[addr] != 0 || base[addr + 1] < 32 || base[addr + 1] > 126) return out;
+  for (uint32_t i = 0; i < 40; ++i) {
+    const uint32_t a = addr + 2 * i;
+    if (((a & 0xFFF) == 0) && !Readable(a, 2)) return std::string();
+    const uint32_t c = (uint32_t(base[a]) << 8) | base[a + 1];
+    if (c == 0) break;
+    if (c < 32 || c > 126) return std::string();
+    out += char(c);
+  }
   return out;
+}
+
+// Text a script argument shows: at the word, or through one pointer (a string variable).
+std::string ArgText(const uint8_t* base, uint32_t arg) {
+  std::string text = GuestText(base, arg);
+  if (text.empty() && Readable(arg, 4)) text = GuestText(base, Load32(base, arg));
+  return text;
+}
+
+// mk9_native_log with mk9_script_trace also follows the scripts' own calls and conditions (the MKO VM's call and test
+// instructions, sub_82A15A60 and sub_82A10A90: the test takes a value before a jump, and a function's return value
+// too): "<frame> C <function index> L<line> <the instruction's next two words> <their text>" and "<frame> R L<line>
+// <result register after it>", so a native's line says which script function asked for it, and a loop's condition
+// shows frame by frame.
+bool ScriptTraceOn() {
+  return g_native_file && REXCVAR_GET(mk9_script_trace) && g_frame >= g_native_from && g_frame <= g_native_to;
+}
+
+void CaptureVmCall(const uint8_t* base) {
+  if (!ScriptTraceOn()) return;
+  const uint32_t vm = Load32(base, kScriptVm);
+  const uint32_t pc = GuestPointer(vm) ? Load32(base, vm + 60) : 0;
+  if (!GuestPointer(pc)) return;
+  const uint32_t a1 = Load32(base, pc + 8), a2 = Load32(base, pc + 12);
+  char line[192];
+  const int n = std::snprintf(line, sizeof(line), "%llu C %x L%u %08x %08x %s | %s\n",
+                              static_cast<unsigned long long>(g_frame), Load32(base, pc + 4), Load32(base, pc) >> 16, a1,
+                              a2, ArgText(base, a1).c_str(), ArgText(base, a2).c_str());
+  std::lock_guard lock(g_mutex);
+  std::fwrite(line, 1, size_t(n), g_native_file);
+}
+
+uint32_t VmReturnAboutToRun(const uint8_t* base) {
+  if (!ScriptTraceOn()) return 0;
+  const uint32_t vm = Load32(base, kScriptVm);
+  const uint32_t pc = GuestPointer(vm) ? Load32(base, vm + 60) : 0;
+  return GuestPointer(pc) ? (Load32(base, pc) >> 16) | 0x80000000u : 0;
+}
+
+void CaptureVmReturn(const uint8_t* base, uint32_t line_tag) {
+  const uint32_t vm = Load32(base, kScriptVm);
+  char line[96];
+  const int n = std::snprintf(line, sizeof(line), "%llu R L%u %x\n", static_cast<unsigned long long>(g_frame),
+                              line_tag & 0x7FFFFFFFu, GuestPointer(vm) ? Load32(base, vm + 28) : 0u);
+  std::lock_guard lock(g_mutex);
+  std::fwrite(line, 1, size_t(n), g_native_file);
 }
 
 // A script native that ran (mk9_native_log), with the VM's result register after it, its first argument and the
@@ -437,13 +506,20 @@ std::string GuestText(const uint8_t* base, uint32_t addr) {
 void CaptureNative(const uint8_t* base, uint32_t native) {
   const uint32_t vm = Load32(base, kScriptVm);
   const uint32_t arg = t_native_arg;
-  std::string text = GuestText(base, arg);
-  if (text.empty() && Readable(arg, 4)) text = GuestText(base, Load32(base, arg));
-  char line[128];
-  const int n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s\n", static_cast<unsigned long long>(g_frame),
-                              native, GuestPointer(vm) ? Load32(base, vm + 28) : 0u, arg, text.c_str());
+  const std::string text = ArgText(base, arg);
+  char line[256];
+  int n = 0;
+  if (REXCVAR_GET(mk9_script_trace)) {
+    n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s | L%u %08x %s\n",
+                      static_cast<unsigned long long>(g_frame), native,
+                      GuestPointer(vm) ? Load32(base, vm + 28) : 0u, arg, text.c_str(), t_native_line, t_native_arg2,
+                      ArgText(base, t_native_arg2).c_str());
+  } else {
+    n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s\n", static_cast<unsigned long long>(g_frame), native,
+                      GuestPointer(vm) ? Load32(base, vm + 28) : 0u, arg, text.c_str());
+  }
   std::lock_guard lock(g_mutex);
-  std::fwrite(line, 1, size_t(n), g_native_file);
+  std::fwrite(line, 1, size_t(std::min(n, int(sizeof(line)) - 1)), g_native_file);
 }
 
 // Start of frame N (sub_829D5230's entry): the previous frame's record goes out, the state after it is hashed.
@@ -563,6 +639,49 @@ void CaptureBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uin
 
 uint64_t CurrentFrame() { return g_frame; }
 
+// The game's mode, as the scripts ask it (native 8247e408, sub_829B0520: [[0x833848D4] + 8]): 0 in the Ladder, 1 in
+// VERSUS, 12 in Test Your Luck against the computer (1 PLAYER > KOMBATE) and 13 in VERSUS > TEST YOUR LUCK, the two
+// players' (~0u: not there yet).
+constexpr uint32_t kModeTestYourLuck = 12;
+constexpr uint32_t kModeVersusTestYourLuck = 13;
+
+uint32_t GameMode(const uint8_t* base) {
+  const uint32_t info = Load32(base, 0x833848D4);
+  return GuestPointer(info) ? Load32(base, info + 8) : ~0u;
+}
+
+bool TestYourLuck(uint32_t mode) { return mode == kModeTestYourLuck || mode == kModeVersusTestYourLuck; }
+
+// The game frame (g_frame) of the last fight stage's start (the Toasty! reset's hook), 0 = none yet.
+uint64_t g_stage_start_frame = 0;
+
+// A Test Your Luck stage's slot machine: from its start to the first round's (~1400 frames), a Scaleform show no
+// input changes. The AI's next start after this many frames is the round the reels lead to.
+constexpr uint64_t kReelsFrames = 600;
+
+// A computer fighter's AI given at a stage's or a round's start (the hook of native 82495b68). A Test Your Luck fight
+// takes the session's barrier at the round's start after its slot machine (the reels and the stage before them stay
+// in lockstep: under rollback the reels hung the game twice, its thread spinning in Scaleform). The frames between are
+// the same on both machines (lockstep), even when their counters are not (frames a rollback ran again). Later rounds:
+// Barrier returns at once while the fight's epoch runs.
+void RoundStart(uint8_t* base) {
+  const uint32_t mode = GameMode(base);
+  const bool both = fight_state::Health(base, 0) >= 0.0f && fight_state::Health(base, 1) >= 0.0f;
+  const uint64_t since = g_stage_start_frame ? g_frame - g_stage_start_frame : 0;
+  REXLOG_INFO("[capture] the AI starts at frame {}, {} after the stage's (game mode {}, state {}, fighters: '{}' and "
+              "'{}')",
+              g_frame, since, mode, fight_state::State(base), fight_state::CharacterName(base, 0),
+              fight_state::CharacterName(base, 1));
+  if (!TestYourLuck(mode) || !both || since < kReelsFrames) return;
+  netplay::Barrier(base, "fight start");
+  snapshot::SyncTestFightStart(g_frame);
+}
+
+void StageStarts(uint8_t* base) {
+  g_stage_start_frame = g_frame;
+  REXLOG_INFO("[capture] a fight starts at frame {} (game mode {})", g_frame, GameMode(base));
+}
+
 }  // namespace mk9::online
 
 // The gamepad read of each frame (called from GuardedMain before FEngineLoop::Tick): the frame's start for the capture
@@ -622,6 +741,26 @@ REX_HOOK_RAW(sub_82495660) {
   mk9::netplay::Barrier(base, "fight start");
   mk9::snapshot::SyncTestFightStart(mk9::online::CurrentFrame());
   __imp__sub_82495660(ctx, base);
+}
+
+// mk9-lauta (2026-11-12): every fight's start, a few script lines before that one, in the same frame: the scripts
+// reset the Toasty! easter egg (native 82495620, sub_823B3D60) and then ask the game's mode whether this fight has
+// it. Test Your Luck's fights (game modes 12 and 13, the slot machine's) have none, so they never reached the barrier
+// above and ran whole in lockstep; theirs is at the AI's start after the reels (below). Kept: the stage's frame.
+extern "C" REX_FUNC(__imp__sub_82495620);
+REX_HOOK_RAW(sub_82495620) {
+  mk9::online::StageStarts(base);
+  __imp__sub_82495620(ctx, base);
+}
+
+// The scripts give the computer's fighter its AI script (native 82495b68) when a fight's stage starts (the frame of
+// the Toasty! reset above, both fighters loaded already: the reels only show the opponent) and again as rounds start.
+// Test Your Luck's fights take the session's barrier at the round's start after the slot machine (RoundStart), as the
+// other modes' fights do at Toasty!'s.
+extern "C" REX_FUNC(__imp__sub_82495B68);
+REX_HOOK_RAW(sub_82495B68) {
+  mk9::online::RoundStart(base);
+  __imp__sub_82495B68(ctx, base);
 }
 
 // What a rollback boundary waits for (quiesce.h): a thread pool's thread handing back its work (UE3's
@@ -785,6 +924,20 @@ REX_HOOK_RAW(sub_82A12118) {
   const uint32_t native = mk9::online::NativeAboutToRun(base);
   __imp__sub_82A12118(ctx, base);
   if (native) mk9::online::CaptureNative(base, native);
+}
+
+// The MKO VM's call and test instructions (mk9_script_trace, with mk9_native_log).
+extern "C" REX_FUNC(__imp__sub_82A15A60);
+REX_HOOK_RAW(sub_82A15A60) {
+  mk9::online::CaptureVmCall(base);
+  __imp__sub_82A15A60(ctx, base);
+}
+
+extern "C" REX_FUNC(__imp__sub_82A10A90);
+REX_HOOK_RAW(sub_82A10A90) {
+  const uint32_t line = mk9::online::VmReturnAboutToRun(base);
+  __imp__sub_82A10A90(ctx, base);
+  if (line) mk9::online::CaptureVmReturn(base, line);
 }
 
 // Starts a function of an MKO script (r3 the script object, r4 the function's number): mk9_script_log.

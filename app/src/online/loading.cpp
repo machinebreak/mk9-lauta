@@ -3,6 +3,7 @@
 #include "online/loading.h"
 
 #include <chrono>
+#include <string>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
@@ -16,8 +17,14 @@
 REXCVAR_DEFINE_BOOL(mk9_flush_loads, false, "MK9 Online",
                     "Finish the game's pending package loads at the start of each frame, so they end at the same frame "
                     "on every machine (on by itself in an online session)");
+REXCVAR_DEFINE_BOOL(mk9_log_loads, false, "MK9 Online",
+                    "Log every package the game asks to load, with its frame (test)");
 
 extern "C" REX_FUNC(__imp__sub_8272EC30);  // UObject::FlushAsyncLoading
+
+namespace mk9::online {
+uint64_t CurrentFrame();  // mk9_capture.cpp
+}
 
 namespace mk9::loading {
 namespace {
@@ -35,6 +42,22 @@ uint32_t Load32(const uint8_t* base, uint32_t addr) {
 }  // namespace
 
 bool Enabled() { return REXCVAR_GET(mk9_flush_loads); }
+
+// A package's name as LoadPackageAsync gets it: an FString (TCHAR* data, num with the terminator, max), one byte a
+// character in MK9's build ("ui_s_legal").
+std::string PackageName(const uint8_t* base, uint32_t fstring) {
+  std::string out;
+  if (fstring < 0x10000 || fstring >= 0xF0000000u) return out;
+  const uint32_t data = Load32(base, fstring);
+  const uint32_t num = Load32(base, fstring + 4);
+  if (data < 0x10000 || data >= 0xF0000000u || num > 260) return out;
+  for (uint32_t i = 0; i + 1 < num; ++i) {
+    const uint8_t c = base[data + i];
+    if (c == 0) break;
+    out += (c >= 32 && c < 127) ? char(c) : '?';
+  }
+  return out;
+}
 
 void FlushPending(PPCContext& ctx, uint8_t* base) {
   const uint32_t pending = Load32(base, kAsyncPackagesNum);
@@ -59,7 +82,11 @@ void FlushPending(PPCContext& ctx, uint8_t* base) {
 // (netplay.h, AboutToLoad); a frame that will be run again leaves the load to its corrected run.
 extern "C" REX_FUNC(__imp__sub_82730F70);
 REX_HOOK_RAW(sub_82730F70) {
-  if (!mk9::netplay::AboutToLoad()) return;
-  mk9::snapshot::SyncTestStop("a package load");
+  const std::string name = mk9::loading::PackageName(base, ctx.r3.u32);
+  if (REXCVAR_GET(mk9_log_loads)) {
+    REXLOG_INFO("[loading] package '{}' asked for at frame {}", name, mk9::online::CurrentFrame());
+  }
+  if (!mk9::netplay::AboutToLoad(name.c_str())) return;
+  mk9::snapshot::SyncTestStop(("a package load (" + name + ")").c_str());
   __imp__sub_82730F70(ctx, base);
 }

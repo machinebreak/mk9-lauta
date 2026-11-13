@@ -94,8 +94,8 @@ partidas guardadas ni tus opciones.
 1. Apretá **F1** y elegí tu nombre.
 2. Entrá a **Partida rápida**, creá una sala (pública, o privada con un código para pasarle a un amigo) o unite a una
    con su código.
-3. Cuando los dos tocan **Estoy listo**, el juego se reinicia ya conectado. Uno elige **VERSUS** (uno contra uno o dos
-   contra dos), el otro se suma con START y cada uno elige su luchador.
+3. Cuando los dos tocan **Estoy listo**, el juego se reinicia ya conectado. Uno elige **VERSUS** (uno contra uno, dos
+   contra dos o desafío de suerte), el otro se suma con START y cada uno elige su luchador.
 
 Los dos tienen que tener la misma versión, y el juego se actualiza solo. La guía completa, con los controles y todas
 las opciones, está en [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` del zip.

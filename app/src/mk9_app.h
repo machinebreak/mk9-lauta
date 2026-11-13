@@ -208,7 +208,9 @@ class Mk9App : public rex::ReXApp {
 #endif
     // mk9-lauta: Kratos comes by himself: without him, the port's zip downloads now (installed at the next start)
     mk9::kratos::StartFetch();
-    mk9::hang_watch::Start();  // Switch: thread stacks in logs/rex/rex_crash.log when no frame comes (mk9_hang_dump_s)
+    // thread stacks when no frame comes: Switch logs/rex/rex_crash.log (mk9_hang_dump_s), Windows logs/pilas_*.txt
+    // (mk9_hang_stacks_s)
+    mk9::hang_watch::Start();
     // mk9-nx online (2026-11-07): the PC sampling profiler and stack dumper (sa2_cpu_profile_from_s, sa2_stack_dump_s)
     // were built but never started.
     nfsmw::perfil_pc::Arrancar();

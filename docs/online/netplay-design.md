@@ -944,3 +944,34 @@ un jugador quieto; D3D12): 875-925 rollbacks de 6 cuadros en cada una, ~4500 en 
 **Falta** para encenderlo por defecto: el hunt entre dos juegos y peleas con X-Ray y fatality (el plan: "Prueba");
 quedó para cuando la PC tenga memoria (la regresión 5 la cortó Claude Code por falta de memoria: el juego del
 usuario, Discord, Chrome y los dos juegos de prueba).
+
+### Desafío de suerte con rollback, y el de VERSUS sin desync (1.1.0, 2026-11-12)
+
+El modo tiene dos formas: **1 JUGADOR > KOMBATE > DESAFÍO DE SUERTE** (contra la CPU, modo del juego 12) y **2
+JUGADORES > MODO VERSUS > DESAFÍO DE SUERTE** (los dos jugadores, modo 13). El modo del juego es el que los scripts
+preguntan con la nativa `8247e408` (`sub_829B0520`: `[[0x833848D4] + 8]`; la Escalera da 0, VERSUS 1).
+
+- **Sin barrera.** Sus peleas no tienen Toasty!: la nativa `82495660` (la barrera de las demás) no se llama, y la
+  pelea entera iba en lockstep. Los scripts sí reinician el Toasty! en toda pelea, unas líneas antes y en el mismo
+  cuadro (nativa `82495620`), y le dan su IA al luchador de la CPU al empezar el escenario y cada round (nativa
+  `82495b68`, también en VERSUS). Los dos luchadores ya están cargados desde el escenario: los tambores sólo muestran
+  al rival.
+- **La barrera, después de la tragamonedas.** Con la barrera al empezar el escenario, el rollback cubría la
+  tragamonedas (~1400 cuadros de Scaleform) y el juego se colgó dos veces ahí (una en el SyncTest, una en una pair test):
+  el hilo del juego girando dentro de Scaleform (`sub_8246E498` -> `sub_82E7D078` ... `sub_82EF3468`) y otro hilo del
+  juego (`sub_8255D030`) esperando un candado. Nadie toca nada mientras giran los tambores, así que van en lockstep:
+  la barrera es la IA del round que sigue, la primera a 600 cuadros o más del escenario (`mk9_capture.cpp`,
+  `RoundStart`; los cuadros entre los dos son los mismos en las dos máquinas aunque sus contadores no). Con el
+  SyncTest desde ahí (`mk9_synctest=0,12,6[,D]`, el cuarto número: cuadros después del arranque de la pelea), y en
+  pair tests con 40 ms de lag y jitter: 0 cuadros distintos y ningún cuelgue.
+- **El VERSUS se separaba antes de la pelea (1.0.0).** Cada pantalla mostraba otros modificadores: la pantalla VS
+  espera hasta 28 cuadros las imágenes de los cuerpos (`Transient.BodyRenderBack*.jpeg`, banderas globales del script
+  que limpia el C++), que decodifica un pool de hilos al tiempo de cada máquina; una salía de la espera un cuadro antes,
+  y los mismos números al azar (`rand_report.py`: iguales, en otro orden) iban a otros sorteos (`mission_init`, que
+  arranca el C++, sortea los modificadores: `UtilsCore.cpp:2497`). Ahora, en esos dos modos, cada borde de lockstep
+  queda en reposo (`mk9_net_settle_luck`: `quiesce::Settle`, lo de un borde de rollback): el trabajo de los pools que
+  empezó un cuadro está hecho en el siguiente en las dos. Los 6991 sorteos, iguales en los dos juegos.
+- **Herramientas nuevas:** `mk9_script_trace` (con `mk9_native_log`: las llamadas `C <función> L<línea>` de la VM
+  de los scripts y sus condiciones `R`, y la línea y el segundo argumento de cada nativa); `mk9_log_loads` (cada
+  paquete pedido, con su cuadro); `mk9_hang_stacks_s` (Windows: sin cuadros por N s, las pilas de todos los hilos en
+  `logs/pilas_<pid>_N.txt`, `tools/online/stacks_report.py`). Protocolo 11.

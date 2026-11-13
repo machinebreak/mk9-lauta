@@ -58,8 +58,10 @@ en la pelea.
 
 ## La pelea
 
-- Los menús son los del juego: cualquiera de los dos puede elegir VERSUS, ONE VS ONE o TWO VS TWO. El otro se suma con
-  START en la pantalla de 2 jugadores, y cada uno elige su luchador.
+- Los menús son los del juego: en **2 JUGADORES > MODO VERSUS** cualquiera de los dos puede elegir **UNO CONTRA UNO**,
+  **DOS CONTRA DOS** (cada uno con una pareja de luchadores que se turnan) o **DESAFÍO DE SUERTE** (la pelea con los
+  modificadores de la tragamonedas). El otro se suma con START en la pantalla de 2 jugadores, y cada uno elige su
+  luchador.
 - En la selección de personajes y debajo de las barras de vida aparece la foto, la bandera y el nombre de cada
   jugador. En **F2 > Online** se ocultan las fotos o los nombres en la pelea.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,
@@ -71,9 +73,10 @@ en la pelea.
   lenta"), no es que el juego se trabó.
 - Si el otro deja de responder, a los 10 s aparece un aviso en el medio de la pantalla con la cuenta regresiva: si no
   vuelve en 20 s, la sesión termina y volvés al lobby.
-- Las peleas de VERSUS usan **rollback**: si la conexión tiene un salto, el juego se corrige solo sin frenar. Los
-  menús y la intro de cada pelea van sincronizados con un retraso según el ping, así no se traban. En los otros modos
-  (por ejemplo DESAFÍO DE SUERTE) las peleas también van con ese retraso, sin rollback.
+- Las peleas de MODO VERSUS (las tres) y las de DESAFÍO DE SUERTE de 1 JUGADOR usan **rollback**: si la conexión
+  tiene un salto, el juego se corrige solo sin frenar. Los menús, la intro de cada pelea y la tragamonedas de DESAFÍO
+  DE SUERTE (mientras gira nadie toca nada) van sincronizados con un retraso según el ping, así no se traban. En otros
+  modos las peleas pueden ir con ese retraso, sin rollback.
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
 

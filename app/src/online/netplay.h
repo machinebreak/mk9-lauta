@@ -65,8 +65,8 @@ bool ConfirmFrame(const char* what);
 // and what follows (loads, saves, the sound's teardown, the music) cannot be undone: once the frame is confirmed the
 // rest of the epoch goes on in lockstep, as after the fight's mode ends. True: go ahead; false: the frame ran on a
 // wrong prediction and will be run again, so the load is left to the corrected run (nothing in the frame waits for an
-// asynchronous load).
-bool AboutToLoad();
+// asynchronous load). package: its name, for the log.
+bool AboutToLoad(const char* package = "");
 // A barrier both machines reach (game thread, during a frame; what: for the log): the generators are reseeded on the
 // spot with the next epoch's seed, and the next frame boundary waits for the other machine (netplay.cpp).
 void Barrier(uint8_t* base, const char* what);

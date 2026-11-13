@@ -156,6 +156,10 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_BOOL(mk9_net_settle_luck, true, "MK9 Online",
+                    "Test Your Luck's modes: every lockstep frame's boundary at rest (quiesce.h: the render thread "
+                    "flushed, the thread pools' work finished), so work in the background ends at the same frame on "
+                    "both machines (the VS screen's fighter images before the slot machine's draws)");
 REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
                     "A frame a rollback runs again with both players' inputs already known starts without a snapshot or "
                     "a rest (no rollback can come back to it): rollbacks cost about half (tests: false = every frame "
@@ -227,8 +231,10 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // netcode on each side; a HELLO of another version now ends the handshake at once on this side, with the reason
 // (EndReason::kOtherVersion), and the other side gets a goodbye in its own version's words. From 8 on a HELLO also
 // says the release ("0.2.1"). 9 from 0.3.0 on: an epoch's last frame (its barrier's) has a sync hash of its own (it
-// went into the next epoch's first frame's), and it is recorded (spectators: feed.h).
-constexpr uint8_t kVersion = 10;
+// went into the next epoch's first frame's), and it is recorded (spectators: feed.h). 11 from 1.1.0 on: Test Your
+// Luck's fights have a barrier and rollback too (mk9_capture.cpp, native 82495b68), where 1.0.0 stays in lockstep,
+// and its lockstep frames settle (mk9_net_settle_luck: the slot machine draws the same modifiers on both).
+constexpr uint8_t kVersion = 11;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -1702,7 +1708,25 @@ void AdjustFightDelay() {
 }
 
 // One frame of a lockstep epoch (the menus, the loads, a fight without rollback).
+// mk9-lauta (2026-11-12): in Test Your Luck (game modes 12 and 13: mk9_capture.cpp GameMode) the slot machine's
+// mission draws its modifiers before the fight's barrier, so everything before it has to run at the same frames on
+// every machine. The VS screen waits (up to 28 frames) for the two fighters' body images, which a thread pool decodes
+// on each machine's own clock: one game left the wait a frame before the other, the same random numbers went to
+// other draws, and each screen had its own modifiers (a desync before the fight, 1.0.0). With the pools' work
+// finished at each boundary (what a rollback's boundary does), what a frame started is done by the next one on all:
+// the players' lockstep frames and a spectator's or a replay's frames out of a fight.
+void SettleForLuck(PPCContext& ctx, uint8_t* base) {
+  static const bool settle_luck = REXCVAR_GET(mk9_net_settle_luck);
+  if (!settle_luck) return;
+  const uint32_t info = Load32(base, 0x833848D4);
+  const uint32_t mode = info >= 0x10000 && info < 0xF0000000u ? Load32(base, info + 8) : 0;
+  if (mode != 12 && mode != 13) return;
+  quiesce::Settle(ctx, base);
+  quiesce::Release();
+}
+
 void LockstepFrame(PPCContext& ctx, uint8_t* base) {
+  SettleForLuck(ctx, base);
   AdjustDelayForRoundTrip();
   // this frame's local input goes in at frame + delay; the first delay frames are neutral on both sides. A raised
   // delay: the frames in between get the last input again (pad and busy flags; not ready, no sound announcement). A
@@ -2199,6 +2223,7 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   g_frame_started_us = NowUs();
   const auto& epoch = g.watched[g.epoch];
   const bool fight = WatchFight();
+  if (!fight) SettleForLuck(ctx, base);  // as the players' lockstep frames (Test Your Luck)
   g.watch_in_fight.store(fight, std::memory_order_relaxed);
   g.watch_fight.store(fight && g.frame >= kLearnFrames, std::memory_order_relaxed);
   // the sounds' callbacks as the players had them: in lockstep at the frames their announcements agreed on (with this
@@ -2466,7 +2491,7 @@ bool ConfirmFrame(const char* what) {
   return !doomed;
 }
 
-bool AboutToLoad() {
+bool AboutToLoad(const char* package) {
   if (!g.started || g.ended || g.failed || !g.rollback || !g.speculating ||
       std::this_thread::get_id() != g.game_thread) {
     return true;
@@ -2476,7 +2501,7 @@ bool AboutToLoad() {
   const int64_t frame = g.frame - 1;
   if (g.mode_change_at < 0 || g.mode_change_at > frame) {
     g.mode_change_at = frame;
-    REXLOG_INFO("[net] a package loads at frame {}: the fight is over, lockstep from here", frame);
+    REXLOG_INFO("[net] a package loads at frame {} ({}): the fight is over, lockstep from here", frame, package);
   }
   return true;
 }
