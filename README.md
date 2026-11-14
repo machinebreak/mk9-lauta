@@ -20,6 +20,7 @@
 <img src="https://img.shields.io/github/v/release/machinebreak/mk9-lauta?style=flat-square&label=versi%C3%B3n&color=B71C1C" alt="Versión">
 <img src="https://img.shields.io/github/downloads/machinebreak/mk9-lauta/total?style=flat-square&label=descargas&color=E67E22" alt="Descargas">
 <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-2D7DD2?style=flat-square" alt="Windows 10 y 11">
+<img src="https://img.shields.io/badge/Linux-beta-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux (beta)">
 <img src="https://img.shields.io/github/license/machinebreak/mk9-lauta?style=flat-square&label=licencia&color=555555" alt="Licencia GPL-3.0">
 
 **Español** · [English](README.en.md)
@@ -32,8 +33,8 @@
 
 ## ¿Qué es?
 
-**MK9 by Lauta** es el Mortal Kombat Komplete Edition de Xbox 360 funcionando de forma nativa en Windows. No es un
-emulador: el código del juego está recompilado para PC, y encima tiene lo que le faltaba para jugarlo hoy: online con
+**MK9 by Lauta** es el Mortal Kombat Komplete Edition de Xbox 360 funcionando de forma nativa en Windows (y en Linux,
+en beta). No es un emulador: el código del juego está recompilado para PC, y encima tiene lo que le faltaba para jugarlo hoy: online con
 rollback, salas para jugar con amigos, gráficos que se ajustan a tu PC y controles listos para teclado o mando.
 
 > [!IMPORTANT]
@@ -88,6 +89,29 @@ partidas guardadas ni tus opciones.
 | **Memoria** | 4 GB de RAM |
 | **Espacio** | Unos 8 GB libres |
 | **Juego** | Tu copia de Mortal Kombat Komplete Edition de Xbox 360, en `.iso` (versión europea) |
+
+## Linux (beta)
+
+También hay una versión **nativa para Linux**, en beta: el mismo juego, con el mismo online (se juega contra Windows sin
+problemas) y las mismas opciones.
+
+1. **Descargá** el `mk9-lauta-...-linux-x64.tar.gz` de la [última versión](https://github.com/machinebreak/mk9-lauta/releases/latest).
+2. **Descomprimilo** donde quieras, con unos 8 GB libres, y **abrí `mk9`** (doble clic, o `./mk9` en una terminal dentro
+   de la carpeta). Para tenerlo en el menú de aplicaciones, ejecutá `crear-acceso-directo.sh` una vez.
+3. La primera vez se abre el instalador, como en Windows: elegí tu `.iso` o la carpeta del juego, o arrastrala a la
+   ventana.
+
+| | Lo que necesitás |
+|---|---|
+| **Sistema** | Linux de 64 bits con glibc 2.38 o más nueva: Ubuntu 24.04, Linux Mint 22, Fedora 39, Debian 13, Arch o SteamOS 3.6 en adelante (Ubuntu 22.04 y Mint 21 no alcanzan) |
+| **Placa de video** | Vulkan 1.2 con su driver: Mesa 23 o más nuevo (AMD e Intel), o el driver de NVIDIA 535 o más nuevo |
+| **Sesión** | X11, o Wayland con XWayland |
+
+En Steam Deck: en el modo escritorio, **Steam > Agregar un juego que no es de Steam** y elegí el archivo `mk9`.
+
+> [!NOTE]
+> Es una beta. Si algo no anda (los gráficos, el mando, el sonido), contalo en el [Discord](https://discord.gg/7hbqkDmKHA) con el
+> último `mk9_*.log` de la carpeta `logs`.
 
 ## Jugar online
 
