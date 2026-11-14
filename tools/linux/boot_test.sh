@@ -10,6 +10,8 @@
 # The SDK's shared libraries are loaded from sdk/out/linux-amd64. Log: <build>/boot.log (the whole run). Exit status: 0 if the game was still running at the end (then stopped),
 # otherwise the game's own exit status.
 set -uo pipefail
+# no core dump of a test game that crashes: WSL's capture writes it to Windows' disk (GBs each); 1 = none
+ulimit -c 1
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 # mk9-lauta (2026-11-13): the native Linux build's (tools/linux/build_linux.sh), else the older out/pc
 run="${RUN:-$root/out/linux}"

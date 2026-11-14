@@ -132,7 +132,11 @@ const bool g_test_crash = [] {
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
+#include <algorithm>
 #include <atomic>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -194,13 +198,41 @@ const bool g_installed = Install();
 // and offset of each frame) to logs/crash_<date>.txt (Windows' minidump's place) and the log, then gives the signal its
 // default action, so the fault, met again at the return, ends the process. A guarded read's fault (renut's
 // guarded_read.h) is left to its own handler, before this one in the chain.
+char g_logs[1024] = "";  // <the game's folder>/logs, ready before any fault (AfterRuntime)
+
+// write() of a formatted line from a stack buffer (no allocation, no stdio stream).
+void Line(int fd, const char* format, ...) {
+  char text[512];
+  va_list args;
+  va_start(args, format);
+  const int n = std::vsnprintf(text, sizeof(text), format, args);
+  va_end(args);
+  if (n > 0) {
+    ssize_t ignored = write(fd, text, size_t(std::min(n, int(sizeof(text)) - 1)));
+    (void)ignored;
+  }
+}
+
 bool LastChance(rex::arch::Exception* ex, void*) {
   using Code = rex::arch::Exception::Code;
   if (ex->code() != Code::kAccessViolation && ex->code() != Code::kIllegalInstruction) return false;
   if (renut::gpu::detail::t_guarded_read) return false;
   const int sig = ex->code() == Code::kAccessViolation ? SIGSEGV : SIGILL;
-  static std::atomic<bool> reported{false};
-  if (!reported.exchange(true)) {
+  static thread_local bool t_reporting = false;
+  static std::atomic<int> state{0};  // 0: no fault yet, 1: a thread reports one, 2: reported
+  if (t_reporting) {  // a fault while this thread reported one: the process ends at once
+    signal(sig, SIG_DFL);
+    return true;
+  }
+  t_reporting = true;
+  int none = 0;
+  if (!state.compare_exchange_strong(none, 1)) {
+    // another thread's fault is being reported: this one waits for it (2 s at most) before it ends the process
+    for (int i = 0; i < 200 && state.load() == 1; ++i) {
+      timespec pause{0, 10 * 1000 * 1000};
+      nanosleep(&pause, nullptr);
+    }
+  } else {
     const uintptr_t pc = uintptr_t(ex->pc());
     Dl_info dl{};
     const char* name = "?";
@@ -209,36 +241,39 @@ bool LastChance(rex::arch::Exception* ex, void*) {
       name = std::strrchr(dl.dli_fname, '/') ? std::strrchr(dl.dli_fname, '/') + 1 : dl.dli_fname;
       base = reinterpret_cast<uintptr_t>(dl.dli_fbase);
     }
-    char path[1024] = "";
+    char thread[32] = "?";
+    pthread_getname_np(pthread_self(), thread, sizeof(thread));
+    char path[1200] = "";
     const std::time_t now = std::time(nullptr);
     std::tm t{};
     localtime_r(&now, &t);
-    std::snprintf(path, sizeof(path), "%s/logs/crash_%04d%02d%02d_%02d%02d%02d.txt",
-                  mk9::platform::ExeDir().c_str(), t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min,
-                  t.tm_sec);
+    std::snprintf(path, sizeof(path), "%s/crash_%04d%02d%02d_%02d%02d%02d.txt", g_logs, t.tm_year + 1900,
+                  t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
     const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd >= 0) {
-      dprintf(fd, "%s at %016lx (%s+0x%lx), fault address %016lx, thread %d\n",
-              sig == SIGSEGV ? "access violation" : "illegal instruction", (unsigned long)pc, name,
-              (unsigned long)(pc - base), (unsigned long)ex->fault_address(), int(gettid()));
+      Line(fd, "mk9-lauta %s: %s at %016lx (%s+0x%lx), fault address %016lx, thread %d (%s)\n", MK9_LAUTA_VERSION,
+           sig == SIGSEGV ? "access violation" : "illegal instruction", (unsigned long)pc, name,
+           (unsigned long)(pc - base), (unsigned long)ex->fault_address(), int(gettid()), thread);
       void* frames[64];
       const int count = backtrace(frames, 64);
       for (int i = 0; i < count; ++i) {
         Dl_info f{};
         if (dladdr(frames[i], &f) && f.dli_fname) {
           const char* module = std::strrchr(f.dli_fname, '/') ? std::strrchr(f.dli_fname, '/') + 1 : f.dli_fname;
-          dprintf(fd, "#%02d %s+0x%lx %s\n", i, module,
-                  (unsigned long)(uintptr_t(frames[i]) - uintptr_t(f.dli_fbase)), f.dli_sname ? f.dli_sname : "");
+          Line(fd, "#%02d %s+0x%lx %s\n", i, module, (unsigned long)(uintptr_t(frames[i]) - uintptr_t(f.dli_fbase)),
+               f.dli_sname ? f.dli_sname : "");
         } else {
-          dprintf(fd, "#%02d %p\n", i, frames[i]);
+          Line(fd, "#%02d %p\n", i, frames[i]);
         }
       }
       close(fd);
     }
-    REXLOG_CRITICAL("[crash] unhandled {} at {:016X} ({}+0x{:X}), fault address {:016X}, thread {}; stack in {}",
+    // the log last: a lock the fault left held stops it, not the report above
+    REXLOG_CRITICAL("[crash] unhandled {} at {:016X} ({}+0x{:X}), fault address {:016X}, thread {} ({}); stack in {}",
                     sig == SIGSEGV ? "access violation" : "illegal instruction", pc, name, pc - base,
-                    ex->fault_address(), gettid(), fd >= 0 ? path : "not written");
+                    ex->fault_address(), gettid(), thread, fd >= 0 ? path : "not written");
     rex::FlushLogging();
+    state.store(2);
   }
   signal(sig, SIG_DFL);
   return true;  // the instruction runs again: its fault now ends the process (the default action, a core dump)
@@ -253,6 +288,7 @@ void AfterRuntime() {
   std::call_once(once, [] {
     void* warm[1];
     backtrace(warm, 1);  // libgcc's unwinder loaded now, not inside a fault
+    std::snprintf(g_logs, sizeof(g_logs), "%s", (mk9::platform::ExeDir() / "logs").c_str());
     renut::gpu::detail::InstallGuardedReadHandler();
     rex::arch::ExceptionHandler::Install(&LastChance, nullptr);
   });

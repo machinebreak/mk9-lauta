@@ -27,6 +27,8 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include <rex/system.h>
+
 #include "mk9_platform.h"
 #include "mk9_sha256.h"
 #include "mk9_small_window.h"
@@ -1006,10 +1008,18 @@ void RunWindow() {
         Start(!fs::is_directory(path, ec), path);
       });
   if (!opened) {
+    const std::string why = SDL_GetError();
     std::fprintf(stderr,
                  "mk9: no se encontraron los archivos del juego y no se puede abrir la ventana del instalador (%s).\n"
                  "     Abrí el juego desde tu escritorio, o poné la carpeta game_root al lado del programa.\n",
-                 SDL_GetError());
+                 why.c_str());
+    // a message box needs no renderer: the player sees what to do, not a game that ends with nothing said
+    rex::ShowSimpleMessageBox(
+        rex::SimpleMessageBoxType::Error,
+        "No se encontraron los archivos del juego y no se pudo abrir la ventana del instalador (" + why +
+            ").\n\nPoné la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado del programa "
+            "mk9, o arrancá el juego con la variable MK9_TEST_INSTALL apuntando a tu .iso o a la carpeta que tiene "
+            "default.xex.");
   }
   if (w.worker.joinable()) {
     w.job.cancel = true;

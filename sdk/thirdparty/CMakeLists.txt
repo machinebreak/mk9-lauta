@@ -279,7 +279,14 @@ else()
         set(SDL_VULKAN OFF CACHE BOOL "" FORCE)
     endif()
 endif()
-set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+# mk9-lauta (2026-11-13): Linux has SDL's renderer (its Vulkan and software drivers): the game's own small windows
+# before its window (the first start's installer, the Kratos download: app/src/mk9_small_window_linux.cpp) draw with
+# it. The game itself still presents through its own Vulkan; Windows' build stays without it.
+if(UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH)
+    set(SDL_RENDER ON CACHE BOOL "" FORCE)
+else()
+    set(SDL_RENDER OFF CACHE BOOL "" FORCE)
+endif()
 set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
 set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
 set(SDL_POWER OFF CACHE BOOL "" FORCE)

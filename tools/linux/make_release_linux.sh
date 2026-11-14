@@ -107,7 +107,7 @@ INSTALACIÓN
 
 En Steam Deck: en el modo escritorio, Steam > Agregar un juego que no es de Steam > el archivo mk9 de esta carpeta.
 
-Requisitos: Linux de 64 bits reciente (glibc 2.39 o más nueva: Ubuntu 24.04, Linux Mint 22, Fedora 40, Debian 13, Arch,
+Requisitos: Linux de 64 bits reciente (glibc 2.38 o más nueva: Ubuntu 24.04, Linux Mint 22, Fedora 39, Debian 13, Arch,
 SteamOS 3.6 o más nuevos), una placa de video con Vulkan 1.2 y su driver (Mesa 23 o más nuevo para AMD e Intel, el
 driver propietario 535 o más nuevo para NVIDIA), 4 GB de RAM o más, y una sesión gráfica (X11, o Wayland con XWayland).
 El online usa libcurl, que viene en todas las distribuciones. La primera vez el juego elige la calidad según tu PC; se
@@ -158,8 +158,15 @@ echo "$OUT: $files files, $(du -sm "$OUT" | cut -f1) MB"
 if [ "$TAR" = 1 ]; then
   pkg=$(dirname "$OUT")/mk9-lauta-v$VERSION-linux-x64.tar.gz
   rm -f "$pkg"
-  # the files at the root, in a fixed order with fixed owners (the same archive from the same files)
-  tar --sort=name --owner=0 --group=0 --numeric-owner -C "$OUT" -czf "$pkg" .
+  # the files with their own permissions (a folder on Windows' disk, /mnt/c, says 777 for everything): staged on
+  # Linux's own file system, 644 but the programs (755); then at the root, in a fixed order with fixed owners
+  stage=$(mktemp -d)
+  cp -r "$OUT/." "$stage/"
+  find "$stage" -type d -exec chmod 755 {} +
+  find "$stage" -type f -exec chmod 644 {} +
+  chmod 755 "$stage/mk9" "$stage/crear-acceso-directo.sh" "$stage"/*.so
+  tar --sort=name --owner=0 --group=0 --numeric-owner -C "$stage" -czf "$pkg" .
+  rm -rf "$stage"
   echo "$pkg: $(du -m "$pkg" | cut -f1) MB"
   echo "sign it on the PC with the release key: python tools/release/sign_release.py ${pkg#$REPO/}"
 fi
