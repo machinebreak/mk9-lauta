@@ -59,6 +59,50 @@
 #define FLT_MIN asfloat(0xff7fffff)
 #define FLT_MAX asfloat(0x7f7fffff)
 
+#ifdef RENUT_D3D11
+// mk9-lauta (2026-11-16, docs/renderer/d3d11.md): the Direct3D 11 variant, compiled by FXC (shader model 5.0) from the
+// same text as DXIL and SPIR-V (which never define RENUT_D3D11: their code stays as it was). FXC has no select(), and()
+// or or() (HLSL 2021): ?:, && and || work per component there. texture and sampler are keywords of its effects syntax:
+// as names they are renamed.
+#define select(c, a, b) ((c) ? (a) : (b))
+#define and(a, b) ((a) && (b))
+#define or(a, b) ((a) || (b))
+#define texture renut_texture
+#define sampler renut_sampler
+#define pass renut_pass
+#define technique renut_technique
+#define string renut_string
+#define RENUT_U64_ONE 1u
+#define RENUT_VK_LOCATION(n)
+// A texture's "index" in Direct3D 11: its Xenos fetch slot (a literal in each fetch: it picks the register, which FXC
+// resolves when it compiles) and the flags the descriptor index carries above the slot in D3D12 and Vulkan (resolution
+// scale, stacked textures; from SharedConstants as there).
+struct RenutTex
+{
+    uint slot;
+    uint flags;
+};
+RenutTex renutTex(uint slot, uint flags)
+{
+    RenutTex t;
+    t.slot = slot;
+    t.flags = flags;
+    return t;
+}
+#define RENUT_TEX_INDEX RenutTex
+uint renutDescriptor(RenutTex t) { return t.slot; }
+uint renutFlags(RenutTex t) { return t.flags; }
+#define RENUT_RAW_SLOT(i) ((i).slot)
+#define RENUT_SLOT_MASKED(i) ((i).slot)
+#else
+#define RENUT_U64_ONE 1ull
+#define RENUT_VK_LOCATION(n) [[vk::location(n)]]
+#define RENUT_TEX_INDEX uint
+#define renutFlags(i) (i)
+#define RENUT_RAW_SLOT(i) (i)
+#define RENUT_SLOT_MASKED(i) ((i) & RENUT_DESCRIPTOR_INDEX_MASK)
+#endif
+
 #ifdef __spirv__
 
 // banjo-nx: 16-byte vectors of SharedConstants (render/draw.h, kSharedConstantsUboBytes / 16).
@@ -177,7 +221,9 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
 
 #define g_Booleans(i) (g_BooleansArr[(i) / 4][(i) % 4])
 #elif defined(RENUT_RECOMP)
-#define DEFINE_SHARED_CONSTANTS() \
+// (mk9-lauta, 2026-11-16: the fields as an object-like macro, which FXC takes; DEFINE_SHARED_CONSTANTS() below, outside
+// Direct3D 11, gives the same tokens as before)
+#define RENUT_SHARED_CONSTANT_FIELDS \
     uint4 g_BooleansArr[2] : packoffset(c32); \
     float2 g_ScreenOffset : packoffset(c34.x); \
     float g_AlphaThreshold : packoffset(c34.z); \
@@ -193,6 +239,9 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
     float g_ResolutionScale : packoffset(c83.z); \
     float2 g_PixelOrigin : packoffset(c84.x); \
     float2 g_DepthRemap : packoffset(c84.z);
+#ifndef RENUT_D3D11
+#define DEFINE_SHARED_CONSTANTS() RENUT_SHARED_CONSTANT_FIELDS
+#endif
 // mk9-lauta (2026-11-15): 1352, Direct3D 12 only: the depth range of the draw's viewport as clip-space z = z * x + w * y
 // (x = MaxZ - MinZ, y = MinZ; the host viewport then spans 0-1). MK9 draws with an inverted range (MinZ 1, MaxZ 0):
 // Direct3D 12 flips depth with it only where the driver says so (InvertedViewportDepthFlipsZSupported); elsewhere (WARP,
@@ -203,12 +252,18 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
 #define g_MemExportStream(i) (g_MemExportStreamsArr[i])
 #define g_BoundFetch(i) (g_BoundFetchArr[i])
 
+#ifdef RENUT_D3D11
+// Direct3D 11: no register spaces. t0-t111 are the textures' (below), u7 the last UAV slot a pixel shader has.
+ByteAddressBuffer g_VertexFetchData : register(t112);
+RWByteAddressBuffer g_MemExport : register(u7);
+#else
 // This draw's copies of the vertex fetch constants its shaders read directly (see above),
 // bound as a root SRV.
 ByteAddressBuffer g_VertexFetchData : register(t0, space5);
 
 // The draw's memexport buffer (see memExport), bound as a root UAV.
 RWByteAddressBuffer g_MemExport : register(u0, space6);
+#endif
 #else
 #define DEFINE_SHARED_CONSTANTS() \
     uint g_Booleans : packoffset(c16.x); \
@@ -217,7 +272,11 @@ RWByteAddressBuffer g_MemExport : register(u0, space6);
     float g_AlphaThreshold : packoffset(c17.x);
 #endif
 
+#ifdef RENUT_D3D11
+uint g_SpecConstants() { return 0u; }
+#else
 uint g_SpecConstants();
+#endif
 
 #endif
 
@@ -226,10 +285,19 @@ uint g_SpecConstants();
 #define BOOL_BIT(n) ((g_Booleans((n) / 32u) & (1u << ((n) & 31u))) != 0)
 #endif
 
+#ifdef RENUT_D3D11
+// Direct3D 11: a register per Xenos fetch slot, 2D at t0-t31, 3D at t32-t63, cube at t64-t95, the stacked textures'
+// arrays at t96-t111; 16 samplers a stage, by the slot's low 4 bits (pixel shaders fetch 0-15, vertex shaders 16-31).
+Texture2D<float4> g_Texture2DDescriptorHeap[32] : register(t0);
+Texture3D<float4> g_Texture3DDescriptorHeap[32] : register(t32);
+TextureCube<float4> g_TextureCubeDescriptorHeap[32] : register(t64);
+SamplerState g_SamplerDescriptorHeap[16] : register(s0);
+#else
 Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 Texture3D<float4> g_Texture3DDescriptorHeap[] : register(t0, space1);
 TextureCube<float4> g_TextureCubeDescriptorHeap[] : register(t0, space2);
 SamplerState g_SamplerDescriptorHeap[] : register(s0, space3);
+#endif
 
 uint2 getTexture2DDimensions(Texture2D<float4> texture)
 {
@@ -247,16 +315,18 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
 #define RENUT_DESCRIPTOR_INDEX_MASK 0x03FFFFFFu
 #define RENUT_RESOLUTION_SCALE_SHIFT 26u
 
-uint renutDescriptor(uint resourceDescriptorIndex)
+#ifndef RENUT_D3D11
+uint renutDescriptor(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     return resourceDescriptorIndex & RENUT_DESCRIPTOR_INDEX_MASK;
 }
+#endif
 
 // Host texels per guest texel, by the host's RenderScale code (render_scale.h): 1x, 2/3 (480p),
 // 1.5 (1080p), 2 (1440p), 3 (4K), 4, 6 and 4/3 (shadow maps and ambient occlusion rendered finer).
-float renutTextureScale(uint resourceDescriptorIndex)
+float renutTextureScale(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
-    const uint code = (resourceDescriptorIndex >> RENUT_RESOLUTION_SCALE_SHIFT) & 7u;
+    const uint code = (renutFlags(resourceDescriptorIndex) >> RENUT_RESOLUTION_SCALE_SHIFT) & 7u;
     // banjo-nx: select(), not a chain of ?: (a branch each; the code is the descriptor's, known only at run time).
     return select(code == 1u, 2.0 / 3.0,
            select(code == 2u, 1.5,
@@ -268,51 +338,51 @@ float renutTextureScale(uint resourceDescriptorIndex)
 }
 
 // A scaled texture's guest width and height from its host ones.
-uint2 renutGuestSize(uint2 hostSize, uint resourceDescriptorIndex)
+uint2 renutGuestSize(uint2 hostSize, RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     return uint2(round(float2(hostSize) / renutTextureScale(resourceDescriptorIndex)));
 }
 
-Texture2D<float4> getTexture2D(uint resourceDescriptorIndex)
+Texture2D<float4> getTexture2D(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     return g_Texture2DDescriptorHeap[renutDescriptor(resourceDescriptorIndex)];
 }
 
 // The guest size of a 2D texture.
-uint2 getTexture2DSize(uint resourceDescriptorIndex)
+uint2 getTexture2DSize(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     return renutGuestSize(getTexture2DDimensions(getTexture2D(resourceDescriptorIndex)), resourceDescriptorIndex);
 }
 
-float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float4 tfetch2D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     return getTexture2D(resourceDescriptorIndex).Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex],
         texCoord + offset / getTexture2DSize(resourceDescriptorIndex));
 }
 
-float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float2 getWeights2D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DSize(resourceDescriptorIndex) + offset - 0.5));
 }
 #else
-float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float4 tfetch2D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)];
     return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
 }
 
-float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float2 getWeights2D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)];
     return select(isnan(texCoord), 0.0, frac(texCoord * getTexture2DDimensions(texture) + offset - 0.5));
 }
 #endif
 
 #ifdef REBLUE_RECOMP
 // Bilinear-filtered shadow compare over the four neighboring depth texels.
-float shadowCmp2D(uint resourceDescriptorIndex, float2 texCoord, float ref)
+float shadowCmp2D(RENUT_TEX_INDEX resourceDescriptorIndex, float2 texCoord, float ref)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)];
     int2 dimensions = int2(getTexture2DDimensions(texture));
     float2 coord = texCoord * dimensions - 0.5;
     float2 weights = frac(coord);
@@ -368,9 +438,9 @@ float h1(float a)
     return 1.0f + w3(a) / (w2(a) + w3(a)) + 0.5f;
 }
 
-float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float4 tfetch2DBicubic(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
-    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+    Texture2D<float4> texture = g_Texture2DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)];
     SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
     uint2 dimensions = getTexture2DDimensions(texture);
     
@@ -400,9 +470,9 @@ float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex
     return r;
 }
 
-float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
+float4 tfetch3D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
 {
-    return g_Texture3DDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
+    return g_Texture3DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
 }
 
 struct CubeMapData
@@ -418,18 +488,20 @@ struct CubeMapData
     uint cubeMapIndex;
 };
 
-float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
+float4 tfetchCube(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
 {
 #ifdef RENUT_RECOMP
-    resourceDescriptorIndex = renutDescriptor(resourceDescriptorIndex);
+    const uint cubeSlot = renutDescriptor(resourceDescriptorIndex);
+#else
+    const uint cubeSlot = resourceDescriptorIndex;
 #endif
-    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
+    return g_TextureCubeDescriptorHeap[cubeSlot].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
 }
 
 #ifdef RENUT_RECOMP
 // Explicit-LOD fetches: vertex shaders have no derivatives, and setTexLOD
 // fetches in pixel shaders sample the register LOD.
-float4 tfetch2DLevel(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float lod)
+float4 tfetch2DLevel(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float lod)
 {
     return getTexture2D(resourceDescriptorIndex).SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex],
         texCoord + offset / getTexture2DSize(resourceDescriptorIndex), lod);
@@ -442,13 +514,13 @@ uint3 getTexture3DDimensions(Texture3D<float4> texture)
     return dimensions;
 }
 
-Texture3D<float4> getTexture3D(uint resourceDescriptorIndex)
+Texture3D<float4> getTexture3D(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     return g_Texture3DDescriptorHeap[renutDescriptor(resourceDescriptorIndex)];
 }
 
 // The guest size of a 3D texture (see getTexture2DSize; slices are not scaled).
-uint3 getTexture3DSize(uint resourceDescriptorIndex)
+uint3 getTexture3DSize(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     const uint3 dimensions = getTexture3DDimensions(getTexture3D(resourceDescriptorIndex));
     return uint3(renutGuestSize(dimensions.xy, resourceDescriptorIndex), dimensions.z);
@@ -460,23 +532,27 @@ uint3 getTexture3DSize(uint resourceDescriptorIndex)
 // constant's volume filter is linear. The layer is addressed with the fetch constant's Z mode,
 // which the host sampler cannot do for an array index: wrapped when the mode is wrap (N&B's
 // water scrolls Z through its animated noise and normal layers with time), else clamped.
+#ifdef RENUT_D3D11
+Texture2DArray<float4> g_Texture2DArrayDescriptorHeap[16] : register(t96);
+#else
 Texture2DArray<float4> g_Texture2DArrayDescriptorHeap[] : register(t0, space4);
+#endif
 #define RENUT_STACKED_TEXTURE 0x80000000u
 #define RENUT_STACKED_LAYER_LINEAR 0x40000000u
 #define RENUT_STACKED_LAYER_WRAP 0x20000000u
 
-bool isStackedTexture(uint resourceDescriptorIndex)
+bool isStackedTexture(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
-    return (resourceDescriptorIndex & RENUT_STACKED_TEXTURE) != 0u;
+    return (renutFlags(resourceDescriptorIndex) & RENUT_STACKED_TEXTURE) != 0u;
 }
 
-Texture2DArray<float4> getStackedTexture(uint resourceDescriptorIndex)
+Texture2DArray<float4> getStackedTexture(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
-    return g_Texture2DArrayDescriptorHeap[resourceDescriptorIndex & RENUT_DESCRIPTOR_INDEX_MASK];
+    return g_Texture2DArrayDescriptorHeap[RENUT_SLOT_MASKED(resourceDescriptorIndex)];
 }
 
 // The guest width and height (see getTexture2DSize) and the layer count.
-uint3 getStackedTextureDimensions(uint resourceDescriptorIndex)
+uint3 getStackedTextureDimensions(RENUT_TEX_INDEX resourceDescriptorIndex)
 {
     uint3 dimensions;
     getStackedTexture(resourceDescriptorIndex).GetDimensions(dimensions.x, dimensions.y, dimensions.z);
@@ -492,7 +568,7 @@ struct StackedCoords
     float weight;
 };
 
-StackedCoords getStackedCoords(uint resourceDescriptorIndex, float3 texCoord, float3 offset)
+StackedCoords getStackedCoords(RENUT_TEX_INDEX resourceDescriptorIndex, float3 texCoord, float3 offset)
 {
     uint3 dimensions = getStackedTextureDimensions(resourceDescriptorIndex);
     float2 uv = texCoord.xy + offset.xy / float2(dimensions.xy);
@@ -500,14 +576,14 @@ StackedCoords getStackedCoords(uint resourceDescriptorIndex, float3 texCoord, fl
     float first = floor(layer);
     StackedCoords coords;
     coords.weight = 0.0;
-    if ((resourceDescriptorIndex & RENUT_STACKED_LAYER_LINEAR) != 0u)
+    if ((renutFlags(resourceDescriptorIndex) & RENUT_STACKED_LAYER_LINEAR) != 0u)
     {
         first = floor(layer - 0.5);
         coords.weight = layer - 0.5 - first;
     }
     float layers = float(dimensions.z);
     float second = first + 1.0;
-    if ((resourceDescriptorIndex & RENUT_STACKED_LAYER_WRAP) != 0u)
+    if ((renutFlags(resourceDescriptorIndex) & RENUT_STACKED_LAYER_WRAP) != 0u)
     {
         first -= layers * floor(first / layers);
         second -= layers * floor(second / layers);
@@ -519,7 +595,7 @@ StackedCoords getStackedCoords(uint resourceDescriptorIndex, float3 texCoord, fl
 }
 
 // Both layers are always sampled: implicit derivatives need uniform control flow.
-float4 tfetchStacked(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
+float4 tfetchStacked(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
 {
     Texture2DArray<float4> texture = getStackedTexture(resourceDescriptorIndex);
     SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
@@ -527,7 +603,7 @@ float4 tfetchStacked(uint resourceDescriptorIndex, uint samplerDescriptorIndex, 
     return lerp(texture.Sample(samplerState, coords.coord0), texture.Sample(samplerState, coords.coord1), coords.weight);
 }
 
-float4 tfetchStackedLevel(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset, float lod)
+float4 tfetchStackedLevel(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset, float lod)
 {
     Texture2DArray<float4> texture = getStackedTexture(resourceDescriptorIndex);
     SamplerState samplerState = g_SamplerDescriptorHeap[samplerDescriptorIndex];
@@ -537,7 +613,7 @@ float4 tfetchStackedLevel(uint resourceDescriptorIndex, uint samplerDescriptorIn
 }
 
 // 3D fetches with the instruction's texel offset (Xenos applies it natively).
-float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
+float4 tfetch3D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
 {
     if (isStackedTexture(resourceDescriptorIndex))
         return tfetchStacked(resourceDescriptorIndex, samplerDescriptorIndex, texCoord, offset);
@@ -545,7 +621,7 @@ float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float
         texCoord + offset / getTexture3DSize(resourceDescriptorIndex));
 }
 
-float4 tfetch3DLevel(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset, float lod)
+float4 tfetch3DLevel(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset, float lod)
 {
     if (isStackedTexture(resourceDescriptorIndex))
         return tfetchStackedLevel(resourceDescriptorIndex, samplerDescriptorIndex, texCoord, offset, lod);
@@ -554,18 +630,18 @@ float4 tfetch3DLevel(uint resourceDescriptorIndex, uint samplerDescriptorIndex, 
 }
 
 // Fetches with denormalized coordinates (texCoordDenorm) address texels; sample with UVs instead.
-float2 texelToUV1D(uint resourceDescriptorIndex, float texCoord)
+float2 texelToUV1D(RENUT_TEX_INDEX resourceDescriptorIndex, float texCoord)
 {
     // 1D textures are uploaded as 2D with a height of 1.
     return float2(texCoord / getTexture2DSize(resourceDescriptorIndex).x, 0.5);
 }
 
-float2 texelToUV2D(uint resourceDescriptorIndex, float2 texCoord)
+float2 texelToUV2D(RENUT_TEX_INDEX resourceDescriptorIndex, float2 texCoord)
 {
     return texCoord / getTexture2DSize(resourceDescriptorIndex);
 }
 
-float3 texelToUV3D(uint resourceDescriptorIndex, float3 texCoord)
+float3 texelToUV3D(RENUT_TEX_INDEX resourceDescriptorIndex, float3 texCoord)
 {
     if (isStackedTexture(resourceDescriptorIndex))
         return texCoord / float3(getStackedTextureDimensions(resourceDescriptorIndex));
@@ -573,13 +649,13 @@ float3 texelToUV3D(uint resourceDescriptorIndex, float3 texCoord)
 }
 
 // getCompTexLOD: the LOD the hardware would select for a fetch at this coordinate (result in .x).
-float4 getCompTexLod2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+float4 getCompTexLod2D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
 {
     return float4(getTexture2D(resourceDescriptorIndex).CalculateLevelOfDetailUnclamped(g_SamplerDescriptorHeap[samplerDescriptorIndex],
         texCoord + offset / getTexture2DSize(resourceDescriptorIndex)), 0.0, 0.0, 0.0);
 }
 
-float4 getCompTexLod3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
+float4 getCompTexLod3D(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, float3 offset)
 {
     if (isStackedTexture(resourceDescriptorIndex))
     {
@@ -591,13 +667,13 @@ float4 getCompTexLod3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex
         texCoord + offset / getTexture3DSize(resourceDescriptorIndex)), 0.0, 0.0, 0.0);
 }
 
-float4 getCompTexLodCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
+float4 getCompTexLodCube(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
 {
     return float4(g_TextureCubeDescriptorHeap[renutDescriptor(resourceDescriptorIndex)].CalculateLevelOfDetailUnclamped(
         g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]), 0.0, 0.0, 0.0);
 }
 
-float4 tfetchCubeLevel(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData, float lod)
+float4 tfetchCubeLevel(RENUT_TEX_INDEX resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData, float lod)
 {
     return g_TextureCubeDescriptorHeap[renutDescriptor(resourceDescriptorIndex)].SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z], lod);
 }
@@ -1124,6 +1200,14 @@ uint memExportElement(float4 data, uint format, uint numFormat, out uint4 words)
     const bool isSigned = (numFormat & 1u) != 0;
     const bool isInteger = (numFormat & 2u) != 0;
     uint bit = 0;
+#ifdef RENUT_D3D11
+    // (mk9-lauta, 2026-11-16: FXC writes a vector's component by a run-time index only by unrolling the loop, which
+    // its break forbids; a local array takes such an index)
+    uint renutWords[4] = { 0u, 0u, 0u, 0u };
+#define RENUT_EXPORT_WORDS renutWords
+#else
+#define RENUT_EXPORT_WORDS words
+#endif
     for (uint c = 0; c < 4u; c++)
     {
         const uint width = widths[c];
@@ -1144,9 +1228,13 @@ uint memExportElement(float4 data, uint format, uint numFormat, out uint4 words)
             packed = uint(int(scaled)) & ((1u << width) - 1u);
         }
         const uint dword = bit >> 5;
-        words[dword] |= packed << (bit & 31u);
+        RENUT_EXPORT_WORDS[dword] |= packed << (bit & 31u);
         bit += width;
     }
+#undef RENUT_EXPORT_WORDS
+#ifdef RENUT_D3D11
+    words = uint4(renutWords[0], renutWords[1], renutWords[2], renutWords[3]);
+#endif
     return dwords;
 }
 
@@ -1248,7 +1336,7 @@ float4 tfetchR11G11B10(uint4 value)
 
 float4 tfetchTexcoord(uint swappedTexcoords, float4 value, uint semanticIndex)
 {
-    return (swappedTexcoords & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
+    return (swappedTexcoords & (RENUT_U64_ONE << semanticIndex)) != 0 ? value.yxwz : value;
 }
 #endif
 
@@ -1276,9 +1364,9 @@ float4 max4(float4 src0)
     return max(max(src0.x, src0.y), max(src0.z, src0.w));
 }
 
-float2 getPixelCoord(uint resourceDescriptorIndex, float2 texCoord)
+float2 getPixelCoord(RENUT_TEX_INDEX resourceDescriptorIndex, float2 texCoord)
 {
-    return getTexture2DDimensions(g_Texture2DDescriptorHeap[resourceDescriptorIndex]) * texCoord;
+    return getTexture2DDimensions(g_Texture2DDescriptorHeap[RENUT_RAW_SLOT(resourceDescriptorIndex)]) * texCoord;
 }
 
 float computeMipLevel(float2 pixelCoord)

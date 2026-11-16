@@ -1828,14 +1828,40 @@ void ShaderRecompiler::recompileConstants(const uint8_t* shaderData)
 
     out += "\n#else\n\n";
 
+    // mk9-lauta (2026-11-16, docs/renderer/d3d11.md): Direct3D 11 (FXC, RENUT_D3D11) compiles the same text: registers
+    // without spaces, each slot's texture as renutTex(<slot>, <its flags>) and its sampler as a literal. Outside
+    // RENUT_D3D11 (DXIL) the #else lines are the ones this always wrote.
+    out += "#ifdef RENUT_D3D11\n";
+    println("cbuffer {}ShaderConstants : register(b{})", shaderName, isPixelShader ? 1 : 0);
+    out += "#else\n";
     println("cbuffer {}ShaderConstants : register(b{}, space4)", shaderName, isPixelShader ? 1 : 0);
+    out += "#endif\n";
     out += "{\n";
     out += "\tfloat4 g_CArr[256] : packoffset(c0);\n";
     out += "};\n\n";
     out += "#define g_C(INDEX) select((uint)(INDEX) < 256u, g_CArr[min((uint)(INDEX), 255u)], 0.0)\n\n";
 
+    out += "#ifdef RENUT_D3D11\n";
+    out += "cbuffer SharedConstants : register(b2)\n";
+    out += "#else\n";
     out += "cbuffer SharedConstants : register(b2, space4)\n";
+    out += "#endif\n";
     out += "{\n";
+    out += "#ifdef RENUT_D3D11\n";
+    for (uint32_t r = 0; r < SAMPLER_COUNT; r++)
+    {
+        const std::string name = samplerName(r);
+        for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
+        {
+            println("\tuint {}_Texture{}Flags : packoffset(c{}.{});",
+                name, TEXTURE_DIMENSIONS[j], j * (SAMPLER_COUNT / 4) + r / 4, SWIZZLES[r % 4]);
+            println("#define {0}_Texture{1}DescriptorIndex renutTex({2}u, {0}_Texture{1}Flags)",
+                name, TEXTURE_DIMENSIONS[j], r);
+        }
+        println("#define {}_SamplerDescriptorIndex {}u", name, r & 15u);
+    }
+    out += "\tRENUT_SHARED_CONSTANT_FIELDS\n";
+    out += "#else\n";
     for (uint32_t r = 0; r < SAMPLER_COUNT; r++)
     {
         const std::string name = samplerName(r);
@@ -1848,6 +1874,7 @@ void ShaderRecompiler::recompileConstants(const uint8_t* shaderData)
             name, std::size(TEXTURE_DIMENSIONS) * (SAMPLER_COUNT / 4) + r / 4, SWIZZLES[r % 4]);
     }
     out += "\tDEFINE_SHARED_CONSTANTS();\n";
+    out += "#endif\n";
     out += "};\n\n";
 
     out += "#endif\n\n";
@@ -2110,7 +2137,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
 
     const auto shader = reinterpret_cast<const Shader*>(shaderData + shaderContainer->shaderOffset);
 
-    out += "#ifndef __spirv__\n";
+    // (mk9-lauta, 2026-11-16: not in Direct3D 11's FXC, which knows no shader attribute)
+    out += "#if !defined(__spirv__) && !defined(RENUT_D3D11)\n";
 
     if (isPixelShader)
         out += "[shader(\"pixel\")]\n";
@@ -2208,7 +2236,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
             {
                 if (usageLocation.usage == vertexElement.usage && usageLocation.usageIndex == vertexElement.usageIndex)
                 {
-                    print("[[vk::location({})]] ", usageLocation.location);
+                    // (mk9-lauta, 2026-11-16: a macro of shader_common.h, empty for Direct3D 11's FXC)
+                    print("RENUT_VK_LOCATION({}) ", usageLocation.location);
                     locatedInput = true;
                     break;
                 }
