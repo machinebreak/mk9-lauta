@@ -577,6 +577,13 @@ void ReXApp::OnClosing(ui::UIEvent& e) {
   (void)e;
   REXLOG_INFO("Window closing, shutting down...");
   shutting_down_.store(true, std::memory_order_release);
+#if REX_PLATFORM_GNU_LINUX
+  // mk9-lauta (2026-11-16): no cooperative stop of the guest threads on desktop Linux. A guest thread's own exit
+  // there is pthread_exit, which unwinds its stack: one caught in the middle of a frame (the game's render thread
+  // inside the host renderer) ended some closes with an abort (signal 6) instead of the exit below. Nothing is lost:
+  // the process ends right below either way, its threads with it.
+  REXLOG_INFO("Hard-exiting process.");
+#else
   if (runtime_ && runtime_->kernel_state()) {
     runtime_->kernel_state()->TerminateTitle();
   }
@@ -585,6 +592,7 @@ void ReXApp::OnClosing(ui::UIEvent& e) {
   // ShutdownLogging, which frees loggers a straggler may still use); the OS
   // reclaims the rest.
   REXLOG_INFO("Title terminated; hard-exiting process.");
+#endif
   rex::FlushLogging();
 #if REX_PLATFORM_SWITCH
   // std::_Exit returns the NRO to hbloader with every guest, GPU and audio
