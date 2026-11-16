@@ -49,6 +49,15 @@ REXCVAR_DEFINE_BOOL(renut_vulkan_debug_layers, false, "Nuts&Bolts/Graphics",
                     "GPU was executing to logs/vulkan_crash. Very slow. Takes effect after a "
                     "restart.")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(renut_vulkan_11, false, "Nuts&Bolts/Graphics",
+                    "Tests: a Vulkan 1.1 device that has VK_KHR_buffer_device_address is used as it is (the game's "
+                    "shaders are SPIR-V 1.5, Vulkan 1.2's, which such a driver may refuse); false: Vulkan needs a 1.2 "
+                    "device, and on Windows the renderer takes Direct3D 12 instead")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_BOOL(renut_vulkan_test_unusable, false, "Nuts&Bolts/Graphics",
+                    "Tests: the Vulkan device counts as one without buffer device addresses (a Vulkan 1.1 driver): "
+                    "what a start does on such a PC")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 namespace plume {
 std::unique_ptr<RenderInterface> CreateVulkanInterface();
@@ -328,6 +337,33 @@ std::unique_ptr<plume::RenderInterface> CreateRenderInterface() {
   if (render_interface)
     RouteVulkanPipelineCreation();
   return render_interface;
+}
+
+// mk9-lauta (2026-11-15): what this renderer needs of a Vulkan device: buffer device addresses (the game's shaders read
+// their constants and indexed vertex data by address: vk::RawBufferLoad) and Vulkan 1.2 (their SPIR-V is 1.5). A 2018
+// driver (Vulkan 1.1, no buffer device addresses: a Radeon HD 7800's 18.10, an Intel HD 620's older ones) crashed the
+// game at its first upload ring (a call to address 0) instead of going on with Direct3D 12.
+bool VulkanCanDraw(plume::RenderDevice *device, std::string *why) {
+  if (!device)
+    return false;
+  const uint32_t api = device->getDescription().apiVersion;
+  const uint32_t major = VK_API_VERSION_MAJOR(api), minor = VK_API_VERSION_MINOR(api);
+  const bool vulkan12 = api == 0 || major > 1 || minor >= 2;
+  // tests: a driver without buffer device addresses, as a 2018 one (the start goes on with Direct3D 12 on Windows)
+  static const bool test_unusable = REXCVAR_GET(renut_vulkan_test_unusable);
+  if (!device->getCapabilities().bufferDeviceAddress || test_unusable) {
+    if (why)
+      *why = "Vulkan " + std::to_string(major) + "." + std::to_string(minor) +
+             " without buffer device addresses (VK_KHR_buffer_device_address)";
+    return false;
+  }
+  if (!vulkan12 && !REXCVAR_GET(renut_vulkan_11)) {
+    if (why)
+      *why = "Vulkan " + std::to_string(major) + "." + std::to_string(minor) +
+             " (the game's shaders need Vulkan 1.2: renut_vulkan_11 tries it anyway)";
+    return false;
+  }
+  return true;
 }
 
 plume::RenderBufferFlags AddressableBufferFlags() {

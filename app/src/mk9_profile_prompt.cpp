@@ -27,6 +27,11 @@
 REXCVAR_DEFINE_BOOL(mk9_profile_prompt_auto, true, "MK9",
                     "A player with no gamer profile (every controller but the first, the online guest) continues "
                     "without saving at once instead of getting the game's sign-in question");
+// mk9-lauta (2026-11-15): read by mk9_app.h (OnPostInitLogging), which sets the SDK's xam_signin_every_user from it.
+REXCVAR_DEFINE_BOOL(mk9_profile_every_controller, true, "MK9",
+                    "Every controller plays with this PC's profile: the game asks none to sign in and saves to it "
+                    "whichever controller plays (not in an online session's game; false: only the first, as before 1.2)")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace {
 

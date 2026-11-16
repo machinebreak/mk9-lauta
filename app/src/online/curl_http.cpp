@@ -309,6 +309,11 @@ std::shared_ptr<WebSocket> WebSocket::Connect(const std::string& url, const Http
   o.headers.clear();
   Setup(c, h, connect_url, o, &resolve, &headers);
   c.easy_setopt(h, CURLOPT_TIMEOUT_MS, 0L);  // the link lasts; the handshake below has its own limit
+  // mk9-lauta (2026-11-15): HTTP/1.1 only, the upgrade below being HTTP/1.1's. A libcurl that offers h2 by ALPN on a
+  // CONNECT_ONLY link (8.2x: Arch, CachyOS) put its HTTP/2 filter on it when the lobby's server took h2, and then
+  // curl_easy_recv crashed inside nghttp2 (the Linux players' crash_*.txt: nghttp2_session_mem_recv2 under the lobby's
+  // thread, a few seconds after every start that had an online name)
+  c.easy_setopt(h, CURLOPT_HTTP_VERSION, long(CURL_HTTP_VERSION_1_1));
   c.easy_setopt(h, CURLOPT_CONNECT_ONLY, 1L);
   const CURLcode code = c.easy_perform(h);
   if (resolve) c.slist_free_all(resolve);

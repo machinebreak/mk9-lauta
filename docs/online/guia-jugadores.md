@@ -197,13 +197,23 @@ Kratos (el invitado de la versión de PS3) viene solo, con el port de la comunid
 ([eLGatoRDV/mk9-kratos-xbox360](https://github.com/eLGatoRDV/mk9-kratos-xbox360)): modelo, combos, especiales, X-Ray,
 las dos Fatalities, Babality, los dos trajes y su sonido. No tenés que hacer nada:
 
-1. La primera vez que abrís el juego se descarga (unos 96 MB, mientras jugás). Abajo a la derecha del menú principal
-   dice **"Descargando a Kratos…"** y después **"Kratos listo"**.
-2. La próxima vez que abrís el juego se instala solo (un par de segundos) y Kratos aparece en la selección de
-   personajes: en la fila de los extras (abajo a la izquierda, al lado de Freddy).
+1. La primera vez que abrís el juego aparece una ventana que lo descarga (unos 96 MB) y, cuando termina, se instala
+   solo (un par de segundos) y el juego arranca con él: Kratos ya está en la selección de personajes, en la fila de
+   los extras (abajo a la izquierda, al lado de Freddy). Mientras se descarga no se puede jugar sin él: así todos
+   los que juegan online tienen lo mismo.
+2. Si cerrás esa ventana, se cierra el juego y la descarga sigue desde donde quedó la próxima vez que lo abras. Si
+   no hay conexión, el juego arranca sin él, lo baja mientras jugás (abajo a la derecha del menú principal dice
+   **"Descargando a Kratos…"** y después **"Kratos listo"**) y aparece la próxima vez que abras el juego.
 
 Para jugar online, los dos tienen que tener a Kratos (o ninguno de los dos): si a tu rival todavía no le terminó la
 descarga, la sala lo avisa y la pelea no arranca hasta que reinicie el juego. Lo mismo para mirar una partida.
+
+## Partidas guardadas
+
+No hace falta ningún perfil ni cuenta de Xbox: el juego guarda solo tu progreso (Historia, Torre de los retos, la
+Kripta, tus opciones), juegues con el teclado o con cualquier mando, y nunca te pide "iniciar sesión". Las partidas
+quedan en tu PC (en Windows, en Documentos\mk9). En las sesiones online no se guarda nada de la pelea: tu partida
+queda como estaba.
 
 ## Actualizaciones
 
@@ -229,6 +239,9 @@ dos archivos se ve en qué cuadro se separaron los juegos.
   AMD Ryzen. Los integrados Intel HD 2500, 4000, 4400, 4600, 5000, 5500 y 6000 (Intel de 2.ª a 5.ª generación, como el
   i3-4160) no alcanzan: ahí el juego avisa al abrir, y hace falta una placa aparte (sirve una usada barata, como una
   GTX 750 Ti, una GT 1030 o una RX 550).
+- **Drivers viejos**: si el driver de tu placa sólo tiene Vulkan 1.1 (los de 2018 y 2019, que algunos dejan porque
+  rinden mejor), el juego lo detecta al abrir y usa DirectX 12 solo, sin cerrarse; te avisa arriba de la pantalla. Si
+  después actualizás el driver, Vulkan se vuelve a elegir en **F2 > Pantalla e idioma > API gráfica**.
 - Elegí la calidad **Muy baja** o **Baja** y activá **Mostrar FPS** para ver cómo va.
 - **Resolución dinámica**: si la PC no llega a 60 (un X-Ray, muchos efectos), baja la resolución interna un escalón
   (1080p, 720p, 480p) y la vuelve a subir cuando sobra; nunca pasa de la que elegiste. Viene activada en Alta y

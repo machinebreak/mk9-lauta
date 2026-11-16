@@ -476,6 +476,10 @@ namespace plume {
         void notePipelineCreation(VkResult result, const VkPipelineCreationFeedback &feedback, bool reported);
 #   endif
         bool pipelineRobustness = false;  // banjo-nx: VK_EXT_pipeline_robustness (SetVulkanPipelineRobustnessOff)
+        // mk9-lauta (2026-11-15): this device's vkGetBufferDeviceAddress: the core one on a Vulkan 1.2 device, the
+        // KHR extension's on a 1.1 one (the core name is null there, or a loader trampoline into nothing). Null
+        // without buffer device addresses.
+        PFN_vkGetBufferDeviceAddress getBufferDeviceAddress = nullptr;
         VmaAllocator allocator = VK_NULL_HANDLE;
         uint32_t queueFamilyIndices[3] = {};
         std::vector<VulkanQueueFamily> queueFamilies;

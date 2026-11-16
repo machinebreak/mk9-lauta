@@ -10,6 +10,7 @@
 #include "mk9_button_icons.h"  // mk9-nx: the Switch button icons (app/src)
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstring>
@@ -163,6 +164,35 @@ bool AllSigned(const TextureFetch &fetch) {
       return false;
   }
   return true;
+}
+
+// mk9-lauta (2026-11-15): the Xenos's gamma sign (3) on a texture's colour components: the fetch returns them
+// linearised (the console's piecewise curve of gamma 2.2), as an sRGB format does on the host. Renut only knew the
+// signed one, so these came raw, brighter: the Desert's sandstorm (its fog sheet, PS A5A86E249D16F0B7, scales its alpha
+// by a DXT1 noise texture fetched with gamma RGB) covered the whole stage and the fighters, where the console (and the
+// emulated renderer, sa2_renderer = xenos) shows a light haze with the dunes behind it. Off: as before.
+REXCVAR_DEFINE_BOOL(mk9_texture_gamma, true, "MK9/Renderer",
+                    "Textures the game fetches with the gamma sign on red, green and blue are read linearised (an sRGB "
+                    "host format: DXT1/3/5), as the Xbox 360 reads them (false: the raw values, as before 1.2)");
+
+bool GammaRgb(const TextureFetch &fetch) {
+  return fetch.Sign(0) == TextureSign::Gamma && fetch.Sign(1) == TextureSign::Gamma &&
+         fetch.Sign(2) == TextureSign::Gamma;
+}
+
+// The host format that reads 'host' linearised, or 'host' when it has none.
+plume::RenderFormat GammaFormat(plume::RenderFormat host) {
+  using F = plume::RenderFormat;
+  switch (host) {
+  case F::BC1_UNORM:
+    return F::BC1_UNORM_SRGB;
+  case F::BC2_UNORM:
+    return F::BC2_UNORM_SRGB;
+  case F::BC3_UNORM:
+    return F::BC3_UNORM_SRGB;
+  default:
+    return host;
+  }
 }
 
 plume::RenderSwizzle ViewSwizzle(uint32_t component) {
@@ -503,7 +533,9 @@ bool Upload(HostTexture &t, const TextureFetch &fetch, bool defer_read) {
                         (!dump_max || (w <= dump_max && h <= dump_max));
       // mk9-nx (2026-10-26, mk9_button_icons, from usf4-nx): a texture that may be one of the Xbox button atlases is
       // read now and drawn over before the copy. plume's BC3_UNORM (61): the layout they come in.
-      const bool icon = level == 0 && !is_3d_data && u32(t.info.host) == 61 && mk9::button_icons::Candidate(w, h);
+      // (mk9-lauta 2026-11-15: or its sRGB twin, 62, when the game fetches the atlas with gamma: mk9_texture_gamma)
+      const bool icon = level == 0 && !is_3d_data && (u32(t.info.host) == 61 || u32(t.info.host) == 62) &&
+                        mk9::button_icons::Candidate(w, h);
       if (defer_read && !dump && !icon)
         g_pending_fills.push_back({t.info, fetch, src, blocks_w, blocks_h, d, dst, row_pitch, slice_pitch});
       else
@@ -583,6 +615,20 @@ bool Create(HostTexture &t, const TextureFetch &fetch, bool render_target,
   t.dimension = HostDimension(fetch);
   t.guest_format = fetch.Format();
   t.info = GetTextureFormatInfo(fetch.Format(), AllSigned(fetch));
+  // mk9-lauta (2026-11-15): gamma RGB, read linearised (mk9_texture_gamma); the fetch's sign bits are in the cache's
+  // key, so the same memory fetched without gamma has a host texture of its own
+  static const bool gamma = REXCVAR_GET(mk9_texture_gamma);
+  if (gamma && !render_target && GammaRgb(fetch)) {
+    const plume::RenderFormat linear = GammaFormat(t.info.host);
+    // the first of each guest format, in the log: with an sRGB host format or still raw (a format with none)
+    static std::atomic<uint64_t> seen{0};
+    const uint64_t bit = uint64_t(1) << (u32(fetch.Format()) & 63);
+    if (!(seen.fetch_or(bit) & bit)) {
+      RGPU_INFO("[gamma] guest format {} fetched with gamma RGB: {}", u32(fetch.Format()),
+                linear != t.info.host ? "read linearised (sRGB host format)" : "no sRGB host format, read raw");
+    }
+    t.info.host = linear;
+  }
   t.width = width;
   t.height = height;
   t.depth = depth;

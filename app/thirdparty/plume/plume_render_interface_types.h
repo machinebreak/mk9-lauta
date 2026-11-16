@@ -1786,6 +1786,9 @@ namespace plume {
         RenderDeviceVendor vendor = RenderDeviceVendor::UNKNOWN;
         uint64_t driverVersion = 0;
         uint64_t dedicatedVideoMemory = 0;
+        // mk9-lauta (2026-11-15): Vulkan: the device's own API version (VkPhysicalDeviceProperties::apiVersion), which
+        // can be below the instance's (a Vulkan 1.1 driver under a newer loader); 0 on the other back ends.
+        uint32_t apiVersion = 0;
     };
 
     struct RenderDeviceCapabilities {

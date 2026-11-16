@@ -51,6 +51,10 @@ plume::RenderShaderFormat HostShaderFormat();
 // Creates the plume interface for the active backend, or nullptr.
 std::unique_ptr<plume::RenderInterface> CreateRenderInterface();
 
+// mk9-lauta (2026-11-15): a Vulkan device this renderer can draw with (buffer device addresses, Vulkan 1.2); why: the
+// reason when it cannot.
+bool VulkanCanDraw(plume::RenderDevice *device, std::string *why);
+
 // Buffer flags for how the renderer uses a buffer, per backend. plume's
 // Vulkan buffers take their usage from particular flags: a device address
 // (vk::RawBufferLoad/Store in the shaders) only with CONSTANT, a storage

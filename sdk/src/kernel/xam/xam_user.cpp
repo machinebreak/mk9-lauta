@@ -29,12 +29,25 @@
 #include <rex/system/xtypes.h>
 
 REXCVAR_DEFINE_UINT32(user_language, 1, "Kernel", "User's language ID");
+// mk9-lauta (2026-11-15): one profile for every controller. The SDK signs in one profile, user 0's; a game driven
+// by another controller (a second pad, one a mapper doubles, the keyboard on player 2) asked that user to sign in
+// to save, and its "sign in" (XamShowSigninUI, which shows nothing here) sent the game back to its main menu. With
+// this, users 1-3 are signed in too, with that same profile (its XUID, name and settings): no controller is asked to
+// sign in, and every one saves to the same profile. The app leaves it off in an online session's game.
+REXCVAR_DEFINE_BOOL(xam_signin_every_user, false, "Kernel",
+                    "Users 1-3 are signed in too, with user 0's profile: no controller is asked to sign in, and "
+                    "every one saves to that profile");
 
 namespace rex {
 namespace kernel {
 namespace xam {
 using namespace rex::system;
 using namespace rex::system::xam;
+
+// The users signed in: user 0, and with xam_signin_every_user users 1-3 as well (the same profile).
+static bool SignedInUser(uint32_t user_index) {
+  return user_index == 0 || (user_index < 4 && REXCVAR_GET(xam_signin_every_user));
+}
 
 i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
   assert_true(type_mask == 1 || type_mask == 2 || type_mask == 3 || type_mask == 4 ||
@@ -45,7 +58,7 @@ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
   uint32_t result = X_E_NO_SUCH_USER;
   uint64_t xuid = 0;
   if (user_index < 4) {
-    if (user_index == 0) {
+    if (SignedInUser(user_index)) {
       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
       auto type = user_profile->type() & type_mask;
       if (type & (2 | 4)) {
@@ -68,7 +81,7 @@ i32 XamUserGetXUID_entry(u32 user_index, u32 type_mask, mapped_u64 xuid_ptr) {
 u32 XamUserGetSigninState_entry(u32 user_index) {
   uint32_t signin_state = 0;
   if (user_index < 4) {
-    if (user_index == 0) {
+    if (SignedInUser(user_index)) {
       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
       signin_state = user_profile->signin_state();
     }
@@ -92,7 +105,7 @@ i32 XamUserGetSigninInfo_entry(u32 user_index, u32 flags, ppc_ptr_t<X_USER_SIGNI
   }
 
   std::memset(info, 0, sizeof(X_USER_SIGNIN_INFO));
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_E_NO_SUCH_USER;
   }
 
@@ -108,7 +121,7 @@ u32 XamUserGetName_entry(u32 user_index, mapped_string buffer, u32 buffer_len) {
     return X_E_INVALIDARG;
   }
 
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_E_NO_SUCH_USER;
   }
 
@@ -123,7 +136,7 @@ u32 XamUserGetGamerTag_entry(u32 user_index, mapped_wstring buffer, u32 buffer_l
     return X_E_INVALIDARG;
   }
 
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_E_NO_SUCH_USER;
   }
 
@@ -211,7 +224,7 @@ uint32_t XamUserReadProfileSettingsEx(uint32_t title_id, uint32_t user_index, ui
   // Title ID = 0 means us.
   // 0xfffe07d1 = profile?
 
-  if (!xuids && user_index) {
+  if (!xuids && !SignedInUser(user_index)) {
     // Only support user 0.
     if (overlapped) {
       REX_KERNEL_STATE()->CompleteOverlappedImmediate(
@@ -308,7 +321,7 @@ u32 XamUserWriteProfileSettings_entry(u32 title_id, u32 user_index, u32 setting_
     return X_ERROR_INVALID_PARAMETER;
   }
 
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     // Only support user 0.
     if (overlapped) {
       REX_KERNEL_STATE()->CompleteOverlappedImmediate(overlapped.guest_address(),
@@ -377,7 +390,7 @@ u32 XamUserCheckPrivilege_entry(u32 user_index, u32 mask, mapped_u32 out_value) 
       return X_ERROR_INVALID_PARAMETER;
     }
 
-    if (user_index) {
+    if (!SignedInUser(user_index)) {
       return X_ERROR_NO_SUCH_USER;
     }
   }
@@ -388,7 +401,7 @@ u32 XamUserCheckPrivilege_entry(u32 user_index, u32 mask, mapped_u32 out_value) 
 }
 
 u32 XamUserContentRestrictionGetFlags_entry(u32 user_index, mapped_u32 out_flags) {
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_ERROR_NO_SUCH_USER;
   }
 
@@ -399,7 +412,7 @@ u32 XamUserContentRestrictionGetFlags_entry(u32 user_index, mapped_u32 out_flags
 
 u32 XamUserContentRestrictionGetRating_entry(u32 user_index, u32 unk1, mapped_u32 out_unk2,
                                              mapped_u32 out_unk3) {
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_ERROR_NO_SUCH_USER;
   }
 
@@ -430,7 +443,7 @@ u32 XamUserGetMembershipTier_entry(u32 user_index) {
   if (user_index >= 4) {
     return X_ERROR_INVALID_PARAMETER;
   }
-  if (user_index) {
+  if (!SignedInUser(user_index)) {
     return X_ERROR_NO_SUCH_USER;
   }
   return 6 /* 6 appears to be Gold */;
@@ -444,7 +457,7 @@ u32 XamUserAreUsersFriends_entry(u32 user_index, u32 unk1, u32 unk2, mapped_u32 
   if (user_index >= 4) {
     result = X_ERROR_INVALID_PARAMETER;
   } else {
-    if (user_index == 0) {
+    if (SignedInUser(user_index)) {
       const auto& user_profile = REX_KERNEL_STATE()->user_profile();
       if (user_profile->signin_state() == 0) {
         result = X_ERROR_NOT_LOGGED_ON;

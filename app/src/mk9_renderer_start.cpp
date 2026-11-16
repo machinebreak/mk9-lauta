@@ -165,6 +165,20 @@ void DeviceReady(const char* api) {
   Write(g_api, g_failed, "pending", g_ok_api);
 }
 
+void VulkanUnusable(const std::string& why) {
+  REXLOG_WARN("[renderer] Vulkan cannot draw this game on this PC ({}): Direct3D 12 from now on (renut_gpu_backend, "
+              "saved in mk9.toml)",
+              why);
+  rex::cvar::SetFlagByName("renut_gpu_backend", "d3d12");
+  options_ui::SaveToConfig({{"renut_gpu_backend", "d3d12"}});
+  std::lock_guard lock(g_mutex);
+  g_failed = 0;  // a start of another API: no failures of its own yet
+  g_notice =
+      "El driver de tu placa de video no tiene lo que el juego necesita de Vulkan (Vulkan 1.2 con direcciones de "
+      "buffer): ahora usa DirectX 12. Si actualizás el driver, Vulkan se puede volver a elegir en F2 > Pantalla e "
+      "idioma > API gráfica.";
+}
+
 void FramesDone() {
   if (g_presented.load(std::memory_order_relaxed) || g_presented.exchange(true)) return;
   std::lock_guard lock(g_mutex);

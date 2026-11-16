@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -58,6 +59,9 @@ REXCVAR_DEFINE_STRING(mk9_options_tab, "", "MK9",
                       "the first");
 REXCVAR_DEFINE_STRING(mk9_options_test_preset, "", "MK9",
                       "Tests: this quality preset (Baja, Consola, Alta, Ultra) is chosen at start, as with its button");
+REXCVAR_DEFINE_DOUBLE(mk9_options_test_cycle_s, 0.0, "MK9",
+                      "Tests: every this many seconds the next choice of the next option of F2 (Gráficos, then Pantalla "
+                      "e idioma, then the presets) is taken, as a player's click would, round after round (0: off)");
 
 namespace mk9::options_ui {
 namespace {
@@ -360,6 +364,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         if (REXCVAR_GET(mk9_options_test_preset) == p.label) Apply(p);
       }
     }
+    TestCycle();
     if (ImGui::IsKeyPressed(ImGuiKey_F2, false) || overlay_input::ToggleOptionsPressed()) {
       visible_ = !visible_;
       if (visible_) ImGui::SetNextWindowFocus();  // over the online screens if they are open too
@@ -450,6 +455,54 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
  private:
+  // mk9-lauta (2026-11-15): tests (mk9_options_test_cycle_s): F2's choices one after another, each through Set as its
+  // click goes: every choice of every graphics and display option (not the API nor the language, which only write
+  // mk9.toml for the next start), then each quality preset, round after round. The Linux players' "it crashes when I
+  // change a setting" is this, unattended.
+  void TestCycle() {
+    const double every = REXCVAR_GET(mk9_options_test_cycle_s);
+    if (!(every > 0.0)) return;
+    const auto now = std::chrono::steady_clock::now();
+    const auto step = std::chrono::milliseconds(int64_t(every * 1000.0));
+    if (test_next_ == std::chrono::steady_clock::time_point{}) test_next_ = now + step;
+    if (now < test_next_) return;
+    test_next_ = now + step;
+    std::vector<const Option*> options;
+    for (const Option& o : GraphicsOptions()) options.push_back(&o);
+    for (const Option& o : DisplayOptions()) {
+      if (std::string_view(o.key) != "renut_gpu_backend" && std::string_view(o.key) != "user_language") {
+        options.push_back(&o);
+      }
+    }
+    const size_t presets = Presets().size();
+    const size_t total = options.size() + presets;
+    for (size_t tries = 0; tries < total; ++tries) {
+      const size_t at = test_option_ % total;
+      if (at >= options.size()) {  // a preset's button
+        const Preset& p = Presets()[at - options.size()];
+        ++test_option_;
+        test_choice_ = 0;
+        REXLOG_INFO("[options] test {}: the preset \"{}\"", ++test_steps_, p.label);
+        Apply(p);
+        return;
+      }
+      const Option& o = *options[at];
+      if (!rex::cvar::GetFlagInfo(o.key) || test_choice_ >= o.choices.size()) {
+        ++test_option_;
+        test_choice_ = 0;
+        continue;
+      }
+      const Choice& c = o.choices[test_choice_++];
+      if (test_choice_ >= o.choices.size()) {
+        ++test_option_;
+        test_choice_ = 0;
+      }
+      REXLOG_INFO("[options] test {}: {} = {}", ++test_steps_, o.key, c.value);
+      Set({{o.key, c.value}}, o.label);
+      return;
+    }
+  }
+
   // The monitor the game opens on (the SDK's monitor: 1-based in SDL's order, 0 the system's default).
   void DrawMonitor() {
     if (!rex::cvar::GetFlagInfo("monitor")) return;
@@ -817,6 +870,9 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   }
 
   bool visible_ = REXCVAR_GET(mk9_options_show), note_ok_ = true;
+  // mk9_options_test_cycle_s: the next test step's time, option and choice
+  std::chrono::steady_clock::time_point test_next_{};
+  size_t test_option_ = 0, test_choice_ = 0, test_steps_ = 0;
   int capturing_ = -1;  // the action waiting for its key (Controles), -1: none
   bool first_tabs_ = true;
   bool select_tab_ = false;            // LB / RB asked for tab_

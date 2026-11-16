@@ -349,9 +349,12 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     // mk9-lauta (2026-11-11, diagnosis): a strict Direct3D 12 (WARP) draws the fighters' shadows but not the fighters
     // (a player's report: broken characters on Direct3D 12 on a low-end PC, fine on Vulkan). Equal and less-equal
     // depth tests that always pass say whether the depth of the passes after the depth-only one is the cause.
+    // mk9-lauta (2026-11-15): and greater-equal, the one MK9's inverted depth uses (the passes over a depth-only one
+    // test GEQUAL; the diagnosis never reached them before)
     if (REXCVAR_GET(renut_diag_depth_pass) &&
         (desc.depthFunction == plume::RenderComparisonFunction::EQUAL ||
-         desc.depthFunction == plume::RenderComparisonFunction::LESS_EQUAL)) {
+         desc.depthFunction == plume::RenderComparisonFunction::LESS_EQUAL ||
+         desc.depthFunction == plume::RenderComparisonFunction::GREATER_EQUAL)) {
       desc.depthFunction = plume::RenderComparisonFunction::ALWAYS;
     }
     desc.stencilEnabled = dc & 1;

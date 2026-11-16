@@ -189,9 +189,18 @@ otro lado, no es oficial.
 </details>
 
 <details>
+<summary><b>¿Necesito un perfil o una cuenta de Xbox para guardar?</b></summary>
+
+No. El juego guarda solo tu progreso (Historia, Torre de los retos, la Kripta, tus opciones), juegues con el
+teclado o con cualquier mando, y nunca pide "iniciar sesión".
+
+</details>
+
+<details>
 <summary><b>¿Hay versión para celular, Linux o Mac?</b></summary>
 
-Por ahora, sólo Windows. Las novedades se anuncian en el Discord y en las redes de Lauta.
+Para Linux sí, en beta (ver [Linux (beta)](#linux-beta)). Para celular y Mac, por ahora no. Las novedades se
+anuncian en el Discord y en las redes de Lauta.
 
 </details>
 

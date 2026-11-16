@@ -908,9 +908,33 @@ bool Video::CreateHostDevice() {
   s.render_interface = CreateRenderInterface();
   if (s.render_interface)
     s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
+  // mk9-lauta (2026-11-15): a Vulkan device this renderer cannot draw with (a Vulkan 1.1 driver without buffer device
+  // addresses: the game crashed at its first upload ring) is no device
+  std::string vulkan_why;
+  const bool vulkan_unusable = s.device && IsVulkan() && !VulkanCanDraw(s.device.get(), &vulkan_why);
+  if (vulkan_unusable) {
+    RGPU_ERROR("Vulkan on {}: {}", s.device->getDescription().name, vulkan_why);
+    s.device.reset();
+  }
 #if defined(_WIN32)
+  // mk9-lauta (2026-11-15): Vulkan chosen (by the player, or by mk9_hardware for this PC) and not usable here: Direct3D
+  // 12 instead, kept for the next starts (mk9_renderer_start.h VulkanUnusable)
+  const bool tried_vulkan = IsVulkan();
+  if (!s.device && IsVulkan()) {
+    RGPU_WARN("Vulkan {}: trying D3D12", vulkan_unusable          ? "cannot draw this game on this device"
+                                         : s.render_interface ? "device creation failed"
+                                                              : "is not available");
+    s.device.reset();
+    s.render_interface.reset();
+    ForceBackend(Backend::D3D12);
+    s.render_interface = CreateRenderInterface();
+    if (s.render_interface)
+      s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
+    if (s.device)
+      mk9::renderer_start::VulkanUnusable(vulkan_unusable ? vulkan_why : "no Vulkan device");
+  }
   // mk9-nx (2026-11-08): no Direct3D 12 on this GPU or driver: Vulkan instead (renut_gpu_backend stays as it is)
-  if (!s.device && !IsVulkan()) {
+  if (!s.device && !IsVulkan() && !tried_vulkan) {
     RGPU_WARN("D3D12 {}: trying Vulkan", s.render_interface ? "device creation failed" : "is not available");
     s.device.reset();
     s.render_interface.reset();
@@ -918,6 +942,10 @@ bool Video::CreateHostDevice() {
     s.render_interface = CreateRenderInterface();
     if (s.render_interface)
       s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
+    if (s.device && !VulkanCanDraw(s.device.get(), &vulkan_why)) {
+      RGPU_ERROR("Vulkan on {}: {}", s.device->getDescription().name, vulkan_why);
+      s.device.reset();
+    }
   }
 #endif
   if (!s.render_interface || !s.device) {
@@ -934,6 +962,17 @@ bool Video::CreateHostDevice() {
         "como el i3-4160) no alcanzan: ahí hace falta una placa de video aparte (sirve una usada barata, como una "
         "GTX 750 Ti, una GT 1030 o una RX 550).\n\nSi la tuya es compatible, actualizá su driver desde la página "
         "de NVIDIA, AMD o Intel y volvé a abrir el juego.");
+    std::_Exit(1);
+#elif defined(__linux__) && !defined(__SWITCH__)
+    // mk9-lauta (2026-11-15): Linux: Vulkan is the only API there; say what is missing instead of a crash or a black
+    // window
+    rex::ShowSimpleMessageBox(
+        rex::SimpleMessageBoxType::Error,
+        fmt::format("Tu placa de video no pudo arrancar el juego{}: hace falta Vulkan 1.2 con su driver (Mesa 23 o más "
+                    "nuevo en AMD e Intel, el driver de NVIDIA 535 o más nuevo).\n\nActualizá el driver (en la mayoría "
+                    "de las distribuciones, actualizando el sistema) y volvé a abrir el juego. El detalle quedó en la "
+                    "carpeta logs.",
+                    vulkan_why.empty() ? std::string() : " (" + vulkan_why + ")"));
     std::_Exit(1);
 #endif
     return false;

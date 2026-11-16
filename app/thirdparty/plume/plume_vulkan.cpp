@@ -1238,7 +1238,9 @@ namespace plume {
         info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
         info.pNext = nullptr;
         info.buffer = vk;
-        return vkGetBufferDeviceAddress(device->vk, &info);
+        // mk9-lauta (2026-11-15): the device's own function (VulkanDevice::getBufferDeviceAddress); 0 without one
+        // (the renderer does not start on such a device: renut_gpu's VulkanCanDraw)
+        return device->getBufferDeviceAddress != nullptr ? device->getBufferDeviceAddress(device->vk, &info) : 0;
     }
 
     // VulkanBufferFormattedView
@@ -4495,6 +4497,7 @@ namespace plume {
                 description.type = toDeviceType(deviceProperties.deviceType);
                 description.driverVersion = deviceProperties.driverVersion;
                 description.vendor = RenderDeviceVendor(deviceProperties.vendorID);
+                description.apiVersion = deviceProperties.apiVersion;
                 currentDeviceTypeScore = deviceTypeScore;
 
                 if (preferUserChoice) {
@@ -4815,6 +4818,29 @@ namespace plume {
             }
         }
 
+        // mk9-lauta (2026-11-15): the device's own API version decides which name vkGetBufferDeviceAddress has: a
+        // Vulkan 1.1 driver (a 2018 one under a newer loader) has only the KHR extension's, and the core name came
+        // back null there (a Radeon HD 7800's driver 18.10: the first upload ring's address was a call to address 0).
+        const uint32_t deviceApiVersion = physicalDeviceProperties.apiVersion;
+        const bool deviceIsVulkan12 = VK_API_VERSION_MAJOR(deviceApiVersion) > 1 || VK_API_VERSION_MINOR(deviceApiVersion) >= 2;
+        bool bufferDeviceAddressUsable = bufferDeviceAddressSupported;
+        if (bufferDeviceAddressUsable) {
+            const char *names[2] = { "vkGetBufferDeviceAddress", "vkGetBufferDeviceAddressKHR" };
+            if (!deviceIsVulkan12) {
+                std::swap(names[0], names[1]);
+            }
+            for (const char *name : names) {
+                getBufferDeviceAddress = reinterpret_cast<PFN_vkGetBufferDeviceAddress>(vkGetDeviceProcAddr(vk, name));
+                if (getBufferDeviceAddress != nullptr) {
+                    break;
+                }
+            }
+            if (getBufferDeviceAddress == nullptr) {
+                fprintf(stderr, "Buffer device addresses: the feature is there but vkGetBufferDeviceAddress is not.\n");
+                bufferDeviceAddressUsable = false;
+            }
+        }
+
         VmaVulkanFunctions vmaFunctions = {};
         vmaFunctions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
         vmaFunctions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
@@ -4837,7 +4863,7 @@ namespace plume {
         vmaFunctions.vkCmdCopyBuffer = vkCmdCopyBuffer;
 
         VmaAllocatorCreateInfo allocatorInfo = {};
-        allocatorInfo.flags |= bufferDeviceAddressSupported ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0;
+        allocatorInfo.flags |= bufferDeviceAddressUsable ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0;
         // banjo-nx (2026-10-17): with VK_EXT_memory_budget vmaGetHeapBudgets gives the driver's own budget and usage
         // (every allocation's real footprint, the driver's own included) instead of VMA's estimate, 80 % of each heap
         // and VMA's allocations only. On the Switch NVK's heap is the console's memory, far more than the budget the
@@ -4848,7 +4874,10 @@ namespace plume {
         allocatorInfo.device = vk;
         allocatorInfo.pVulkanFunctions = &vmaFunctions;
         allocatorInfo.instance = renderInterface->instance;
-        allocatorInfo.vulkanApiVersion = renderInterface->appInfo.apiVersion;
+        // mk9-lauta (2026-11-15): the lower of the instance's and the device's: VMA takes core functions by the version
+        // it is given, and a Vulkan 1.1 device has none of 1.2's.
+        allocatorInfo.vulkanApiVersion = std::min(renderInterface->appInfo.apiVersion,
+            VK_MAKE_API_VERSION(0, VK_API_VERSION_MAJOR(deviceApiVersion), VK_API_VERSION_MINOR(deviceApiVersion), 0));
 
         res = vmaCreateAllocator(&allocatorInfo, &allocator);
         if (res != VK_SUCCESS) {
@@ -4888,7 +4917,7 @@ namespace plume {
         capabilities.resolveModes = false;
         capabilities.descriptorIndexing = descriptorIndexingSupported;
         capabilities.scalarBlockLayout = scalarBlockLayoutSupported;
-        capabilities.bufferDeviceAddress = bufferDeviceAddressSupported;
+        capabilities.bufferDeviceAddress = bufferDeviceAddressUsable;
         capabilities.samplerMirrorClampToEdge = supportedOptionalExtensions.find(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME) != supportedOptionalExtensions.end();
         capabilities.presentWait = presentWaitSupported;
         capabilities.displayTiming = supportedOptionalExtensions.find(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) != supportedOptionalExtensions.end();

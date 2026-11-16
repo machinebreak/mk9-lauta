@@ -6,10 +6,14 @@
 #include <string>
 #include <vector>
 
+#include <cstring>
+
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
+#include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
+#include <rex/system/xmemory.h>
 
 // Tests: the port's zip (or folder) installed at the start, before the game (the same steps as F2 > Kratos).
 REXCVAR_DEFINE_STRING(mk9_kratos_install, "", "MK9 Online",
@@ -19,6 +23,10 @@ REXCVAR_DEFINE_BOOL(mk9_kratos_auto, true, "MK9 Online",
                     "Kratos comes by himself: the port's zip downloaded in the background and installed at the next "
                     "start (false: never; tests)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(mk9_dlc_any_user, true, "MK9 Online",
+                    "The game's DLC (Kratos) is read with player 1's profile when the controller that pressed START at "
+                    "the title has none (the online session's guest, a second controller): without it the game read no "
+                    "DLC then, and Kratos was missing from that session (false: as the game does; tests)");
 
 namespace mk9::kratos {
 namespace {
@@ -146,6 +154,47 @@ bool Mk9KratosNullGuard(PPCRegister& r3) {
   return true;
 }
 
+// mk9-lauta (2026-11-15): Kratos missing from some online sessions. The game reads its DLC (the online subsystem's
+// marketplace-content read, sub_826B2710: XContentCreateEnumerator(user, any device, type 2) through sub_82BDC010) for
+// the user who pressed START at the title, the object's +568, and only when that user is signed in
+// (XamUserGetSigninState, sub_82BDA6A8). On PC only user 0 has a profile; in a session the other player is user 1 on
+// both machines, so when the GUEST's START passed the title neither game read the DLC: no Kratos in that session's
+// character select (Skarlet, Kenshi, Rain and Freddy are on the disc), on both PCs alike, and with the host's START he
+// was there: "sometimes he is, sometimes not". A second controller's START offline did the same. The console's DLC is
+// everyone's on it: a user without a profile has it read with user 0's (both machines take the same branch from the
+// same input, so the sessions stay in step).
+namespace {
+uint32_t DlcLd32(uint8_t* base, uint32_t address) {
+  uint32_t value;
+  std::memcpy(&value, base + address, 4);
+  return __builtin_bswap32(value);
+}
+void DlcSt32(uint8_t* base, uint32_t address, uint32_t value) {
+  value = __builtin_bswap32(value);
+  std::memcpy(base + address, &value, 4);
+  rex::memory::MarkStoreCardsAt(base, address, 4);  // a guest store: the rollback's timeline and Renut go by the cards
+}
+}  // namespace
+
+extern "C" REX_FUNC(__imp__sub_826B2710);
+REX_HOOK_RAW(sub_826B2710) {
+  constexpr uint32_t kUserOffset = 568;
+  const uint32_t self = ctx.r3.u32;
+  const uint32_t user = self ? DlcLd32(base, self + kUserOffset) : 0;
+  // users 1-3 have no profile on PC (the SDK signs in user 0 alone: XamUserGetSigninState)
+  if (REXCVAR_GET(mk9_dlc_any_user) && user >= 1 && user <= 3) {
+    DlcSt32(base, self + kUserOffset, 0);
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      REXLOG_INFO("[kratos] the DLC is read for user {}, who has no profile (the online guest, a second controller), "
+                  "with player 1's profile: the console's DLC is everyone's",
+                  user);
+    }
+  }
+  __imp__sub_826B2710(ctx, base);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // F2 > Kratos: the installer (tools/kratos/kratos_install.py's steps, each checked) and the removal.
 
@@ -170,6 +219,7 @@ bool Mk9KratosNullGuard(PPCRegister& r3) {
 #endif
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -753,15 +803,17 @@ bool StartFetchLocked() {
   return true;
 }
 
-// The window before the game: the download's bar, and a button to play without him meanwhile (the download goes on).
+// The window before the game: the download's bar. mk9-lauta (2026-11-15): no button to play without him any more (a
+// player who went on without him met rivals who had him, and the rooms kept those fights from starting): the game
+// starts once he is in. Its X closes the game (the download goes on from where it was at the next start); a download
+// that fails (no connection) closes the window and the game starts without him, as before.
 #if defined(_WIN32)
-constexpr int kIdSkip = 101;
 constexpr UINT_PTR kTimer = 1;
 struct FetchWindow {
   HWND hwnd = nullptr, bar = nullptr, status = nullptr;
   HFONT font = nullptr, title_font = nullptr;
   UINT dpi = 96;
-  bool skipped = false;
+  bool quit = false;  // its X: the game closes
 };
 FetchWindow* g_window = nullptr;
 
@@ -780,14 +832,8 @@ LRESULT CALLBACK FetchWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
       SetWindowTextW(w.status, text.c_str());
       return 0;
     }
-    case WM_COMMAND:
-      if (LOWORD(wparam) == kIdSkip) {
-        w.skipped = true;
-        DestroyWindow(hwnd);
-      }
-      return 0;
     case WM_CLOSE:
-      w.skipped = true;
+      w.quit = true;
       DestroyWindow(hwnd);
       return 0;
     case WM_CTLCOLORSTATIC:
@@ -842,13 +888,14 @@ void RunFetchWindow(FetchWindow& w) {
   HWND heading = make(L"STATIC", L"Descargando a Kratos", 0, 24, 16, 512, 30, 0);
   SendMessageW(heading, WM_SETFONT, reinterpret_cast<WPARAM>(w.title_font), TRUE);
   make(L"STATIC",
-       L"Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él. Si querés, "
-       L"podés jugar ya: se sigue descargando y aparece la próxima vez que abras el juego.",
+       L"Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo para "
+       L"jugar online con los que también lo tienen.",
        0, 24, 52, 512, 56, 0);
   w.bar = make(PROGRESS_CLASSW, L"", 0, 24, 118, 512, 20, 0);
   SendMessageW(w.bar, PBM_SETRANGE32, 0, 1000);
-  w.status = make(L"STATIC", L"", SS_LEFT, 24, 146, 300, 22, 0);
-  make(L"BUTTON", L"Jugar sin Kratos por ahora", BS_PUSHBUTTON, 316, 176, 220, 34, kIdSkip);
+  w.status = make(L"STATIC", L"", SS_LEFT, 24, 146, 512, 22, 0);
+  make(L"STATIC", L"Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras.", 0, 24,
+       180, 512, 40, 0);
   ShowWindow(w.hwnd, SW_SHOW);
   SetForegroundWindow(w.hwnd);
   SetTimer(w.hwnd, kTimer, 150, nullptr);
@@ -863,16 +910,16 @@ void RunFetchWindow(FetchWindow& w) {
   DeleteObject(w.title_font);
 }
 #else
-// mk9-lauta (2026-11-13): Linux: a small window of the game's (mk9_small_window.h), the same words, bar and button.
+// mk9-lauta (2026-11-13): Linux: a small window of the game's (mk9_small_window.h), the same words and bar.
 struct FetchWindow {
-  bool skipped = false;
+  bool quit = false;  // its X: the game closes
 };
 FetchWindow* g_window = nullptr;
 
 void RunFetchWindow(FetchWindow& w) {
   small_window::Run(
       "MK9 Online by Lauta - Kratos", 560, 230,
-      [&w](const small_window::Look& look) {
+      [](const small_window::Look& look) {
         const Fetch f = FetchStatus();
         if (!f.downloading) return false;
         const float s = look.scale;
@@ -880,20 +927,18 @@ void RunFetchWindow(FetchWindow& w) {
         ImGui::TextUnformatted("Descargando a Kratos");
         ImGui::PopFont();
         ImGui::TextWrapped(
-            "Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él. Si querés, "
-            "podés jugar ya: se sigue descargando y aparece la próxima vez que abras el juego.");
+            "Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo para "
+            "jugar online con los que también lo tienen.");
         ImGui::Spacing();
         ImGui::ProgressBar(std::clamp(f.progress, 0.0f, 1.0f), ImVec2(-1.0f, 20.0f * s), "");
         ImGui::Text("%d de %d MB", int(f.progress * float(kZipSize) / 1000000.0f), int((kZipSize + 500000) / 1000000));
-        ImGui::SameLine(ImGui::GetWindowWidth() - 240.0f * s - ImGui::GetStyle().WindowPadding.x);
-        if (ImGui::Button("Jugar sin Kratos por ahora", ImVec2(240.0f * s, 34.0f * s))) {
-          w.skipped = true;
-          return false;
-        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1.0f));
+        ImGui::TextWrapped("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras.");
+        ImGui::PopStyleColor();
         return true;
       },
       [&w] {
-        w.skipped = true;
+        w.quit = true;
         return true;
       });
 }
@@ -914,8 +959,18 @@ void FetchAtStart() {
   RunFetchWindow(window);  // SDL's window: on the main thread (this one), as SDL asks
 #endif
   g_window = nullptr;
-  REXLOG_INFO("[kratos] the start's window: {}", window.skipped ? "the player went on without him (the download goes on)"
-                                                                : "the download ended");
+  if (window.quit) {
+    // the game had not started yet: nothing of it to close; the .partial stays for the next start's download
+    REXLOG_INFO("[kratos] the start's window was closed while he downloaded: the game closes (the download goes on at "
+                "the next start)");
+    rex::FlushLogging();
+#if defined(_WIN32)
+    TerminateProcess(GetCurrentProcess(), 0);
+#endif
+    std::_Exit(0);
+  }
+  const Fetch f = FetchStatus();
+  REXLOG_INFO("[kratos] the start's window: {}", f.ready ? "the download ended" : "the download stopped (he comes later)");
 }
 
 }  // namespace

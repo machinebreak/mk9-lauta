@@ -89,6 +89,25 @@ class Mk9App : public rex::ReXApp {
     // mk9-lauta (2026-11-09): this PC's defaults: the first start's preset, the memory saving (mk9_hardware.h)
     mk9::hardware::ApplyDefaults();
 #endif
+    // mk9-lauta (2026-11-15): the PC's one profile on every controller (the SDK's xam_signin_every_user): the game never
+    // asks a controller to sign in ("No estás conectado... ¿Deseas hacerlo ahora?", whose "Iniciar sesión" sent the
+    // player back to the main menu) and saves to it whichever controller plays, as a player's question asked (2026-11-15:
+    // saving the Challenge Tower with a second pad). Not in an online session's game: there the other player is user 1
+    // on both machines, unsigned as the sessions were made and tested (a fresh save, never kept).
+    {
+      const bool session = !rex::cvar::GetFlagByName("mk9_net_room").empty() ||
+                           !rex::cvar::GetFlagByName("mk9_net_role").empty() ||
+                           !rex::cvar::GetFlagByName("mk9_net_replay").empty() ||
+                           !rex::cvar::GetFlagByName("mk9_net_join").empty() ||
+                           (rex::cvar::GetFlagByName("mk9_net_host") != "0" &&
+                            !rex::cvar::GetFlagByName("mk9_net_host").empty());
+      const bool every = !session && rex::cvar::GetFlagByName("mk9_profile_every_controller") != "false";
+      rex::cvar::SetFlagByName("xam_signin_every_user", every ? "true" : "false");
+      REXLOG_INFO("[profile] every controller signed in with this PC's profile: {}",
+                  every     ? "yes (no sign-in question; every one saves to it)"
+                  : session ? "no (an online session's game: only player 1)"
+                            : "no (mk9_profile_every_controller: only player 1)");
+    }
   }
 
   // Without --game_data_root, use a game_root/ folder next to the executable, and on a PC build tree the
