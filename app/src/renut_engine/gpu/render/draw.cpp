@@ -290,7 +290,9 @@ struct SharedConstants {
   // the silhouette"; banjo-nx 2026-10-19): in guest pixels, what the pixel position is relative to: a draw predicated
   // to one tile has the tile's corner (ViewportState::pixel_origin).
   float pixel_origin[2];
-  float pad_1352[2];
+  // 1352, mk9-lauta (2026-11-15; was padding): Direct3D 12's depth range in the vertex shader (ViewportState
+  // depth_remap; shader_common.h g_DepthRemap). mk9_diag_bad_vertices' canary uses it on the other back ends.
+  float depth_remap[2];
 };
 static_assert(offsetof(SharedConstants, sampler_indices) == 384);
 static_assert(offsetof(SharedConstants, booleans) == 512);
@@ -1373,6 +1375,9 @@ struct ViewportState {
   // tile). The host renders every tile into one target, so a draw predicated to one tile has its position made
   // relative to that tile.
   float pixel_origin[2] = {0.0f, 0.0f};
+  // mk9-lauta (2026-11-15): Direct3D 12: the viewport's depth range as the vertex shader applies it (SharedConstants
+  // depth_remap: clip z = z * [0] + w * [1]); the host viewport spans 0-1 there. Identity elsewhere.
+  float depth_remap[2] = {1.0f, 0.0f};
 };
 
 // The screen rect of the one tile a draw is predicated to while tiling
@@ -1489,7 +1494,18 @@ ViewportState ComputeViewportSlow(const GuestDevice &device, const Targets &t) {
     vs.pixel_origin[0] = float(tile_rect.x1);
     vs.pixel_origin[1] = float(tile_rect.y1);
   }
-  const float min_z = std::clamp(zo, 0.0f, 1.0f), max_z = std::clamp(zo + zs, 0.0f, 1.0f);
+  float min_z = std::clamp(zo, 0.0f, 1.0f), max_z = std::clamp(zo + zs, 0.0f, 1.0f);
+  // mk9-lauta (2026-11-15): Direct3D 12 takes an inverted depth range (MK9's: MinZ 1, MaxZ 0) as a flip only where the
+  // driver supports it (D3D12_FEATURE_DATA_D3D12_OPTIONS13::InvertedViewportDepthFlipsZSupported); WARP and strict
+  // drivers clamped every depth to 1, so what came last covered the rest: no fighters and no rocks in a fight, only
+  // the sky, the floor and the fighters' shadows (a player's low-end PC on Direct3D 12, 2026-11-15). The vertex
+  // shaders apply the range there (shader_common.h g_DepthRemap), and the host viewport spans 0-1.
+  if (!UsesVulkanBindings()) {
+    vs.depth_remap[0] = max_z - min_z;
+    vs.depth_remap[1] = min_z;
+    min_z = 0.0f;
+    max_z = 1.0f;
+  }
   // banjo-nx (2026-10-18, banjo_renut_half_pixel_offset): PA_SU_VTX_CNTL.pix_center (device 0x29C0 bit 0, which
   // D3DRS_HALFPIXELOFFSET sets) 0 puts the pixel centres at integer window coordinates (D3D9's), so the GPU's window
   // positions are the host's plus half a pixel, as Xenia offsets the viewport (draw_util). Without it everything drew
@@ -3177,8 +3193,11 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
         serial = 1;
       const u32 canary[4] = {serial, ~serial, u32(chunk_offset) + offset, 0x4D4B3943u};
       std::memcpy(static_cast<u8 *>(alloc.cpu) + offset, canary, sizeof(canary));
-      std::memcpy(&sc.pad_1352[0], &canary[0], 4);
-      std::memcpy(&sc.pad_1352[1], &canary[2], 4);
+      // (the depth range's words on Direct3D 12: the canary only where SPIR-V reads them, not the range)
+      if (UsesVulkanBindings()) {
+        std::memcpy(&sc.depth_remap[0], &canary[0], 4);
+        std::memcpy(&sc.depth_remap[1], &canary[2], 4);
+      }
     }
     alloc.ref.offset = 0;
     alloc.gpu_address = alloc.gpu_address ? alloc.gpu_address - chunk_offset : 0;
@@ -4805,6 +4824,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   sc.viewport_size[1] = viewport.guest_size[1];
   sc.resolution_scale = targets.scale.Factor();
   std::memcpy(sc.pixel_origin, viewport.pixel_origin, sizeof(sc.pixel_origin));  // Renut upstream 574b488
+  std::memcpy(sc.depth_remap, viewport.depth_remap, sizeof(sc.depth_remap));  // mk9-lauta: Direct3D 12's depth range
   if (call.primitive == kPointList) {
     // PA_SU_POINT_SIZE: height 0-15, width 16-31, half the size in 12.4 fixed
     // point (SetRenderState_PointSize 0x8264C6C0 stores the size * 8);

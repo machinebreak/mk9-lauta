@@ -191,7 +191,12 @@ struct RenutUboShared { uint4 v[RENUT_SHARED_VECTORS]; };
     uint4 g_BoundFetchArr[16] : packoffset(c66); \
     float2 g_ViewportSize : packoffset(c83.x); \
     float g_ResolutionScale : packoffset(c83.z); \
-    float2 g_PixelOrigin : packoffset(c84.x);
+    float2 g_PixelOrigin : packoffset(c84.x); \
+    float2 g_DepthRemap : packoffset(c84.z);
+// mk9-lauta (2026-11-15): 1352, Direct3D 12 only: the depth range of the draw's viewport as clip-space z = z * x + w * y
+// (x = MaxZ - MinZ, y = MinZ; the host viewport then spans 0-1). MK9 draws with an inverted range (MinZ 1, MaxZ 0):
+// Direct3D 12 flips depth with it only where the driver says so (InvertedViewportDepthFlipsZSupported); elsewhere (WARP,
+// strict drivers) every depth was clamped to 1 and what was drawn last covered the rest (no fighters, no rocks).
 
 #define g_Booleans(i) (g_BooleansArr[(i) / 4][(i) % 4])
 #define g_VertexFetchSlot(i) (g_VertexFetchSlotsArr[(i) / 4][(i) % 4])

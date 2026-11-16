@@ -3196,6 +3196,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
                         out += "\t\tfloat2 pixel = oPos.xy * g_ScreenScale + g_ScreenOffset * oPos.w;\n";
                         out += "\t\toPos.xy = pixel * float2(2.0, -2.0) / g_ViewportSize + float2(-1.0, 1.0) * oPos.w;\n";
                         out += "\t}\n";
+                        // mk9-lauta (2026-11-15): Direct3D 12: the viewport's depth range (an inverted one, MK9's,
+                        // flips depth only where the driver supports it), here instead (shader_common.h g_DepthRemap)
+                        out += "#ifndef __spirv__\n";
+                        out += "\toPos.z = oPos.z * g_DepthRemap.x + oPos.w * g_DepthRemap.y;\n";
+                        out += "#endif\n";
                         // For point_sprite_gs: the exported point size (0 when the shader exports
                         // none: the render state's), negative for a killed vertex.
                         out += "\toPointSize = oPts.z != 0.0 ? -1.0 : oPts.x;\n";
