@@ -80,6 +80,10 @@ REXCVAR_DEFINE_INT32(mk9_async_compile_boost, 0x3A, "MK9/Renderer",
 REXCVAR_DEFINE_STRING(renut_pipeline_list, "pipeline_list.bin", "Nuts&Bolts/Graphics",
                       "The pipelines the renderer has built, which it builds ahead of use at the "
                       "next start (delete it to start over)");
+REXCVAR_DEFINE_INT32(mk9_test_prebuild_sleep_ms, 0, "MK9/Renderer",
+                     "Tests: a listed pipeline's build first waits this many milliseconds (a first start with the "
+                     "driver's cache empty: a fight's start then waits for them, mk9_prebuild_wait_s). 0 = none")
+    .range(0, 1000);
 
 namespace renut::gpu {
 
@@ -896,6 +900,8 @@ void PrebuildWorker() {
     inputs.layout = &job.layout;
     const bool shaders = inputs.vertex_shader && (!job.key.pixel_shader || inputs.pixel_shader);
     lock.unlock();
+    if (const int32_t sleep_ms = REXCVAR_GET(mk9_test_prebuild_sleep_ms); sleep_ms > 0)  // mk9-lauta: tests
+      std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
     std::unique_ptr<plume::RenderPipeline> pipeline = shaders ? Build(job.key, inputs) : nullptr;
     lock.lock();
     job.pipeline = std::move(pipeline);
