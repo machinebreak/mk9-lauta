@@ -1,16 +1,20 @@
 """mk9-lauta's brand pictures for the game's screens (app/src/brand) and for Discord's Rich Presence (docs/assets).
 
   python tools/brand/make_brand_assets.py <logo.png>
+  python tools/brand/make_brand_assets.py --icons      (only social_icons.png)
 
 <logo.png>: the "MK9 BY LAUTA" logo on a transparent background (any size). Writes:
   app/src/brand/logo_1024.png      the logo cropped to what it draws, 1024 px wide (the first start's welcome)
   app/src/brand/logo_640.png, logo_400.png, logo_240.png   the same, narrower (each drawn from the nearest: no mipmaps)
-  app/src/brand/social_icons.png   the social networks' icons, white on transparent: three rows of six cells (128, 64
-                                   and 32 px), each drawn from the one nearest its size (no mipmaps in the overlay)
+  app/src/brand/social_icons.png   the social networks' icons, white on transparent: three rows of one cell an icon
+                                   (128, 64 and 32 px), each drawn from the one nearest its size (no mipmaps in the
+                                   overlay)
   docs/assets/discord_logo.png     512x512: the logo on a dark square, Rich Presence's picture (by its URL)
 
 The icons are Simple Icons' (CC0 1.0, simpleicons.org; the same paths as the project's site), drawn by Microsoft
-Edge in headless mode at 256 px and scaled down with Lanczos.
+Edge in headless mode at 256 px and scaled down with Lanczos. mk9-lauta (2026-11-16): after the six networks, the
+"Apóyame" ones: a cup (Cafecito, drawn for mk9-lauta), Ko-fi's and Patreon's (Simple Icons 13.21.0) and a heart (drawn
+for mk9-lauta).
 """
 import json
 import os
@@ -24,8 +28,8 @@ ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
 BRAND = os.path.join(ROOT, 'app', 'src', 'brand')
 ASSETS = os.path.join(ROOT, 'docs', 'assets')
 
-# the order is brand.cpp's kSocial (Discord, WhatsApp, Instagram, Kick, YouTube, X): social_icons.json, the
-# paths as the project's site has them
+# the order is mk9_brand.h's Social (Discord, WhatsApp, Instagram, Kick, YouTube, X, Cafecito, Ko-fi, Patreon, the
+# heart): social_icons.json, the networks' paths as the project's site has them
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'social_icons.json'), encoding='utf-8') as _f:
     ICONS = [(i['name'], i['path']) for i in json.load(_f)['icons']]
 CELL = 256  # Edge's drawing; the atlas's rows are 128, 64 and 32
@@ -102,17 +106,26 @@ def discord_square(logo):
     return base.convert('RGB')
 
 
+def write_icons():
+    with tempfile.TemporaryDirectory() as work:
+        icon_atlas(draw_icons(work)).save(os.path.join(BRAND, 'social_icons.png'), optimize=True)
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     os.makedirs(BRAND, exist_ok=True)
     os.makedirs(ASSETS, exist_ok=True)
+    if sys.argv[1] == '--icons':
+        write_icons()
+        p = os.path.join(BRAND, 'social_icons.png')
+        print(f'{p}: {Image.open(p).size}, {os.path.getsize(p) // 1024} KB')
+        return
     logo = cropped_logo(sys.argv[1])
     for width in (1024, 640, 400, 240):
         scaled(logo, width).save(os.path.join(BRAND, f'logo_{width}.png'), optimize=True)
     discord_square(logo).save(os.path.join(ASSETS, 'discord_logo.png'), optimize=True)
-    with tempfile.TemporaryDirectory() as work:
-        icon_atlas(draw_icons(work)).save(os.path.join(BRAND, 'social_icons.png'), optimize=True)
+    write_icons()
     for name in ('logo_1024.png', 'logo_640.png', 'logo_400.png', 'logo_240.png', 'social_icons.png'):
         p = os.path.join(BRAND, name)
         print(f'{p}: {Image.open(p).size}, {os.path.getsize(p) // 1024} KB')

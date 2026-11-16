@@ -121,6 +121,7 @@
 #include "online/ice_link.h"
 #include "online/lobby.h"
 #include "online/net_udp.h"
+#include "online/online_buttons.h"
 #include "online/room.h"
 #include "online/quiesce.h"
 #include "online/seed.h"
@@ -132,6 +133,7 @@
 #include "online/virtual_time.h"
 #include "profiler/sa2_cpu_profile_pc.h"
 #include "renut_engine/gpu/backend/render_thread.h"
+#include "renut_engine/gpu/render/pipeline.h"
 #include "renut_engine/gpu/sa2_renut_pacing.h"
 
 #define XXH_INLINE_ALL
@@ -154,6 +156,11 @@ REXCVAR_DEFINE_INT32(mk9_net_rollback_delay, -1, "MK9 Online",
                      "all fight long), 0-7 = that many frames always. Each player's own")
     .range(-1, 7);
 REXCVAR_DEFINE_INT32(mk9_net_timeout_s, 20, "MK9 Online", "Seconds without the peer before the session ends");
+REXCVAR_DEFINE_INT32(mk9_prebuild_wait_s, 15, "MK9",
+                     "A fight's start waits up to this many seconds for the pipeline list's pipelines its shaders need "
+                     "(the first time a stage or a fighter is played: the loading screen takes longer, the fight does "
+                     "not stutter); an online session's, 8 at most (the other machine waits too). 0 = no waiting")
+    .range(0, 60);
 REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "A session's start skips the boot's logo movies (WB, NetherRealm: 16 s): the host's pad taps START "
                     "while one plays (an input, so both machines see it at the same frame)");
@@ -1798,6 +1805,12 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     }
     Pad& mine = g.local[size_t(target)];
     mine = ReadLocalPad();
+    // mk9-lauta (2026-11-16): a lockstep fight: the player's buttons as the game's own (online_buttons.h); the menus
+    // get them as they are
+    if (g.game_state.load(std::memory_order_relaxed) == fight_state::kStatePlay) {
+      online_buttons::ToGameButtons(mine.bytes);
+      online_buttons::ToGameButtons(mine.bytes2);
+    }
     ReplayPad(g.epoch, target, &mine);  // mk9_net_input_replay (tests)
     mine.busy = SampleBusy(base);
     // the boot's logo movies, skipped: the host taps START (X_INPUT_GAMEPAD's 0x0010, the buttons' low byte) every 10
@@ -1873,6 +1886,9 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
         fill.sound = sound_sync::AnnounceFor(f);
       }
       Pad pad = ReadLocalPad();
+      // mk9-lauta (2026-11-16): the player's buttons as the game's own (online_buttons.h)
+      online_buttons::ToGameButtons(pad.bytes);
+      online_buttons::ToGameButtons(pad.bytes2);
       ReplayPad(g.epoch, g.latest + g.delay, &pad);  // mk9_net_input_replay (tests)
       // no pause in a fight with rollback: the pause menu's load would turn the rest of the fight to lockstep, and a
       // player could hold the other one there (START is X_INPUT_GAMEPAD's 0x0010, the buttons' low byte)
@@ -2419,7 +2435,27 @@ bool Active() {
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   if ((game_frame & 3) == 0 || g_state_any.load(std::memory_order_relaxed) < 0) {
-    g_state_any.store(fight_state::State(base), std::memory_order_relaxed);
+    const int before = g_state_any.load(std::memory_order_relaxed);
+    const int state = fight_state::State(base);
+    g_state_any.store(state, std::memory_order_relaxed);
+    // mk9-lauta (2026-11-16): a fight starts: the pipeline list's pipelines its shaders need, built first (#5 of the
+    // issues: the first fights stuttered on a new install while the workers were still building them)
+    if (state == fight_state::kStatePlay && before != fight_state::kStatePlay) {
+      const int limit_s = REXCVAR_GET(mk9_prebuild_wait_s);
+      if (limit_s > 0) {
+        const int capped = SessionGame() ? std::min(limit_s, 8) : limit_s;
+        const auto t0 = std::chrono::steady_clock::now();
+        size_t at_start = 0;
+        const size_t left = ::renut::gpu::WaitPrebuildIdle(uint32_t(capped) * 1000u, &at_start);
+        if (at_start) {
+          REXLOG_INFO("[pipeline] the fight's start waited {} ms for {} listed pipelines ({} left; "
+                      "mk9_prebuild_wait_s {})",
+                      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+                          .count(),
+                      at_start, left, capped);
+        }
+      }
+    }
   }
   if (Active()) {
     TakeEndRequest();

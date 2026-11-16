@@ -8,7 +8,8 @@
 //
 // The main menu's corner (Install): "MK9 Online by Lauta" and the networks' buttons at the bottom right of the game's
 // main menu, where the game draws nothing; never in an online session's game nor with an overlay window open, and off
-// with mk9_brand_menu=false (F2 > Pantalla e idioma).
+// with mk9_brand_menu=false (F2 > Pantalla e idioma). mk9-lauta (2026-11-16): above them, "help keep the server and the
+// updates going" and the "Apoyar" button, which opens F2 > Apóyame.
 
 #pragma once
 
@@ -18,14 +19,16 @@
 
 namespace mk9::brand {
 
-enum class Social { kDiscord, kWhatsApp, kInstagram, kKick, kYouTube, kX };
-constexpr int kSocialCount = 6;
+// mk9-lauta (2026-11-16): after the networks, "Apóyame"'s: Cafecito (from Argentina), Ko-fi (the rest of Latin America
+// and the world), Patreon (every month) and the heart of the button that opens F2 > Apóyame (no page of its own).
+enum class Social { kDiscord, kWhatsApp, kInstagram, kKick, kYouTube, kX, kCafecito, kKofi, kPatreon, kHeart };
+constexpr int kSocialCount = 10;
 
 struct Link {
   Social id;
   const char* name;   // "Discord"
   const char* label;  // the button's words, in Spanish (i18n::T has the others): "Unirme al Discord"
-  const char* url;
+  const char* url;    // "" for the heart: its button opens F2 > Apóyame
   ImU32 color;        // the network's
 };
 const Link& LinkOf(Social social);
@@ -49,6 +52,11 @@ void IconAt(ImDrawList* list, Social social, const ImVec2& pos, float size, ImU3
 bool SocialButton(Social social, const ImVec2& size, bool solid = false, const char* label = nullptr);
 // The networks as a block of buttons `width` px wide: Discord's across, the others `columns` a row.
 void SocialButtons(float width, int columns, float height);
+
+// mk9-lauta (2026-11-16): F2 > Apóyame: what a donation keeps going (the online's server, the updates), the three ways
+// to give (Cafecito, Ko-fi, Patreon: who each is for) and, for whoever cannot, the networks to follow. `width` px wide,
+// in the current window; `scale`: the overlay's text size (options_ui::UiScale).
+void SupportPanel(float width, float scale);
 
 // Once (mk9_capture.cpp, with the other overlay windows): the main menu's corner.
 void Install();

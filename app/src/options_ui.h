@@ -24,4 +24,7 @@ bool SaveToConfig(const std::vector<std::pair<std::string, std::string>>& values
 // mk9-lauta: the overlay windows' text size (mk9_ui_scale; inside an overlay frame, on the UI thread).
 float UiScale();
 
+// mk9-lauta (2026-11-16): the window opens (any thread; at its next frame) on its Apóyame tab (the main menu's Apoyar).
+void OpenSupport();
+
 }  // namespace mk9::options_ui

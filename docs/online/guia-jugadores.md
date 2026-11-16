@@ -183,13 +183,20 @@ al volver a abrir el juego.
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K y sigue la escala de Windows, por ejemplo 150 % en una
   notebook). En un monitor ultrapanorámico (21:9) el juego se ve en 16:9 con barras a los costados, como en la consola.
-- **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones.
+- **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones. Abajo,
+  **Botones en el online**: qué botón de tu mando hace cada golpe en tus peleas online. Cada partida online arranca
+  con los botones de fábrica (así las dos PC juegan igual) aunque los hayas cambiado en OPCIONES > MANDO; lo que elijas
+  acá vale en todas tus peleas online, y tu rival no se entera.
 - **Online / Retraso de entrada en las peleas**: **Automático** (recomendado) o de 0 a 7 cuadros. Cada jugador elige
   el suyo. En Automático es 1 cuadro con ping bajo y el juego lo sube solo con ping alto (unos 2 cuadros con 180 ms, 3
   con 220 ms, 4 con 260 ms, hasta 7 con más de 340 ms) para que los personajes no "salten" cuando llegan los botones
   del otro, y lo sigue ajustando toda la pelea si el ping cambia. Con un número fijo tus golpes salen siempre con ese
   retraso.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
+- **Apóyame**: cómo apoyar el proyecto. Con una donación ayudás a mantener el servidor del online activo y las
+  actualizaciones constantes: **Cafecito** desde Argentina (en pesos), **Ko-fi** desde el resto de Latinoamérica y del
+  mundo, y **Patreon** si querés aportar todos los meses. Si no podés donar, también ayudás siguiendo a Lauta en sus
+  redes. El botón **Apoyar** del menú principal abre esta misma pestaña. Donar es voluntario y no desbloquea nada.
 
 ## Kratos
 

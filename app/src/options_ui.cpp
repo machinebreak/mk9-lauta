@@ -41,6 +41,7 @@
 #include "mk9_controls.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
+#include "online/online_buttons.h"
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
@@ -354,6 +355,13 @@ bool SaveToConfig(const std::vector<std::pair<std::string, std::string>>& values
 
 namespace {
 
+// mk9-lauta (2026-11-16): OpenSupport asked for the window on its Apóyame tab (the main menu's Apoyar, Acerca de's).
+std::atomic<bool> g_open_support{false};
+
+// The tabs in order (LB / RB step through them).
+constexpr const char* kTabs[] = {"Gráficos", "Controles", "Pantalla e idioma", "Online", "Acerca de", "Apóyame"};
+constexpr int kTabCount = int(std::size(kTabs));
+
 class OptionsWindow : public renut::gpu::overlay::Dialog {
  public:
   void Draw() override {
@@ -369,6 +377,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       visible_ = !visible_;
       if (visible_) ImGui::SetNextWindowFocus();  // over the online screens if they are open too
       if (!visible_) StopCapture();
+    }
+    if (g_open_support.exchange(false)) {
+      if (!visible_) ImGui::SetNextWindowFocus();
+      visible_ = true;
+      tab_ = "Apóyame";
+      select_tab_ = true;
     }
     // Full screen or a window, any time (on the window's thread, where the SDK changes the window)
     const ImGuiIO& keys = ImGui::GetIO();
@@ -402,12 +416,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       StopCapture();
     }
     if (const int step = overlay_input::TabStep(); step && capturing_ < 0) {
-      static const char* const kTabs[] = {"Gráficos", "Controles", "Pantalla e idioma", "Online", "Acerca de"};
       int current = 0;
-      for (int i = 0; i < 5; ++i) {
+      for (int i = 0; i < kTabCount; ++i) {
         if (tab_ == kTabs[i]) current = i;
       }
-      tab_ = kTabs[(current + step + 5) % 5];
+      tab_ = kTabs[(current + step + kTabCount) % kTabCount];
       select_tab_ = true;
     }
     if (ImGui::BeginTabBar("options_tabs")) {
@@ -441,6 +454,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       if (ImGui::BeginTabItem("Acerca de", nullptr, TabFlags("Acerca de"))) {
         if (!select_tab_) tab_ = "Acerca de";
         DrawAbout();
+        ImGui::EndTabItem();
+      }
+      // mk9-lauta (2026-11-16): the ways to support the project, and the networks for whoever cannot donate
+      if (ImGui::BeginTabItem("Apóyame", nullptr, TabFlags("Apóyame"))) {
+        if (!select_tab_) tab_ = "Apóyame";
+        brand::SupportPanel(ImGui::GetContentRegionAvail().x, UiScale());
         ImGui::EndTabItem();
       }
       ImGui::EndTabBar();
@@ -633,6 +652,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     ImGui::Text("Comunidad y redes");
     ImGui::PopFont();
     brand::SocialButtons(ImGui::GetContentRegionAvail().x, 3, std::round(38.0f * scale));
+    // mk9-lauta (2026-11-16): to the Apóyame tab (next frame: this one is inside the tab bar)
+    ImGui::Spacing();
+    if (brand::SocialButton(brand::Social::kHeart, ImVec2(ImGui::GetContentRegionAvail().x, std::round(38.0f * scale)),
+                            true, "Apoyar el proyecto")) {
+      g_open_support.store(true);
+    }
   }
 
   // The frames a second, top left: the shown ones, and the game's when they differ (the performance mode).
@@ -658,7 +683,10 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   // The tab to select: the one LB / RB asked for, or mk9_options_tab the first time.
   ImGuiTabItemFlags TabFlags(const char* tab) const {
     if (select_tab_) return tab_ == tab ? ImGuiTabItemFlags_SetSelected : 0;
-    return first_tabs_ && REXCVAR_GET(mk9_options_tab) == tab ? ImGuiTabItemFlags_SetSelected : 0;
+    // (mk9-lauta, 2026-11-16: "Apoyame" without the accent names Apóyame too: a command line's accent may not arrive)
+    const std::string& wanted = REXCVAR_GET(mk9_options_tab);
+    const bool named = wanted == tab || (wanted == "Apoyame" && std::string_view(tab) == "Apóyame");
+    return first_tabs_ && named ? ImGuiTabItemFlags_SetSelected : 0;
   }
 
   void DrawPresets() {
@@ -727,9 +755,71 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       ImGui::TextWrapped("Ninguno. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero que se "
                          "conecta es el Jugador 1.");
     }
-    ImGui::TextWrapped("Qué golpe hace cada botón del mando se cambia en el menú del juego: OPCIONES > MANDO. El "
-                       "teclado lo sigue: cada tecla aprieta el botón del mando que dice la tabla.");
+    ImGui::TextWrapped("Qué golpe hace cada botón del mando se cambia en el menú del juego: OPCIONES > MANDO (para "
+                       "las peleas online, acá abajo). El teclado lo sigue: cada tecla aprieta el botón del mando que "
+                       "dice la tabla.");
     ImGui::PopStyleColor();
+    DrawOnlineButtons();
+  }
+
+  // mk9-lauta (2026-11-16): the buttons of the online fights (online_buttons.h): a session's game always plays with the
+  // game's own, so the player's go here and this machine's pad is turned into the game's before it is sent.
+  void DrawOnlineButtons() {
+    const ImVec4 grey(0.65f, 0.65f, 0.7f, 1);
+    ImGui::Separator();
+    ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
+    ImGui::Text("Botones en el online");
+    ImGui::PopFont();
+    ImGui::PushStyleColor(ImGuiCol_Text, grey);
+    ImGui::TextWrapped("En las peleas online el juego usa siempre los botones de fábrica (cada partida online arranca "
+                       "con un perfil nuevo para que las dos PC jueguen igual), aunque los hayas cambiado en "
+                       "OPCIONES > MANDO. Elegí acá qué botón hace cada golpe en tus peleas online: tu rival no se "
+                       "entera y no cambia nada para él.");
+    ImGui::PopStyleColor();
+    online_buttons::Layout layout = online_buttons::Current();
+    bool changed = false;
+    if (ImGui::BeginTable("online_buttons", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                                   ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("Golpe", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+      ImGui::TableSetupColumn("Botón", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+      ImGui::TableHeadersRow();
+      for (int a = 0; a < online_buttons::kActionCount; ++a) {
+        ImGui::PushID(a);
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(online_buttons::ActionLabel(a));
+        ImGui::TableNextColumn();
+        ImGui::SetNextItemWidth(-1);
+        const online_buttons::Button current = layout[size_t(a)];
+        if (ImGui::BeginCombo("##button", online_buttons::ButtonLabel(current))) {
+          for (int b = 0; b < online_buttons::kButtonCount; ++b) {
+            const auto button = online_buttons::Button(b);
+            if (ImGui::Selectable(online_buttons::ButtonLabel(button), button == current) && button != current) {
+              // the move that had it takes this one's, as OPCIONES > MANDO does (no button does two moves)
+              for (auto& other : layout) {
+                if (other == button) other = current;
+              }
+              layout[size_t(a)] = button;
+              changed = true;
+            }
+          }
+          ImGui::EndCombo();
+        }
+        ImGui::PopID();
+      }
+      ImGui::EndTable();
+    }
+    if (layout != online_buttons::kGameLayout && ImGui::Button("Volver a los botones de fábrica")) {
+      layout = online_buttons::kGameLayout;
+      changed = true;
+    }
+    if (changed) {
+      online_buttons::SetCurrent(layout);
+      const std::string text = online_buttons::Encode(layout);
+      Set({{"mk9_net_buttons", text}},
+          text.empty() ? "Botones en el online: los de fábrica" : "Botones en el online: " + text);
+    }
   }
 
   void DrawKeys() {
@@ -890,5 +980,7 @@ void Install() {
     renut::gpu::overlay::AddDialog(&window);
   });
 }
+
+void OpenSupport() { g_open_support.store(true); }
 
 }  // namespace mk9::options_ui

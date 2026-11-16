@@ -15,6 +15,10 @@
 <a href="https://whatsapp.com/channel/0029VbDpnc1545uwf4F6ju0Z"><img src="https://img.shields.io/badge/WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="WhatsApp channel"></a>
 <a href="https://x.com/LautaTWT"><img src="https://img.shields.io/badge/X-000000?style=for-the-badge&logo=x&logoColor=white" alt="X (Twitter)"></a>
 
+<p><b>Help keep the server running and the updates coming with a donation.</b></p>
+
+<a href="#support-me"><img src="https://img.shields.io/badge/Support%20me-E53950?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Support me"></a>
+
 <br>
 
 <img src="https://img.shields.io/github/v/release/machinebreak/mk9-lauta?style=flat-square&label=version&color=B71C1C" alt="Version">
@@ -119,13 +123,38 @@ On the Steam Deck: in desktop mode, **Steam > Add a Non-Steam Game** and pick th
 4. Four of you, two at each PC? Before "Estoy listo" tick **Somos dos en esta PC**, and in the main menu press RB
    until **4 JUGADORES**: each one picks a team and a fighter.
 
-Both players need the same version; the game updates itself. The full players' guide (in Spanish) is in
-[docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the zip's `LEEME.txt`.
+Both players need the same version; the game updates itself. Online matches always start with the default buttons
+(so both PCs play exactly the same); choose your own for online fights in **F2 > Controles > Botones en el online**.
+The full players' guide (in Spanish) is in [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the
+zip's `LEEME.txt`.
 
 ## Community
 
 Join the [Discord](https://discord.gg/7hbqkDmKHA) to find opponents, get the news first and get help. Bugs can also go
 to the [issues](https://github.com/machinebreak/mk9-lauta/issues), with the latest `mk9_*.log` from the `logs` folder.
+
+## Support me
+
+MK9 by Lauta is free, has no ads, and I make it in my spare time. If you enjoy it, a donation helps keep the online
+server running (the rooms, quick match and the connections between players) and the updates coming.
+
+<p align="center">
+<a href="https://cafecito.app/lautatwt"><img src="https://cdn.cafecito.app/imgs/buttons/button_1.png" alt="Buy me a coffee on cafecito.app" height="28"></a>
+<a href="https://ko-fi.com/lautatwt"><img src="https://img.shields.io/badge/Ko--fi-Donate-FF6433?style=for-the-badge&logo=kofi&logoColor=white" alt="Donate on Ko-fi"></a>
+<a href="https://www.patreon.com/lautatwt"><img src="https://img.shields.io/badge/Patreon-Join-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Join my Patreon"></a>
+</p>
+
+- **[Cafecito](https://cafecito.app/lautatwt)**: from Argentina, in pesos.
+- **[Ko-fi](https://ko-fi.com/lautatwt)**: from the rest of Latin America and the world.
+- **[Patreon](https://www.patreon.com/lautatwt)**: if you want to chip in every month.
+
+Donations are voluntary and unlock nothing: the game is and will stay free for everyone. In the game, all of this is in
+**F2 > Apóyame** (or the main menu's **Support** button).
+
+**Can't donate?** No problem: following me on all my networks and sharing the project helps a lot too:
+[YouTube](https://www.youtube.com/@LautaTWT?sub_confirmation=1) · [Instagram](https://www.instagram.com/lautatwt/) ·
+[Kick](https://kick.com/lautatech) · [X](https://x.com/LautaTWT) ·
+[WhatsApp channel](https://whatsapp.com/channel/0029VbDpnc1545uwf4F6ju0Z) · [Discord](https://discord.gg/7hbqkDmKHA).
 
 ## Building from source
 

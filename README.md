@@ -15,6 +15,10 @@
 <a href="https://whatsapp.com/channel/0029VbDpnc1545uwf4F6ju0Z"><img src="https://img.shields.io/badge/WhatsApp-25D366?style=for-the-badge&logo=whatsapp&logoColor=white" alt="Canal de WhatsApp"></a>
 <a href="https://x.com/LautaTWT"><img src="https://img.shields.io/badge/X-000000?style=for-the-badge&logo=x&logoColor=white" alt="X (Twitter)"></a>
 
+<p><b>Ayudá a mantener el servidor activo y las actualizaciones constantes donando.</b></p>
+
+<a href="#apóyame"><img src="https://img.shields.io/badge/Ap%C3%B3yame-E53950?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Apóyame"></a>
+
 <br>
 
 <img src="https://img.shields.io/github/v/release/machinebreak/mk9-lauta?style=flat-square&label=versi%C3%B3n&color=B71C1C" alt="Versión">
@@ -197,6 +201,15 @@ teclado o con cualquier mando, y nunca pide "iniciar sesión".
 </details>
 
 <details>
+<summary><b>¿Puedo usar mis propios botones en el online?</b></summary>
+
+Sí. Cada partida online arranca con los botones de fábrica (así las dos PC juegan exactamente igual), aunque los hayas
+cambiado en OPCIONES > MANDO. En **F2 > Controles > Botones en el online** elegís qué botón hace cada golpe en tus peleas
+online; tu rival no se entera y la partida no se desincroniza.
+
+</details>
+
+<details>
 <summary><b>¿Hay versión para celular, Linux o Mac?</b></summary>
 
 Para Linux sí, en beta (ver [Linux (beta)](#linux-beta)). Para celular y Mac, por ahora no. Las novedades se
@@ -209,6 +222,30 @@ anuncian en el Discord y en las redes de Lauta.
 En el [Discord](https://discord.gg/7hbqkDmKHA) vas a encontrar rivales, las novedades antes que nadie y ayuda si algo
 no anda. Si encontrás un error, también podés abrir un [issue](https://github.com/machinebreak/mk9-lauta/issues)
 contando qué pasó y adjuntando el `mk9_*.log` de la carpeta `logs`.
+
+## Apóyame
+
+MK9 by Lauta es gratis, sin publicidad, y lo hago en mi tiempo libre. Si te gusta, con tu donación ayudás a mantener el
+servidor del online activo (las salas, la partida rápida y las conexiones entre jugadores) y a que sigan llegando
+actualizaciones.
+
+<p align="center">
+<a href="https://cafecito.app/lautatwt"><img src="https://cdn.cafecito.app/imgs/buttons/button_1.png" alt="Invitame un café en cafecito.app" height="28"></a>
+<a href="https://ko-fi.com/lautatwt"><img src="https://img.shields.io/badge/Ko--fi-Donar-FF6433?style=for-the-badge&logo=kofi&logoColor=white" alt="Donar en Ko-fi"></a>
+<a href="https://www.patreon.com/lautatwt"><img src="https://img.shields.io/badge/Patreon-Sumarme-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Sumarme al Patreon"></a>
+</p>
+
+- **[Cafecito](https://cafecito.app/lautatwt)**: desde Argentina, en pesos.
+- **[Ko-fi](https://ko-fi.com/lautatwt)**: desde el resto de Latinoamérica y del mundo.
+- **[Patreon](https://www.patreon.com/lautatwt)**: si querés aportar todos los meses.
+
+Las donaciones son voluntarias y no desbloquean nada: el juego es y va a seguir siendo gratis para todos. En el juego
+está todo esto en **F2 > Apóyame** (o con el botón **Apoyar** del menú principal).
+
+**¿No podés donar?** No pasa nada: también me ayudás un montón siguiéndome en todas mis redes y compartiendo el
+proyecto: [YouTube](https://www.youtube.com/@LautaTWT?sub_confirmation=1) · [Instagram](https://www.instagram.com/lautatwt/) ·
+[Kick](https://kick.com/lautatech) · [X](https://x.com/LautaTWT) ·
+[canal de WhatsApp](https://whatsapp.com/channel/0029VbDpnc1545uwf4F6ju0Z) · [Discord](https://discord.gg/7hbqkDmKHA).
 
 ## Para desarrolladores
 

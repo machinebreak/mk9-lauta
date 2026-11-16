@@ -132,6 +132,12 @@ void StopPipelinePrebuild();
 // The game made a shader object of this cache entry (any thread, any time).
 void PipelineShaderLoaded(const ShaderCacheEntry *entry);
 
+// mk9-lauta (2026-11-16): waits up to limit_ms for the listed pipelines whose shaders the game has made and that are
+// not built yet (queued, or a worker's now): a fight's start waits for them (mk9_prebuild_wait_s), so the first time a
+// stage or a fighter is played the loading screen takes those seconds instead of the fight stuttering. at_start: how
+// many there were. Returns how many are left (0: none). Any thread but the render thread.
+size_t WaitPrebuildIdle(uint32_t limit_ms, size_t *at_start);
+
 // For the memory report: pipelines the draws use, pipelines built ahead from
 // the list that no draw has asked for yet (all of them stay built), and listed
 // pipelines whose shaders the game has not made.

@@ -19,6 +19,7 @@
 #include "mk9_kratos.h"
 #include "mk9_overlay_input.h"
 #include "mk9_updater.h"
+#include "options_ui.h"
 #include "online/fight_state.h"
 #include "online/i18n.h"
 #include "online/netplay.h"
@@ -56,7 +57,8 @@ const unsigned char kIcons[] = {
 };
 
 constexpr float kLogoAspect = 388.0f / 1024.0f;  // height / width (logo_1024.png)
-constexpr int kIconRows[] = {128, 64, 32};       // social_icons.png: a row of six cells of each size, in this order
+constexpr int kIconRows[] = {128, 64, 32};       // social_icons.png: a row of each size, in this order, with a cell
+                                                 // for each icon in Social's order
 
 const Link kLinks[kSocialCount] = {
     {Social::kDiscord, "Discord", "Unirme al Discord", "https://discord.gg/7hbqkDmKHA", IM_COL32(88, 101, 242, 255)},
@@ -68,6 +70,13 @@ const Link kLinks[kSocialCount] = {
     {Social::kYouTube, "YouTube", "Seguirme en YouTube", "https://www.youtube.com/@LautaTWT?sub_confirmation=1",
      IM_COL32(255, 0, 51, 255)},
     {Social::kX, "X", "Seguirme en Twitter", "https://x.com/LautaTWT", IM_COL32(231, 231, 234, 255)},
+    // mk9-lauta (2026-11-16): Apóyame. Cafecito's lavender (its own buttons'), Ko-fi's orange (Simple Icons), Patreon's
+    // coral (its black would not show on the dark windows), the heart in the logo's red.
+    {Social::kCafecito, "Cafecito", "Invitame un cafecito", "https://cafecito.app/lautatwt",
+     IM_COL32(174, 184, 214, 255)},
+    {Social::kKofi, "Ko-fi", "Donar en Ko-fi", "https://ko-fi.com/lautatwt", IM_COL32(255, 100, 51, 255)},
+    {Social::kPatreon, "Patreon", "Sumarme al Patreon", "https://www.patreon.com/lautatwt", IM_COL32(255, 66, 77, 255)},
+    {Social::kHeart, "Apóyame", "Apoyar", "", IM_COL32(229, 57, 80, 255)},
 };
 
 // An embedded picture as a texture of the current ImGui context (the overlay's), decoded at its first use there.
@@ -202,7 +211,7 @@ bool SocialButton(Social social, const ImVec2& size, bool solid, const char* lab
   const bool held = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
   if (ImGui::IsItemHovered()) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-    ImGui::SetTooltip("%s", link.url);
+    if (*link.url) ImGui::SetTooltip("%s", link.url);
   }
   ImDrawList* list = ImGui::GetWindowDrawList();
   const ImVec2 end(at.x + size.x, at.y + size.y);
@@ -246,7 +255,7 @@ bool SocialButton(Social social, const ImVec2& size, bool solid, const char* lab
     list->AddLine(ImVec2(cx - chevron, cy - chevron), ImVec2(cx, cy), c, t);
     list->AddLine(ImVec2(cx, cy), ImVec2(cx - chevron, cy + chevron), c, t);
   }
-  if (pressed) {
+  if (pressed && *link.url) {
     REXLOG_INFO("[brand] {} opened", link.name);
     updater::Open(link.url);
   }
@@ -274,6 +283,60 @@ void SocialButtons(float width, int columns, float height) {
     }
     SocialButton(others[i], ImVec2(w, height));
   }
+}
+
+void SupportPanel(float width, float scale) {
+  // the title: the heart in its red and "Apóyame" in the logo's gold, centered
+  {
+    ImFont* title = Title();
+    const float size = std::round(30.0f * scale);
+    const char* heading = T("Apóyame");
+    const ImVec2 extent = title->CalcTextSizeA(size, FLT_MAX, 0.0f, heading);
+    const float icon = std::round(size * 0.92f), gap = std::round(10.0f * scale);
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    const float x = start.x + std::max(0.0f, (width - (icon + gap + extent.x)) * 0.5f);
+    ImDrawList* list = ImGui::GetWindowDrawList();
+    IconAt(list, Social::kHeart, ImVec2(std::round(x), std::round(start.y + (extent.y - icon) * 0.5f)), icon,
+           LinkOf(Social::kHeart).color);
+    list->AddText(title, size, ImVec2(std::round(x + icon + gap), start.y), Faded(IM_COL32(255, 196, 64, 255)),
+                  heading);
+    ImGui::Dummy(ImVec2(width, extent.y));
+  }
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+  ImGui::TextUnformatted(T("MK9 Online by Lauta es gratis y lo hago en mi tiempo libre. Con tu donación ayudás a mantener "
+                           "el servidor del online activo y las actualizaciones constantes."));
+  ImGui::PopTextWrapPos();
+  ImGui::Spacing();
+  // the three ways, side by side when they fit (else one under the other), each with who it is for under it
+  struct Way {
+    Social social;
+    const char* who;
+  };
+  static const Way kWays[] = {{Social::kCafecito, "Desde Argentina, en pesos"},
+                              {Social::kKofi, "Desde Latinoamérica y el resto del mundo"},
+                              {Social::kPatreon, "Un aporte todos los meses"}};
+  const int columns = width >= 540.0f * scale ? 3 : 1;
+  const float height = std::round(46.0f * scale);
+  if (ImGui::BeginTable("##support_ways", columns, ImGuiTableFlags_SizingStretchSame)) {
+    for (const Way& way : kWays) {
+      ImGui::TableNextColumn();
+      SocialButton(way.social, ImVec2(ImGui::GetContentRegionAvail().x, height), true);
+      ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(170, 166, 176, 255));
+      ImGui::TextWrapped("%s", T(way.who));
+      ImGui::PopStyleColor();
+    }
+    ImGui::EndTable();
+  }
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+  ImGui::TextUnformatted(T("¿No podés donar? También me ayudás un montón siguiéndome en todas mis redes y compartiendo "
+                           "el proyecto:"));
+  ImGui::PopTextWrapPos();
+  ImGui::Spacing();
+  SocialButtons(width, 3, std::round(38.0f * scale));
 }
 
 namespace {
@@ -308,6 +371,10 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
     const float row_x = right - row_w, row_y = bottom - button.y;
     const float caption = std::round(34.0f * s);
     const float caption_y = row_y - std::round(10.0f * s) - caption;
+    // mk9-lauta (2026-11-16): on the caption's line, at the right (where the caption never reaches), "help keep it
+    // going" and the Apoyar button; above it the game draws its menu item's description
+    const ImVec2 support_button(std::round(150.0f * s), std::round(38.0f * s));
+    const float support_y = std::round(caption_y + (caption - support_button.y) * 0.5f);
     const float logo_w = std::round(182.0f * s), logo_h = LogoHeight(logo_w);
     const float logo_x = row_x - std::round(18.0f * s) - logo_w;
     const float logo_y = std::round((caption_y + bottom) * 0.5f - logo_h * 0.5f);
@@ -324,6 +391,9 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav |
                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollWithMouse;
     if (ImGui::Begin("##brand_corner", nullptr, flags)) {
+      // mk9-lauta (2026-11-16): the corner's buttons are the mouse's alone: a controller's A (the game's own menu,
+      // scripted in tests) never presses them (one test saw F2 > Apóyame open with no click)
+      ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
       ImDrawList* list = ImGui::GetWindowDrawList();
       // a shade from nothing at the top and the left to dark at the bottom right, under the words and the buttons
       const ImU32 none = Faded(IM_COL32(0, 0, 0, 0));
@@ -345,6 +415,22 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
                     second);
       list->AddText(strong, second_size, ImVec2(row_x + first_size.x, second_y), Faded(IM_COL32(236, 232, 226, 255)),
                     second);
+      // mk9-lauta (2026-11-16): what a donation keeps going, and the button to F2 > Apóyame
+      {
+        const float size = std::round(caption * 0.56f);
+        const char* line = T("Ayudá a mantener el servidor activo y las actualizaciones constantes");
+        const ImVec2 line_size = strong->CalcTextSizeA(size, FLT_MAX, 0.0f, line);
+        const float button_x = right - support_button.x;
+        const ImVec2 at(std::round(button_x - std::round(14.0f * s) - line_size.x),
+                        std::round(support_y + (support_button.y - line_size.y) * 0.5f));
+        list->AddText(strong, size, ImVec2(at.x + d, at.y + d), Faded(IM_COL32(0, 0, 0, 200)), line);
+        list->AddText(strong, size, at, Faded(IM_COL32(236, 232, 226, 255)), line);
+        ImGui::SetCursorScreenPos(ImVec2(button_x, support_y));
+        if (SocialButton(Social::kHeart, support_button, true, T("Apoyar"))) {
+          REXLOG_INFO("[brand] the main menu's Apoyar: F2 > Apóyame");
+          options_ui::OpenSupport();
+        }
+      }
       // mk9-lauta (2026-11-12): Kratos on his way (mk9_kratos.h), right-aligned above the caption
       const kratos::Fetch fetch = kratos::FetchStatus();
       if (fetch.downloading || fetch.ready) {
@@ -372,11 +458,12 @@ class MenuCorner : public renut::gpu::overlay::Dialog {
       // the buttons: the networks' names alone
       const Social order[] = {Social::kDiscord, Social::kWhatsApp, Social::kInstagram,
                               Social::kKick,    Social::kYouTube,  Social::kX};
-      for (int i = 0; i < kSocialCount; ++i) {
+      for (int i = 0; i < int(std::size(order)); ++i) {
         ImGui::SetCursorScreenPos(ImVec2(row_x + float(i) * (button.x + gap), row_y));
         const Link& link = LinkOf(order[i]);
         SocialButton(order[i], button, order[i] == Social::kDiscord, order[i] == Social::kX ? "Twitter" : link.name);
       }
+      ImGui::PopItemFlag();
     }
     ImGui::End();
     ImGui::PopStyleVar(3);

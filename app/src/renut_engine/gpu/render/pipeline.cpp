@@ -1426,6 +1426,31 @@ void StopPipelinePrebuild() {
   g_prebuild.done.wait(lock, [] { return g_prebuild.workers == 0; });
 }
 
+namespace {
+// Requires g_prebuild.mutex: the jobs queued (not claimed) or being built.
+size_t PrebuildBacklogLocked() {
+  size_t n = g_prebuild.building + g_prebuild.urgent.size();
+  for (const Job *job : g_prebuild.queue) {
+    if (job->stage == Job::Stage::Pending)
+      ++n;
+  }
+  return n;
+}
+} // namespace
+
+size_t WaitPrebuildIdle(uint32_t limit_ms, size_t *at_start) {
+  std::unique_lock lock(g_prebuild.mutex);
+  const size_t start = PrebuildBacklogLocked();
+  if (at_start)
+    *at_start = start;
+  if (start == 0 || g_prebuild.workers == 0 || g_prebuild.stop || limit_ms == 0)
+    return start;
+  g_prebuild.done.wait_for(lock, std::chrono::milliseconds(limit_ms), [] {
+    return g_prebuild.stop || g_prebuild.workers == 0 || PrebuildBacklogLocked() == 0;
+  });
+  return PrebuildBacklogLocked();
+}
+
 void PipelineShaderLoaded(const ShaderCacheEntry *entry) {
   if (!entry)
     return;
