@@ -243,7 +243,9 @@ class Mk9App : public rex::ReXApp {
     // frames + a per-frame XXH3 of the full-resolution image, to compare two runs frame for frame.
 #if SA2_RENUT_RENDERER
     if (banjo::renut_gpu::Active()) {
-      auto grab = [](rex::ui::RawImage& image) { return renut::gpu::CaptureFrame(image); };
+      // mk9-lauta (2026-11-15): up to 15 s for the frame: on WARP (Direct3D 12 by software, the strict reference for
+      // low-end GPUs) a fight's frame takes over a second, and the default 1 s gave "no guest output yet"
+      auto grab = [](rex::ui::RawImage& image) { return renut::gpu::CaptureFrame(image, 15000); };
       sa2::capture::StartWithSource(grab);
       mk9::snapshot::StartWithSource(grab);
       return;
