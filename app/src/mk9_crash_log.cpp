@@ -155,6 +155,57 @@ namespace {
 
 struct sigaction g_previous[32];
 
+char g_logs[1024] = "";  // <the game's folder>/logs, ready before any fault (AfterRuntime)
+
+// write() of a formatted line from a stack buffer (no allocation, no stdio stream).
+void Line(int fd, const char* format, ...) {
+  char text[512];
+  va_list args;
+  va_start(args, format);
+  const int n = std::vsnprintf(text, sizeof(text), format, args);
+  va_end(args);
+  if (n > 0) {
+    ssize_t ignored = write(fd, text, size_t(std::min(n, int(sizeof(text)) - 1)));
+    (void)ignored;
+  }
+}
+
+// mk9-lauta (2026-11-16): logs/crash_<date>.txt: what happened and where, then this thread's stack (module and offset
+// of each frame, for llvm-symbolizer). path: where it went ("" when it could not be written: before AfterRuntime, a
+// full disk).
+void WriteReport(const char* what, uintptr_t pc, const char* name, uintptr_t offset, uintptr_t fault,
+                 char (&path)[1200]) {
+  path[0] = 0;
+  if (!g_logs[0]) return;
+  char thread[32] = "?";
+  pthread_getname_np(pthread_self(), thread, sizeof(thread));
+  const std::time_t now = std::time(nullptr);
+  std::tm t{};
+  localtime_r(&now, &t);
+  std::snprintf(path, sizeof(path), "%s/crash_%04d%02d%02d_%02d%02d%02d.txt", g_logs, t.tm_year + 1900, t.tm_mon + 1,
+                t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+  const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  if (fd < 0) {
+    path[0] = 0;
+    return;
+  }
+  Line(fd, "mk9-lauta %s: %s at %016lx (%s+0x%lx), fault address %016lx, thread %d (%s)\n", MK9_LAUTA_VERSION, what,
+       (unsigned long)pc, name, (unsigned long)offset, (unsigned long)fault, int(gettid()), thread);
+  void* frames[64];
+  const int count = backtrace(frames, 64);
+  for (int i = 0; i < count; ++i) {
+    Dl_info f{};
+    if (dladdr(frames[i], &f) && f.dli_fname) {
+      const char* module = std::strrchr(f.dli_fname, '/') ? std::strrchr(f.dli_fname, '/') + 1 : f.dli_fname;
+      Line(fd, "#%02d %s+0x%lx %s\n", i, module, (unsigned long)(uintptr_t(frames[i]) - uintptr_t(f.dli_fbase)),
+           f.dli_sname ? f.dli_sname : "");
+    } else {
+      Line(fd, "#%02d %p\n", i, frames[i]);
+    }
+  }
+  close(fd);
+}
+
 void LogFatalSignal(int sig, siginfo_t* info, void* context) {
   uintptr_t pc = 0;
 #if defined(__x86_64__)
@@ -169,8 +220,12 @@ void LogFatalSignal(int sig, siginfo_t* info, void* context) {
     name = std::strrchr(dl.dli_fname, '/') ? std::strrchr(dl.dli_fname, '/') + 1 : dl.dli_fname;
     base = reinterpret_cast<uintptr_t>(dl.dli_fbase);
   }
-  REXLOG_CRITICAL("[crash] host signal {} ({}) at {:016X} ({}+0x{:X}), fault address {:016X}, thread {}", sig,
-                  strsignal(sig), pc, name, pc - base, reinterpret_cast<uintptr_t>(info->si_addr), gettid());
+  // mk9-lauta (2026-11-16): the stack too (an abort's pc is in libc: who called abort is in the stack), as a fault's
+  char path[1200];
+  WriteReport(strsignal(sig), pc, name, pc - base, reinterpret_cast<uintptr_t>(info->si_addr), path);
+  REXLOG_CRITICAL("[crash] host signal {} ({}) at {:016X} ({}+0x{:X}), fault address {:016X}, thread {}; stack in {}",
+                  sig, strsignal(sig), pc, name, pc - base, reinterpret_cast<uintptr_t>(info->si_addr), gettid(),
+                  path[0] ? path : "not written");
   rex::FlushLogging();
   // Hand over to whatever was installed before (or the default action: core dump / exit).
   sigaction(sig, &g_previous[sig], nullptr);
@@ -198,20 +253,6 @@ const bool g_installed = Install();
 // and offset of each frame) to logs/crash_<date>.txt (Windows' minidump's place) and the log, then gives the signal its
 // default action, so the fault, met again at the return, ends the process. A guarded read's fault (renut's
 // guarded_read.h) is left to its own handler, before this one in the chain.
-char g_logs[1024] = "";  // <the game's folder>/logs, ready before any fault (AfterRuntime)
-
-// write() of a formatted line from a stack buffer (no allocation, no stdio stream).
-void Line(int fd, const char* format, ...) {
-  char text[512];
-  va_list args;
-  va_start(args, format);
-  const int n = std::vsnprintf(text, sizeof(text), format, args);
-  va_end(args);
-  if (n > 0) {
-    ssize_t ignored = write(fd, text, size_t(std::min(n, int(sizeof(text)) - 1)));
-    (void)ignored;
-  }
-}
 
 bool LastChance(rex::arch::Exception* ex, void*) {
   using Code = rex::arch::Exception::Code;
@@ -243,35 +284,13 @@ bool LastChance(rex::arch::Exception* ex, void*) {
     }
     char thread[32] = "?";
     pthread_getname_np(pthread_self(), thread, sizeof(thread));
-    char path[1200] = "";
-    const std::time_t now = std::time(nullptr);
-    std::tm t{};
-    localtime_r(&now, &t);
-    std::snprintf(path, sizeof(path), "%s/crash_%04d%02d%02d_%02d%02d%02d.txt", g_logs, t.tm_year + 1900,
-                  t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
-    const int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
-    if (fd >= 0) {
-      Line(fd, "mk9-lauta %s: %s at %016lx (%s+0x%lx), fault address %016lx, thread %d (%s)\n", MK9_LAUTA_VERSION,
-           sig == SIGSEGV ? "access violation" : "illegal instruction", (unsigned long)pc, name,
-           (unsigned long)(pc - base), (unsigned long)ex->fault_address(), int(gettid()), thread);
-      void* frames[64];
-      const int count = backtrace(frames, 64);
-      for (int i = 0; i < count; ++i) {
-        Dl_info f{};
-        if (dladdr(frames[i], &f) && f.dli_fname) {
-          const char* module = std::strrchr(f.dli_fname, '/') ? std::strrchr(f.dli_fname, '/') + 1 : f.dli_fname;
-          Line(fd, "#%02d %s+0x%lx %s\n", i, module, (unsigned long)(uintptr_t(frames[i]) - uintptr_t(f.dli_fbase)),
-               f.dli_sname ? f.dli_sname : "");
-        } else {
-          Line(fd, "#%02d %p\n", i, frames[i]);
-        }
-      }
-      close(fd);
-    }
+    char path[1200];
+    WriteReport(sig == SIGSEGV ? "access violation" : "illegal instruction", pc, name, pc - base,
+                uintptr_t(ex->fault_address()), path);
     // the log last: a lock the fault left held stops it, not the report above
     REXLOG_CRITICAL("[crash] unhandled {} at {:016X} ({}+0x{:X}), fault address {:016X}, thread {} ({}); stack in {}",
                     sig == SIGSEGV ? "access violation" : "illegal instruction", pc, name, pc - base,
-                    ex->fault_address(), gettid(), thread, fd >= 0 ? path : "not written");
+                    ex->fault_address(), gettid(), thread, path[0] ? path : "not written");
     rex::FlushLogging();
     state.store(2);
   }
