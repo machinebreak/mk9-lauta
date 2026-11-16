@@ -102,6 +102,8 @@ set(MK9_SOURCES
     src/mk9_renderer_start.cpp
     # F1 and F2 with a controller; the game's input held while one is open; the close asked first.
     src/mk9_overlay_input.cpp
+    # mk9-lauta (2026-11-16, issue #8): code plugins (plugins/*.dll, rex_mod.h), off by default.
+    src/mk9_plugins.cpp
     src/mk9_native_bones.cpp
     src/mk9_native_constants.cpp
     # The SA2-only parts of the renderer glue that are not ported (native Direct3D layer, census): off.

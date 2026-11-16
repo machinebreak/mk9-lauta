@@ -40,6 +40,7 @@
 #include "mk9_brand.h"
 #include "mk9_controls.h"
 #include "mk9_overlay_input.h"
+#include "mk9_plugins.h"
 #include "mk9_updater.h"
 #include "online/online_buttons.h"
 #include "renut_engine/gpu/backend/backend.h"
@@ -619,6 +620,13 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                          std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(about).x) * 0.5f));
     ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", about);
+    // mk9-lauta (2026-11-16, issue #8): third-party code running in the game, always in sight
+    if (const std::vector<std::string> plugins = plugins::Loaded(); !plugins.empty()) {
+      std::string list;
+      for (const std::string& name : plugins) list += (list.empty() ? "" : ", ") + name;
+      ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1),
+                         "Plugins de código cargados (mk9_plugins en mk9.toml): %s", list.c_str());
+    }
     ImGui::Separator();
     bool check = rex::cvar::GetFlagByName("mk9_update_check") != "false";
     if (ImGui::Checkbox("Buscar una versión nueva al iniciar", &check)) {

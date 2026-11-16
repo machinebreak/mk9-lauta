@@ -253,7 +253,8 @@ Para compilarlo hacen falta Visual Studio 2022 Build Tools, LLVM clang 20, Pytho
 están en [docs/building.md](docs/building.md). La compilación extrae tu disco, traduce el código del juego desde tu
 `default.xex` (a `app/generated`, que no está en el repositorio) y arma el programa.
 `tools/release/make_release.ps1 -Zip` empaqueta una versión (el programa, el runtime de Visual C++, la guía y las
-licencias; ningún archivo del juego).
+licencias; ningún archivo del juego). Los mods de código (por ejemplo de accesibilidad) se cargan como plugins,
+apagados por defecto: ver [docs/mods/plugins.md](docs/mods/plugins.md).
 
 <details>
 <summary>Cómo está organizado el código</summary>

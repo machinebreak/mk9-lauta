@@ -35,6 +35,7 @@
 #include "mk9_file_check.h"
 #include "mk9_kratos.h"
 #include "mk9_old_nro.h"
+#include "mk9_plugins.h"
 #include "profiler/sa2_cpu_profile_pc.h"
 #include "thorhax_intro.h"  // app/thorhax_intro (from usf4-nx)
 
@@ -263,7 +264,15 @@ class Mk9App : public rex::ReXApp {
     });
   }
 
+  // mk9-lauta (2026-11-16, issue #8): the code plugins, with the game's image loaded and before its first instruction
+  // (mk9_plugins.h; off unless mk9_plugins = true)
+  void OnPostLaunchModule(rex::system::XThread* thread) override {
+    (void)thread;
+    mk9::plugins::Load();
+  }
+
   void OnShutdown() override {
+    mk9::plugins::Shutdown();
     nfsmw::perfil_pc::Parar();
 #if SA2_RENUT_RENDERER
     if (banjo::renut_gpu::Active()) renut::gpu::ShutdownRenderer();
