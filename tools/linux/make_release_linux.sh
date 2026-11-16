@@ -44,10 +44,16 @@ for lib in librexruntimerd.so librexgpu-xenosrd.so; do
   cp -L "$src" "$OUT/$lib"
   "$OBJCOPY" --strip-debug "$OUT/$lib"
 done
-for f in gamecontrollerdb.txt pipeline_list.bin; do
+for f in gamecontrollerdb.txt; do
   for dir in "$BUILD" "$REPO/out/pc"; do
     if [ -f "$dir/$f" ]; then cp "$dir/$f" "$OUT/"; break; fi
   done
+done
+# mk9-lauta (2026-11-16): the pipeline list is Windows' (out/pc: every test and sweep there, ~5000 pipelines). The
+# Linux build's own (out/linux) only has what the Linux tests drew (459 in 1.2.0, which shipped it): the first fights
+# on Linux built nearly everything as they went.
+for dir in "$REPO/out/pc" "$BUILD"; do
+  if [ -f "$dir/pipeline_list.bin" ]; then cp "$dir/pipeline_list.bin" "$OUT/"; break; fi
 done
 [ -f "$OUT/gamecontrollerdb.txt" ] || { echo "missing: gamecontrollerdb.txt" >&2; exit 1; }
 [ -f "$OUT/pipeline_list.bin" ] || echo "warning: no pipeline_list.bin: the first fights build their pipelines as they go"
