@@ -1,7 +1,8 @@
-// MK9 online: a room of two (room.h).
+// MK9 online: a room of two, or of four (room.h).
 
 #include "online/room.h"
 
+#include <algorithm>
 #include <chrono>
 #include <initializer_list>
 #include <mutex>
@@ -26,10 +27,15 @@
 
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
                       "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in; "
-                      "'watch' watches the first room playing (its Watch button)");
+                      "'watch' watches the first room playing (its Watch button); 'host4' opens a public room of four, "
+                      "'quick4' joins a room of four (or opens one)");
 REXCVAR_DEFINE_INT32(mk9_online_test_players, 1, "MK9 Online",
                      "Tests: with mk9_online_test, the people at this PC the room says before it is ready (2: the "
                      "\"Somos dos en esta PC\" box)");
+REXCVAR_DEFINE_INT32(mk9_online_test_start, 4, "MK9 Online",
+                     "Tests: the host of a room of four (mk9_online_test=host4) starts the fight once this many "
+                     "machines are in it, all of them ready")
+    .range(2, 4);
 
 namespace mk9::room {
 namespace {
@@ -50,14 +56,22 @@ constexpr auto kPingEvery = std::chrono::seconds(3);
 constexpr auto kGone = std::chrono::seconds(12);
 constexpr auto kJoinFor = std::chrono::seconds(10);
 constexpr size_t kMaxLines = 100;
+constexpr int kMaxMachines = 4;
+// mk9-lauta (2026-11-17): the session protocol of the releases that play rooms of four (netplay.cpp's 12)
+constexpr int kFourProto = 12;
 
 struct Room {
   std::mutex mutex;
   State s;
-  std::string guest_id;            // the host's: its guest's; the guest's: its own
+  std::string guest_id;            // the host's: its guest's (a room of two); the guest's: its own
   Clock::time_point heard{}, said{}, hi_at{}, joined_at{};
   bool start_pending = false;
   Clock::time_point start_at{};
+  // mk9-lauta (2026-11-17)
+  std::vector<std::string> start_machines;  // the machines a room of four's start named (its session's)
+  std::vector<std::string> session_machines;  // the host in such a session: the guests it welcomes back
+  std::unordered_map<std::string, Clock::time_point> heard_from;  // the host of a room of four: each guest's last word
+  int want = 0;  // a guest: what it joined for (a quick one against one: 2; a quick two against two: 4)
 };
 Room g;
 
@@ -124,11 +138,11 @@ json PictureMessage(const std::string& hash) {
 }
 
 // A picture that came: kept if it is one of the expected hashes.
-void TakePicture(const json& d, std::initializer_list<const std::string*> expected) {
+void TakePicture(const json& d, const std::vector<std::string>& expected) {
   const std::string hash = avatars::CleanHash(Text(d, "h"));
   if (hash.empty()) return;
-  for (const std::string* e : expected) {
-    if (*e == hash) {
+  for (const std::string& e : expected) {
+    if (e == hash) {
       const std::string data = Text(d, "d");
       if (data.size() <= (avatars::kMaxBytes + 2) / 3 * 4) avatars::Store(hash, avatars::Unbase64(data));
       return;
@@ -150,17 +164,94 @@ void AddLine(const std::string& name, const std::string& text, bool system) {
   Touch();
 }
 
+bool Four() { return g.s.capacity == 4; }
+
+// mk9-lauta (2026-11-17): the room's people and machines.
+int People() {
+  int n = 0;
+  for (const Member& m : g.s.members) n += m.players;
+  return n;
+}
+
+Member* FindMember(const std::string& id) {
+  for (Member& m : g.s.members) {
+    if (!m.me && m.id == id) return &m;
+  }
+  return nullptr;
+}
+
+Member* MeMember() {
+  for (Member& m : g.s.members) {
+    if (m.me) return &m;
+  }
+  return nullptr;
+}
+
+// The members' pictures (the ones a picture that comes may be).
+std::vector<std::string> MemberPictures() {
+  std::vector<std::string> out;
+  for (const Member& m : g.s.members) {
+    if (!m.me && !m.avatar.empty()) out.push_back(m.avatar);
+  }
+  if (!g.s.other_avatar.empty()) out.push_back(g.s.other_avatar);
+  return out;
+}
+
+// This game's own member, as it is now (its name, its record, its picture, its people, its ready).
+Member MeNow() {
+  const stats::Summary st = stats::Totals();
+  Member me;
+  me.id = g.s.host ? std::string() : g.guest_id;
+  me.name = g.s.me;
+  me.country = flags::Mine();
+  me.avatar = avatars::MineHash();
+  me.mods = Mods();
+  me.won = st.won;
+  me.lost = st.lost;
+  me.players = g.s.my_players;
+  me.ready = g.s.my_ready;
+  me.me = true;
+  return me;
+}
+
+// The "other" fields (a room of two's screens: the rival) from the first other member; whether any member's content
+// differs from this game's.
+void SyncOther() {
+  if (Member* mine = MeMember()) *mine = MeNow();
+  const Member* o = nullptr;
+  bool differs = false;
+  for (const Member& m : g.s.members) {
+    if (m.me) continue;
+    if (!o) o = &m;
+    if (m.mods != Mods()) differs = true;
+  }
+  if (o) {
+    g.s.other = o->name;
+    g.s.other_country = o->country;
+    g.s.other_won = o->won;
+    g.s.other_lost = o->lost;
+    g.s.other_avatar = o->avatar;
+    g.s.other_players = o->players;
+    g.s.other_ready = o->ready;
+    g.s.other_mods = o->mods;
+  }
+  if (Four()) g.s.content_differs = differs;
+  Touch();
+}
+
 // The other's content (a hello, a welcome, a keepalive; none from an older release): when it differs from this game's
 // the room says so once and the fight does not start.
-void TakeMods(const json& d) {
+void TakeMods(const json& d, const std::string& who) {
   const std::string mods = Text(d, "mods");
   const bool differs = mods != Mods();
-  if (mods == g.s.other_mods && differs == g.s.content_differs) return;
-  g.s.other_mods = mods;
-  g.s.content_differs = differs;
+  if (!Four()) {
+    if (mods == g.s.other_mods && differs == g.s.content_differs) return;
+    g.s.other_mods = mods;
+    g.s.content_differs = differs;
+  }
   Touch();
   if (!differs) return;
-  const std::string other = g.s.other.empty() ? T("El rival") : g.s.other;
+  const std::string other = who.empty() ? T("El rival") : who;
   const std::string line = Mods() == "kratos"
                                ? Tf("{} todavía no tiene a Kratos (se le descarga solo): cuando le termine, tiene que "
                                     "reiniciar el juego para pelear online con vos.",
@@ -170,16 +261,69 @@ void TakeMods(const json& d) {
                                     other);
   AddLine("", line, true);
   g.s.status = line;
-  REXLOG_WARN("[room] the other game has content \"{}\", this one \"{}\": the fight cannot start", mods, Mods());
+  REXLOG_WARN("[room] {}'s game has content \"{}\", this one \"{}\": the fight cannot start", other, mods, Mods());
 }
 
-
+// A message to the other side: the host's to its guests (every one of them), a guest's to the host.
 void SendOther(const json& data) {
   if (g.s.host) {
-    if (!g.guest_id.empty()) lobby::SigToGuest(g.s.code, g.guest_id, data);
+    if (Four()) {
+      for (const Member& m : g.s.members) {
+        if (!m.me && !m.id.empty()) lobby::SigToGuest(g.s.code, m.id, data);
+      }
+    } else if (!g.guest_id.empty()) {
+      lobby::SigToGuest(g.s.code, g.guest_id, data);
+    }
   } else {
     lobby::SigToHost(g.s.code, data);
   }
+}
+
+// mk9-lauta (2026-11-17): the host of a room of four tells every guest who is in it.
+json MembersMessage() {
+  json list = json::array();
+  for (const Member& m : g.s.members) {
+    list.push_back({{"id", m.id},
+                    {"name", m.name},
+                    {"cc", m.country},
+                    {"won", m.won},
+                    {"lost", m.lost},
+                    {"av", m.avatar},
+                    {"mods", m.mods},
+                    {"pl", m.players},
+                    {"ready", m.ready}});
+  }
+  return {{"room", "members"}, {"cap", g.s.capacity}, {"list", std::move(list)}};
+}
+
+// The host of a room of four: is it full now, and can its fight start (everyone in it ready, two machines or more).
+bool FullNow() { return People() >= g.s.capacity || int(g.s.members.size()) >= kMaxMachines; }
+
+void UpdateCanStart() {
+  bool all = g.s.host && Four() && !g.s.in_session && g.s.phase == Phase::kTogether && g.s.members.size() >= 2 &&
+             People() <= g.s.capacity && !g.s.content_differs;
+  for (const Member& m : g.s.members) all = all && m.ready;
+  if (all != g.s.can_start) {
+    g.s.can_start = all;
+    Touch();
+  }
+}
+
+void BroadcastMembers() {
+  if (!g.s.host || !Four()) return;
+  SyncOther();
+  const json message = MembersMessage();
+  for (const Member& m : g.s.members) {
+    if (!m.me && !m.id.empty()) lobby::SigToGuest(g.s.code, m.id, message);
+  }
+  UpdateCanStart();
+}
+
+// The host of a room of four says to the lobby whether it still waits for players (a full one is not in the list's
+// waiting rooms; the lobby's quick match marks a room it gives out as playing: this side says again what it is).
+void AnnounceFour() {
+  if (!g.s.host || !Four() || g.s.in_session) return;
+  lobby::Host(g.s.code, g.s.title, g.s.open, FullNow());
 }
 
 void Reset() {
@@ -189,24 +333,30 @@ void Reset() {
   g.s.in_session = in_session;
   g.guest_id.clear();
   g.start_pending = false;
+  g.start_machines.clear();
+  g.heard_from.clear();
+  g.want = 0;
   g.s.chat = std::move(keep);
   Touch();
 }
 
-void HostLocked(bool open, const std::string& status) {
+void HostLocked(bool open, int capacity, const std::string& status) {
   Reset();
   g.s.phase = Phase::kHosting;
   g.s.code = NewCode();
   g.s.open = open;
   g.s.host = true;
+  g.s.capacity = capacity == 4 ? 4 : 2;
   g.s.me = MyName();
-  g.s.title = Tf("Sala de {}", g.s.me);
+  g.s.title = (Four() ? std::string(kFourTitle) : std::string()) + Tf("Sala de {}", g.s.me);
   g.s.status = status;
+  g.s.members = {MeNow()};
   lobby::Host(g.s.code, g.s.title, open, false);
-  REXLOG_INFO("[room] hosting {} ({})", g.s.code, open ? "open" : "private");
+  REXLOG_INFO("[room] hosting {} ({}, {})", g.s.code, open ? "open" : "private",
+              Four() ? "two against two, four people" : "one against one");
 }
 
-void JoinLocked(const std::string& code) {
+void JoinLocked(const std::string& code, int want) {
   Reset();
   g.s.phase = Phase::kJoining;
   g.s.code = code;
@@ -214,6 +364,7 @@ void JoinLocked(const std::string& code) {
   g.s.me = MyName();
   g.s.status = Tf("Entrando a la sala {}...", code);
   g.guest_id = NewId();
+  g.want = want;
   g.joined_at = Clock::now();
   g.hi_at = {};
   lobby::Join(code, g.guest_id);
@@ -232,6 +383,7 @@ void OtherGoneLocked(const char* why) {
     g.s.other_avatar.clear();
     g.s.my_ready = g.s.other_ready = false;
     g.guest_id.clear();
+    g.s.members = {MeNow()};
     g.s.status = T("Esperando un rival");
     lobby::Host(g.s.code, g.s.title, g.s.open, false);
   } else {
@@ -242,41 +394,102 @@ void OtherGoneLocked(const char* why) {
   AddLine("", Tf(why, other), true);
 }
 
-void MaybeStartLocked() {
-  if (!g.s.host || g.s.in_session || g.s.phase != Phase::kTogether || !g.s.my_ready || !g.s.other_ready) return;
-  if (g.s.content_differs) return;  // one has Kratos and the other not (TakeMods said so)
-  SendOther({{"room", "start"}});
+// mk9-lauta (2026-11-17): a guest of the host's room of four left (or went quiet): out of the list; the session it
+// played in ends (for every machine).
+void GuestGoneLocked(const std::string& id, const char* why) {
+  Member* m = FindMember(id);
+  if (!m) return;
+  const std::string name = m->name.empty() ? T("Alguien") : m->name;
+  g.s.members.erase(g.s.members.begin() + (m - g.s.members.data()));
+  g.heard_from.erase(id);
+  AddLine("", Tf(why, name), true);
+  if (g.s.in_session) {
+    netplay::PeerLeft();
+    return;
+  }
+  // the others are not ready any more: who plays changed
+  for (Member& o : g.s.members) {
+    if (!o.me) o.ready = false;
+  }
+  if (g.s.members.size() <= 1) {
+    g.s.phase = Phase::kHosting;
+    g.s.my_ready = false;
+    g.s.status = T("Esperando jugadores");
+  }
+  BroadcastMembers();
+  AnnounceFour();
+}
+
+void LaunchSoon(int ms, std::vector<std::string> machines) {
   g.s.phase = Phase::kStarting;
   g.s.status = T("Arranca la pelea");
   g.start_pending = true;
-  g.start_at = Clock::now() + std::chrono::milliseconds(1200);  // the guest gets the start first
+  g.start_machines = std::move(machines);
+  g.start_at = Clock::now() + std::chrono::milliseconds(ms);
   Touch();
+}
+
+void MaybeStartLocked() {
+  if (Four()) {
+    UpdateCanStart();  // its host starts it (Start)
+    return;
+  }
+  if (!g.s.host || g.s.in_session || g.s.phase != Phase::kTogether || !g.s.my_ready || !g.s.other_ready) return;
+  if (g.s.content_differs) return;  // one has Kratos and the other not (TakeMods said so)
+  SendOther({{"room", "start"}});
+  LaunchSoon(1200, {});  // the guest gets the start first
 }
 
 void OnMessageLocked(const json& d) {
   const std::string kind = d.value("room", "");
   if (kind.empty()) return;
   g.heard = Clock::now();
+  const std::string from = Text(d, "id");
+  // a room of four's host: what a guest says goes with its id (the relay does not say who sent it)
+  Member* sender = g.s.host && Four() ? FindMember(from) : nullptr;
+  if (sender) g.heard_from[from] = Clock::now();
   // the other player's country and record, with its hello and its keepalives (it may have found it after the hello)
-  if (const std::string cc = d.value("cc", ""); cc.size() == 2 && g.s.phase == Phase::kTogether) {
-    if (g.s.other_country != cc) {
-      g.s.other_country = cc;
-      Touch();
+  if (!Four()) {
+    if (const std::string cc = d.value("cc", ""); cc.size() == 2 && g.s.phase == Phase::kTogether) {
+      if (g.s.other_country != cc) {
+        g.s.other_country = cc;
+        Touch();
+      }
     }
-  }
-  if (d.contains("won") && g.s.phase == Phase::kTogether) {
-    g.s.other_won = d.value("won", -1);
-    g.s.other_lost = d.value("lost", -1);
-  }
-  if (d.contains("won") && g.s.phase == Phase::kTogether) TakeMods(d);
-  if (d.contains("av") && g.s.phase == Phase::kTogether) {
+    if (d.contains("won") && g.s.phase == Phase::kTogether) {
+      g.s.other_won = d.value("won", -1);
+      g.s.other_lost = d.value("lost", -1);
+    }
+    if (d.contains("won") && g.s.phase == Phase::kTogether) TakeMods(d, g.s.other);
+    if (d.contains("av") && g.s.phase == Phase::kTogether) {
+      const std::string hash = avatars::CleanHash(Text(d, "av"));
+      if (hash != g.s.other_avatar) {
+        g.s.other_avatar = hash;
+        Touch();
+      }
+      if (!hash.empty() && avatars::ShowOthers() && !session::IsBlocked(g.s.other) && avatars::Wanted(hash)) {
+        SendOther({{"room", "av?"}, {"h", hash}});
+      }
+    }
+  } else if (sender && d.contains("won")) {
+    // a guest of the host's room of four: its keepalive's news
+    const std::string cc = d.value("cc", "");
+    if (cc.size() == 2) sender->country = cc;
+    sender->won = d.value("won", -1);
+    sender->lost = d.value("lost", -1);
+    const std::string mods = Text(d, "mods");
+    if (mods != sender->mods) {
+      sender->mods = mods;
+      TakeMods(d, sender->name);
+      BroadcastMembers();
+    }
     const std::string hash = avatars::CleanHash(Text(d, "av"));
-    if (hash != g.s.other_avatar) {
-      g.s.other_avatar = hash;
-      Touch();
+    if (hash != sender->avatar) {
+      sender->avatar = hash;
+      BroadcastMembers();
     }
-    if (!hash.empty() && avatars::ShowOthers() && !session::IsBlocked(g.s.other) && avatars::Wanted(hash)) {
-      SendOther({{"room", "av?"}, {"h", hash}});
+    if (!hash.empty() && avatars::ShowOthers() && !session::IsBlocked(sender->name) && avatars::Wanted(hash)) {
+      lobby::SigToGuest(g.s.code, from, {{"room", "av?"}, {"h", hash}});
     }
   }
   if (g.s.host) {
@@ -294,10 +507,21 @@ void OnMessageLocked(const json& d) {
         lobby::SigToGuest(g.s.code, id, {{"room", "watch_mods"}, {"mods", Mods()}});
         return;
       }
-      // the players' names and flags as this side has them now (the other's may come later)
+      // the players' names and flags as this side has them now (the other's may come later). mk9-lauta (2026-11-17):
+      // a room of four: the host and the others together ("p2"), each one in "list"
+      std::string others = g.s.other, others_cc = g.s.other_country, others_av = g.s.other_avatar;
+      json list = json::array();
+      if (Four()) {
+        others.clear();
+        for (const Member& m : g.s.members) {
+          list.push_back({{"name", m.name}, {"cc", m.country}, {"av", m.avatar}});
+          if (m.me) continue;
+          others += (others.empty() ? "" : " · ") + m.name;
+        }
+      }
       lobby::SigToGuest(g.s.code, id,
-                        {{"room", "watching"}, {"p1", g.s.me}, {"p2", g.s.other}, {"cc1", flags::Mine()},
-                         {"cc2", g.s.other_country}, {"av1", avatars::MineHash()}, {"av2", g.s.other_avatar}});
+                        {{"room", "watching"}, {"p1", g.s.me}, {"p2", others}, {"cc1", flags::Mine()},
+                         {"cc2", others_cc}, {"av1", avatars::MineHash()}, {"av2", others_av}, {"list", list}});
       if (g.s.watchers != feed::Watchers()) {
         g.s.watchers = feed::Watchers();
         Touch();
@@ -305,9 +529,11 @@ void OnMessageLocked(const json& d) {
       return;
     }
     // mk9-lauta (2026-11-11): a spectator asks for a player's picture (this one's, or the rival's kept here)
-    if (kind == "av?" && !Text(d, "id").empty()) {
+    if (kind == "av?" && !Text(d, "id").empty() && !sender) {
       const std::string id = Text(d, "id"), hash = avatars::CleanHash(Text(d, "h"));
-      if (!hash.empty() && (hash == avatars::MineHash() || hash == g.s.other_avatar) && PictureDue(id + hash)) {
+      const std::vector<std::string> pictures = MemberPictures();
+      const bool known = hash == avatars::MineHash() || std::find(pictures.begin(), pictures.end(), hash) != pictures.end();
+      if (!hash.empty() && known && PictureDue(id + hash)) {
         if (json picture = PictureMessage(hash); !picture.is_null()) lobby::SigToGuest(g.s.code, id, picture);
       }
       return;
@@ -320,7 +546,57 @@ void OnMessageLocked(const json& d) {
         lobby::SigToGuest(g.s.code, id, {{"room", "full"}});
         return;
       }
+      if (Four()) {
+        // mk9-lauta (2026-11-17): a room of four: a guest already in it says hello again (or comes back in its
+        // session); a new one, while there is room for one more machine and a person more, from a release that
+        // plays it, looking for it (a quick match one against one is turned away)
+        const int want = d.value("want", 0);
+        Member* known = FindMember(id);
+        bool fits = known != nullptr;
+        if (!fits && g.s.in_session) {
+          fits = std::find(g.session_machines.begin(), g.session_machines.end(), id) != g.session_machines.end();
+        } else if (!fits) {
+          fits = (g.s.phase == Phase::kHosting || g.s.phase == Phase::kTogether) && !FullNow() &&
+                 d.value("proto", 0) >= kFourProto && (want == 0 || want == 4);
+        }
+        if (!fits) {
+          lobby::SigToGuest(g.s.code, id, {{"room", "full"}, {"cap", 4}});
+          AnnounceFour();  // the lobby's quick match marked it playing when it gave it out
+          return;
+        }
+        if (!known) {
+          Member m;
+          m.id = id;
+          g.s.members.push_back(m);
+          known = &g.s.members.back();
+          AddLine("", Tf("{} entró a la sala", name), true);
+          if (!g.s.in_session) notify::Attention(true);
+        }
+        known->name = name;
+        known->country = d.value("cc", "");
+        known->won = d.value("won", -1);
+        known->lost = d.value("lost", -1);
+        known->avatar = avatars::CleanHash(Text(d, "av"));
+        known->mods = Text(d, "mods");
+        g.heard_from[id] = Clock::now();
+        if (known->mods != Mods()) TakeMods(d, name);
+        g.s.phase = Phase::kTogether;
+        g.s.status = Tf("{} de {} personas en la sala", People(), g.s.capacity);
+        lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}, {"cap", 4}}));
+        if (!known->avatar.empty() && avatars::ShowOthers() && avatars::Wanted(known->avatar)) {
+          lobby::SigToGuest(g.s.code, id, {{"room", "av?"}, {"h", known->avatar}});
+        }
+        BroadcastMembers();
+        AnnounceFour();
+        return;
+      }
       if (g.s.phase == Phase::kHosting || (g.s.phase == Phase::kTogether && id == g.guest_id)) {
+        // a room of two: a quick match two against two is turned away
+        if (d.value("want", 0) == 4) {
+          lobby::SigToGuest(g.s.code, id, {{"room", "full"}, {"cap", 2}});
+          lobby::Host(g.s.code, g.s.title, g.s.open, false);
+          return;
+        }
         const bool fresh = g.s.phase == Phase::kHosting;
         g.guest_id = id;
         g.s.other = name;
@@ -329,7 +605,18 @@ void OnMessageLocked(const json& d) {
         g.s.other_lost = d.value("lost", -1);
         g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
         g.s.phase = Phase::kTogether;
-        TakeMods(d);
+        TakeMods(d, name);
+        Member guest;
+        guest.id = id;
+        guest.name = name;
+        guest.country = g.s.other_country;
+        guest.won = g.s.other_won;
+        guest.lost = g.s.other_lost;
+        guest.avatar = g.s.other_avatar;
+        guest.mods = Text(d, "mods");
+        guest.players = g.s.other_players;
+        guest.ready = g.s.other_ready;
+        g.s.members = {MeNow(), guest};
         lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}}));
         if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
           lobby::SigToGuest(g.s.code, id, {{"room", "av?"}, {"h", g.s.other_avatar}});
@@ -343,6 +630,42 @@ void OnMessageLocked(const json& d) {
         }
       } else {
         lobby::SigToGuest(g.s.code, id, {{"room", "full"}});
+      }
+      return;
+    }
+    if (Four()) {
+      // mk9-lauta (2026-11-17): a guest of a room of four (only those in it are heard)
+      if (!sender) return;
+      if (kind == "chat") {
+        const std::string text = d.value("text", "").substr(0, 200);
+        AddLine(sender->name, text, false);
+        notify::Attention(false);
+        const json relayed = {{"room", "chat"}, {"text", text}, {"name", sender->name}};
+        for (const Member& m : g.s.members) {
+          if (!m.me && m.id != from && !m.id.empty()) lobby::SigToGuest(g.s.code, m.id, relayed);
+        }
+      } else if (kind == "ready") {
+        sender->ready = d.value("on", false);
+        const int players = d.value("pl", 1) == 2 ? 2 : 1;
+        // two at that PC only while the room has the room for it
+        sender->players = players == 2 && People() - sender->players + 2 <= g.s.capacity ? 2 : 1;
+        if (sender->ready) notify::Attention(true);
+        g.s.status = Tf("{} de {} personas en la sala", People(), g.s.capacity);
+        BroadcastMembers();
+        AnnounceFour();
+      } else if (kind == "bye") {
+        GuestGoneLocked(from, "{} se fue de la sala");
+      } else if (kind == "av?") {
+        // the guest lacks a picture: this one's, or another member's kept here
+        const std::string hash = avatars::CleanHash(Text(d, "h"));
+        const std::vector<std::string> pictures = MemberPictures();
+        const bool known =
+            hash == avatars::MineHash() || std::find(pictures.begin(), pictures.end(), hash) != pictures.end();
+        if (!hash.empty() && known && PictureDue(from + hash)) {
+          if (json picture = PictureMessage(hash); !picture.is_null()) lobby::SigToGuest(g.s.code, from, picture);
+        }
+      } else if (kind == "av") {
+        TakePicture(d, MemberPictures());
       }
       return;
     }
@@ -372,7 +695,7 @@ void OnMessageLocked(const json& d) {
       } else if (kind == "feed") {
         feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
       } else if (kind == "av") {
-        TakePicture(d, {&g.s.p1_avatar, &g.s.p2_avatar});
+        TakePicture(d, {g.s.p1_avatar, g.s.p2_avatar});
       } else if (kind == "feed_end") {
         feed::ReceivedEnd();
       } else if (kind == "watch_full") {
@@ -388,6 +711,7 @@ void OnMessageLocked(const json& d) {
       return;
     }
     if (kind == "welcome" && g.s.phase == Phase::kJoining) {
+      g.s.capacity = d.value("cap", 2) == 4 ? 4 : 2;
       g.s.other = d.value("name", "");
       g.s.other_country = d.value("cc", "");
       g.s.other_won = d.value("won", -1);
@@ -395,26 +719,75 @@ void OnMessageLocked(const json& d) {
       g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
       g.s.phase = Phase::kTogether;
       g.s.status = Tf("En la sala de {}", g.s.other);
-      TakeMods(d);
+      if (!Four()) {
+        TakeMods(d, g.s.other);
+        Member host;
+        host.name = g.s.other;
+        host.country = g.s.other_country;
+        host.won = g.s.other_won;
+        host.lost = g.s.other_lost;
+        host.avatar = g.s.other_avatar;
+        host.mods = Text(d, "mods");
+        g.s.members = {host, MeNow()};
+      }
       if (!g.s.other_avatar.empty() && avatars::ShowOthers() && avatars::Wanted(g.s.other_avatar)) {
-        lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", g.s.other_avatar}});
+        lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", g.s.other_avatar}, {"id", g.guest_id}});
       }
       AddLine("", Tf("Entraste a la sala de {}", g.s.other), true);
       if (!g.s.in_session) notify::Attention(true);
       return;
     }
+    if (kind == "members" && (g.s.phase == Phase::kTogether || g.s.phase == Phase::kStarting)) {
+      // mk9-lauta (2026-11-17): a room of four's host says who is in it
+      g.s.capacity = 4;
+      std::vector<Member> members;
+      const json& list = d.contains("list") && d["list"].is_array() ? d["list"] : json::array();
+      for (const json& e : list) {
+        if (!e.is_object() || members.size() >= size_t(kMaxMachines)) continue;
+        Member m;
+        m.id = Text(e, "id");
+        m.name = Text(e, "name");
+        m.country = Text(e, "cc");
+        m.won = e.value("won", -1);
+        m.lost = e.value("lost", -1);
+        m.avatar = avatars::CleanHash(Text(e, "av"));
+        m.mods = Text(e, "mods");
+        m.players = e.value("pl", 1) == 2 ? 2 : 1;
+        m.ready = e.value("ready", false);
+        m.me = !m.id.empty() && m.id == g.guest_id;
+        if (m.me) {
+          // this one's own word on its ready and its people is the one it sent last
+          m.ready = g.s.my_ready;
+          m.players = g.s.my_players;
+        }
+        for (const std::string& hash : {m.avatar}) {
+          if (!m.me && !hash.empty() && avatars::ShowOthers() && avatars::Wanted(hash) && PictureDue("ask" + hash)) {
+            lobby::SigToHost(g.s.code, {{"room", "av?"}, {"h", hash}, {"id", g.guest_id}});
+          }
+        }
+        members.push_back(std::move(m));
+      }
+      g.s.members = std::move(members);
+      SyncOther();
+      g.s.status = Tf("{} de {} personas en la sala", People(), g.s.capacity);
+      return;
+    }
     if (kind == "full" && g.s.phase == Phase::kJoining) {
+      const int cap = d.value("cap", 2);
       Reset();
-      g.s.status = T("Esa sala ya tiene dos jugadores");
+      g.s.status = cap == 4 ? T("Esa sala de 2 contra 2 ya está completa (o es de otra versión)")
+                            : T("Esa sala ya tiene dos jugadores");
       lobby::Join("", "");
       return;
     }
     if (kind == "start" && g.s.phase == Phase::kTogether && !g.s.in_session) {
-      g.s.phase = Phase::kStarting;
-      g.s.status = T("Arranca la pelea");
-      g.start_pending = true;
-      g.start_at = Clock::now() + std::chrono::milliseconds(300);
-      Touch();
+      std::vector<std::string> machines;
+      if (d.contains("machines") && d["machines"].is_array()) {
+        for (const json& id : d["machines"]) {
+          if (id.is_string() && machines.size() < size_t(kMaxMachines)) machines.push_back(id.get<std::string>());
+        }
+      }
+      LaunchSoon(300, std::move(machines));
       return;
     }
   }
@@ -427,15 +800,23 @@ void OnMessageLocked(const json& d) {
     return;
   }
   if (kind == "av") {
-    TakePicture(d, {&g.s.other_avatar});
+    TakePicture(d, MemberPictures());
     return;
   }
   if (kind == "chat") {
-    AddLine(g.s.other, d.value("text", ""), false);
+    // (a room of four: the host passes it on with its sender's name)
+    AddLine(Text(d, "name").empty() ? g.s.other : Text(d, "name"), d.value("text", ""), false);
     notify::Attention(false);
   } else if (kind == "ready") {
     g.s.other_ready = d.value("on", false);
     g.s.other_players = d.value("pl", 1) == 2 ? 2 : 1;
+    for (Member& m : g.s.members) {
+      if (!m.me) {
+        m.ready = g.s.other_ready;
+        m.players = g.s.other_players;
+        break;
+      }
+    }
     if (g.s.other_ready) notify::Attention(true);
     Touch();
     MaybeStartLocked();
@@ -447,12 +828,18 @@ void OnMessageLocked(const json& d) {
 
 }  // namespace
 
-void CreateRoom(bool open) {
+void CreateRoom(bool open, int capacity) {
   std::lock_guard<std::mutex> lock(g.mutex);
-  HostLocked(open, T(open ? "Sala pública: esperando un rival" : "Sala privada: pasale el código a tu rival"));
+  if (capacity == 4) {
+    HostLocked(open, 4,
+               T(open ? "Sala pública de 2 contra 2: esperando jugadores"
+                      : "Sala privada de 2 contra 2: pasales el código a los otros tres"));
+  } else {
+    HostLocked(open, 2, T(open ? "Sala pública: esperando un rival" : "Sala privada: pasale el código a tu rival"));
+  }
 }
 
-void JoinRoom(const std::string& code) {
+void JoinRoom(const std::string& code, int want) {
   const std::string c = Normalize(code);
   std::lock_guard<std::mutex> lock(g.mutex);
   if (c.size() < 4) {
@@ -460,7 +847,7 @@ void JoinRoom(const std::string& code) {
     Touch();
     return;
   }
-  JoinLocked(c);
+  JoinLocked(c, want);
 }
 
 void QuickMatch() {
@@ -468,7 +855,24 @@ void QuickMatch() {
   Reset();
   g.s.phase = Phase::kSearching;
   g.s.status = T("Buscando rival...");
+  g.want = 2;
   lobby::Quick();
+}
+
+void Start() {
+  std::vector<std::string> machines;
+  {
+    std::lock_guard<std::mutex> lock(g.mutex);
+    UpdateCanStart();
+    if (!g.s.can_start) return;
+    for (const Member& m : g.s.members) machines.push_back(m.me ? std::string() : m.id);
+    // (two machines: a session of two, as a room of two's)
+    const json start = machines.size() > 2 ? json{{"room", "start"}, {"machines", machines}} : json{{"room", "start"}};
+    SendOther(start);
+    REXLOG_INFO("[room] {} starts its fight with {} machines, {} people", g.s.code, machines.size(), People());
+    g.s.can_start = false;
+    LaunchSoon(1200, machines.size() > 2 ? machines : std::vector<std::string>{});  // the guests get the start first
+  }
 }
 
 void Leave() {
@@ -480,7 +884,7 @@ void Leave() {
     Reset();
     return;
   }
-  SendOther({{"room", "bye"}});
+  SendOther({{"room", "bye"}, {"id", g.s.host ? std::string() : g.guest_id}});
   if (g.s.host) {
     lobby::Unhost();
   } else {
@@ -494,7 +898,12 @@ void SetReady(bool ready) {
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase != Phase::kTogether || g.s.in_session) return;
   g.s.my_ready = ready;
-  SendOther({{"room", "ready"}, {"on", ready}, {"pl", g.s.my_players}});
+  if (Four() && g.s.host) {
+    BroadcastMembers();
+  } else {
+    SendOther({{"room", "ready"}, {"on", ready}, {"pl", g.s.my_players}, {"id", g.guest_id}});
+    SyncOther();
+  }
   Touch();
   MaybeStartLocked();
 }
@@ -503,7 +912,14 @@ void SetPlayers(int players) {
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase != Phase::kTogether || g.s.in_session || g.s.my_ready) return;
   g.s.my_players = players == 2 ? 2 : 1;
-  SendOther({{"room", "ready"}, {"on", false}, {"pl", g.s.my_players}});
+  if (Four() && g.s.host) {
+    // the host's own: only while the room has the room for it
+    if (People() - (MeMember() ? MeMember()->players : 1) + g.s.my_players > g.s.capacity) g.s.my_players = 1;
+    BroadcastMembers();
+  } else {
+    SendOther({{"room", "ready"}, {"on", false}, {"pl", g.s.my_players}, {"id", g.guest_id}});
+    SyncOther();
+  }
   Touch();
 }
 
@@ -511,7 +927,7 @@ void Say(const std::string& text) {
   if (text.empty()) return;
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase != Phase::kTogether) return;
-  SendOther({{"room", "chat"}, {"text", text.substr(0, 200)}});
+  SendOther({{"room", "chat"}, {"text", text.substr(0, 200)}, {"name", g.s.me}, {"id", g.guest_id}});
   AddLine(g.s.me, text.substr(0, 200), false);
 }
 
@@ -545,7 +961,7 @@ void EnterWatch(const std::string& code, const std::string& me, const std::strin
 }
 
 void EnterSession(const std::string& code, bool host, const std::string& me, const std::string& id,
-                  const std::string& title, bool open) {
+                  const std::string& title, bool open, const std::vector<std::string>& machines) {
   std::lock_guard<std::mutex> lock(g.mutex);
   g.s = State{};
   g.s.in_session = true;
@@ -557,6 +973,12 @@ void EnterSession(const std::string& code, bool host, const std::string& me, con
   g.s.phase = host ? Phase::kHosting : Phase::kJoining;
   g.s.status = T("Conectando con el rival");
   g.guest_id = host ? std::string() : id;  // the session (netplay.cpp) has hosted or joined the room already
+  // mk9-lauta (2026-11-17): a session of more than two machines: a room of four, its guests welcomed back by id
+  g.session_machines = machines;
+  if (machines.size() > 2) {
+    g.s.capacity = 4;
+    g.s.members = {MeNow()};
+  }
   g.joined_at = Clock::now();
   g.heard = Clock::now();
   Touch();
@@ -572,9 +994,26 @@ static void TestStep() {
   if (!started) {
     const lobby::State lobby = lobby::Snapshot();
     if (lobby.link != lobby::Link::kOnline || !lobby.named) return;
+    if (test == "quick4") {
+      // mk9-lauta (2026-11-17): a room of four waiting in the list (as the screens' quick match two against two), or
+      // a new one after 6 s of none
+      static const auto first = Clock::now();
+      for (const lobby::Room& r : lobby.rooms) {
+        if (r.playing || r.title.rfind(kFourTitle, 0) != 0) continue;
+        started = true;
+        REXLOG_INFO("[room] mk9_online_test=quick4: room {}", r.code);
+        JoinRoom(r.code, 4);
+        return;
+      }
+      if (Clock::now() - first < std::chrono::seconds(6)) return;
+      started = true;
+      CreateRoom(true, 4);
+      return;
+    }
     started = true;
     REXLOG_INFO("[room] mk9_online_test={}", test);
     if (test == "host") CreateRoom(true);
+    if (test == "host4") CreateRoom(true, 4);
     if (test == "quick") QuickMatch();
     return;
   }
@@ -590,6 +1029,8 @@ static void TestStep() {
     if (const int players = REXCVAR_GET(mk9_online_test_players); players != s.my_players) SetPlayers(players);
     SetReady(true);
   }
+  // the host of a room of four starts once the test's machines are in, all ready
+  if (s.host && s.capacity == 4 && s.can_start && int(s.members.size()) >= REXCVAR_GET(mk9_online_test_start)) Start();
 }
 
 void Pump() {
@@ -600,25 +1041,30 @@ void Pump() {
     if (event.kind == lobby::Event::Kind::kMatch) {
       if (g.s.phase != Phase::kSearching) continue;
       if (!event.room.empty()) {
-        JoinLocked(event.room);
+        JoinLocked(event.room, 2);
       } else {
-        HostLocked(true, T("Nadie esperando: tu sala quedó abierta para el próximo que busque"));
+        HostLocked(true, 2, T("Nadie esperando: tu sala quedó abierta para el próximo que busque"));
       }
       continue;
     }
     if (event.room == g.s.code && event.data.is_object()) OnMessageLocked(event.data);
   }
   bool launch = false;
-  std::string code, me, title;
+  std::string code, me, title, my_id;
   bool host = false, listed = false;
   int players = 1;
+  std::vector<std::string> machines;
   {
     std::lock_guard<std::mutex> lock(g.mutex);
     const auto now = Clock::now();
     if (g.s.phase == Phase::kJoining) {
       if (now - g.hi_at > kHiEvery) {
         g.hi_at = now;
-        lobby::SigToHost(g.s.code, AboutMe({{"room", "hi"}, {"name", g.s.me}, {"id", g.guest_id}}));
+        lobby::SigToHost(g.s.code, AboutMe({{"room", "hi"},
+                                            {"name", g.s.me},
+                                            {"id", g.guest_id},
+                                            {"want", g.want},
+                                            {"proto", kFourProto}}));
       }
       if (!g.s.in_session && now - g.joined_at > kJoinFor) {
         const std::string code_was = g.s.code;
@@ -639,10 +1085,23 @@ void Pump() {
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {
         g.said = now;
-        SendOther(AboutMe({{"room", "ping"}}));
+        SendOther(AboutMe({{"room", "ping"}, {"id", g.guest_id}}));
+        if (g.s.host && Four()) BroadcastMembers();  // (the members again: a guest that missed one)
       }
-      // in a session the fight's own path says whether the other player is there (the lobby may be what is down)
-      if (now - g.heard > kGone && !g.s.in_session) OtherGoneLocked("{} se desconectó");
+      // in a session the fight's own path says whether the other players are there (the lobby may be what is down)
+      if (!g.s.in_session) {
+        if (g.s.host && Four()) {
+          std::vector<std::string> quiet;
+          for (const Member& m : g.s.members) {
+            if (m.me) continue;
+            const auto it = g.heard_from.find(m.id);
+            if (it != g.heard_from.end() && now - it->second > kGone) quiet.push_back(m.id);
+          }
+          for (const std::string& id : quiet) GuestGoneLocked(id, "{} se desconectó");
+        } else if (now - g.heard > kGone) {
+          OtherGoneLocked("{} se desconectó");
+        }
+      }
     }
     if (g.start_pending && now >= g.start_at) {
       g.start_pending = false;
@@ -653,11 +1112,13 @@ void Pump() {
       title = g.s.title;
       listed = g.s.open;
       players = g.s.my_players;
+      machines = g.start_machines;
+      my_id = g.guest_id;
     }
   }
   if (launch) {
     lobby::Stop();
-    session::Launch(code, host, me, title, listed, players);
+    session::Launch(code, host, me, title, listed, players, machines, my_id);
   }
   // mk9-lauta (2026-11-10): the session's host passes the match to whoever watches it (feed.h)
   {

@@ -43,6 +43,31 @@ de 6 caracteres sin I, O, 0 ni 1. Partida rápida: el lobby da la sala que más 
 Cuando los dos están listos, el host manda `start`: el invitado se vuelve a abrir a los 300 ms y el host a los
 1200 ms (que el invitado reciba el arranque antes).
 
+### La sala de cuatro (1.4.0, 2026-11-17)
+
+Para el dos contra dos con cada uno en su PC (o mezclado: dos en una PC y dos en otras): hasta cuatro personas y
+cuatro máquinas. Sin cambios en el servidor: el relay ya deja que cualquiera le mande a cualquier invitado por su id.
+
+- La crea el host con "Sala de 2 contra 2" (`CreateRoom(open, 4)`); su título empieza con `2v2 · ` (`kFourTitle`): así
+  la distinguen las partidas rápidas (la de siempre la saltea; **Partida rápida 2 contra 2** entra sólo a esas, o abre
+  una). Mientras no está llena se anuncia esperando; llena, jugando (no aparece para entrar).
+- El host tiene la palabra de la sala: los invitados le hablan sólo a él (`hi`, `ready`, `chat`, `ping`, `bye`, con su
+  `id`), y él les manda a todos la lista (`members` {cap, list: [{id, name, cc, won, lost, av, mods, pl, ready}]}) y les
+  pasa el chat de cada uno con su nombre. El `hi` dice el protocolo de la sesión (`proto`, 12) y qué busca (`want`: 2
+  una partida rápida uno contra uno, 4 una de dos contra dos): una sala de cuatro sólo toma una versión que la juega, y
+  a un "uno contra uno" le dice `full`.
+- Las fotos que un invitado no tiene se las pide al host (que guarda las de todos).
+- Arranca el host con **Empezar la pelea** cuando todos los que están se marcaron listos (dos máquinas o más): su
+  `start` dice el id de cada máquina en el orden de la sala (`machines`; el del host vacío), y cada juego se vuelve a
+  abrir con `--mk9_net_peers` y su `--mk9_net_id` (una sesión de dos máquinas sigue siendo la de siempre). Ya en la
+  sesión, el host vuelve a recibir a esos invitados en la sala por su id (el chat sigue) y les pasa la partida a los
+  espectadores (`watching` con los nombres de todos).
+- Si un invitado se va o deja de responder 12 s, sale de la lista y los demás dejan de estar listos; en la sesión, se
+  termina para todos.
+
+Prueba: `tools/online/room4_test.ps1` (cuatro juegos por un lobby local: `mk9_online_test=host4` y `quick4`,
+`mk9_online_test_start`).
+
 ## Fotos de perfil y perfiles (2026-11-11)
 
 Sin servidores nuevos ni nada guardado en el lobby: el lobby sólo reenvía, como los mensajes de una sala.

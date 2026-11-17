@@ -4,6 +4,7 @@
 
 #include <juice/juice.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -40,11 +41,18 @@ void LogFromJuice(juice_log_level_t level, const char* message) {
   }
 }
 
+// A lobby id for the logs ("the host" for the empty one).
+std::string Who(const std::string& id) { return id.empty() ? std::string("the host") : id; }
+
 }  // namespace
 
 struct IceLink::Impl {
-  std::string room, id;  // id: the guest's (on the host's side, the one whose offer it answered)
-  bool host = false;
+  std::string room;
+  // mk9-lauta (2026-11-17): the two sides' lobby ids (the host's: empty). A session of two's host learns its guest's
+  // from the offer (learn_remote); the side that offers is a guest (of two guests, the later one in the room).
+  std::string local_id, remote_id;
+  bool learn_remote = false;
+  bool offerer = false;
   bool relay_only = false;
   // the servers, kept alive for libjuice's pointers
   std::string stun_host;
@@ -61,7 +69,7 @@ struct IceLink::Impl {
   uint64_t offered_at = 0;
   bool answered = false;
   std::mutex sig_mutex;    // who the relayed messages go to (the callbacks send candidates)
-  uint64_t session = 0;    // the exchange's number (the guest's offer picks it): a stale one is ignored
+  uint64_t session = 0;    // the exchange's number (the offer picks it): a stale one is ignored
   std::mutex inbox_mutex;  // the datagrams in
   std::condition_variable readable;
   struct Datagram {
@@ -72,21 +80,24 @@ struct IceLink::Impl {
   uint64_t last_arrival_us = 0;  // of the datagram Receive returned last (the game thread's)
 
   std::atomic<int> state{JUICE_STATE_DISCONNECTED};
-  std::atomic<bool> failed{false}, stopping{false};
-  std::thread pump;
+  std::atomic<bool> failed{false};
 
-  // Relays data with the exchange's number to the other player.
+  // Relays data with the exchange's number and this side's id to the other side.
   void SendSig(json data) {
     std::string to;
+    bool unknown = false;
     {
       std::lock_guard<std::mutex> lock(sig_mutex);
       data["s"] = session;
-      to = id;
+      to = remote_id;
+      unknown = learn_remote && remote_id.empty();
     }
-    if (host) {
-      if (!to.empty()) lobby::SigToGuest(room, to, data);
-    } else {
+    data["from"] = local_id;
+    if (unknown) return;  // a session of two's host before its guest offered: nobody to send to yet
+    if (to.empty()) {
       lobby::SigToHost(room, data);
+    } else {
+      lobby::SigToGuest(room, to, data);
     }
   }
 
@@ -95,7 +106,15 @@ struct IceLink::Impl {
     return session;
   }
 
-  // A new agent for this exchange (the mutex held). remote: the offer it answers (the host's side), set before the
+  // This link takes a message from that sender (the router): its other side's, or an offer the host of a session of
+  // two waits for from its guest, whoever it is.
+  bool Takes(const std::string& from, const std::string& kind) {
+    std::lock_guard<std::mutex> lock(sig_mutex);
+    if (learn_remote && remote_id.empty()) return kind == "offer";
+    return from == remote_id;
+  }
+
+  // A new agent for this exchange (the mutex held). remote: the offer it answers (the answering side), set before the
   // local description is made: libjuice makes an agent whose own description comes first the controlling one, so a
   // host that made its answer first was controlling too ("ICE role conflict (both controlling)" in every session that
   // froze at its start, 2026-11-10); answering after the offer, it is the controlled one, as ICE wants.
@@ -118,7 +137,7 @@ struct IceLink::Impl {
     config.cb_state_changed = [](juice_agent_t*, juice_state_t s, void* user) {
       auto* self = static_cast<Impl*>(user);
       self->state = int(s);
-      REXLOG_INFO("[ice] room {}: {}", self->room, juice_state_to_string(s));
+      REXLOG_INFO("[ice] room {} ({}): {}", self->room, Who(self->remote_id), juice_state_to_string(s));
       if (s == JUICE_STATE_FAILED) self->failed = true;
       self->readable.notify_all();
     };
@@ -171,16 +190,16 @@ struct IceLink::Impl {
     const std::string kind = m.value("ice", "");
     const uint64_t s = m.value("s", uint64_t(0));
     std::lock_guard<std::mutex> lock(mutex);
-    if (host && kind == "offer") {
+    if (!offerer && kind == "offer") {
       const std::string from = m.value("from", "");
       if (s == Session() && agent) {
-        SendSig({{"ice", "answer"}, {"sdp", local_sdp}});  // the guest missed the answer
+        SendSig({{"ice", "answer"}, {"sdp", local_sdp}});  // the offering side missed the answer
         return;
       }
-      // a new exchange: the guest (re)started
+      // a new exchange: the offering side (re)started
       {
         std::lock_guard<std::mutex> sig(sig_mutex);
-        id = from;
+        if (learn_remote) remote_id = from;
         session = s;
       }
       const std::string offer = m.value("sdp", "");
@@ -190,15 +209,15 @@ struct IceLink::Impl {
       }
       SendSig({{"ice", "answer"}, {"sdp", local_sdp}});
       juice_gather_candidates(agent);
-      REXLOG_INFO("[ice] room {}: the guest {} offered; answered", room, from);
+      REXLOG_INFO("[ice] room {}: {} offered; answered", room, Who(from));
       return;
     }
     if (s != Session() || !agent) return;  // another exchange's
-    if (!host && kind == "answer" && !answered) {
+    if (offerer && kind == "answer" && !answered) {
       answered = true;
       SetRemote(m.value("sdp", ""));
       juice_gather_candidates(agent);
-      REXLOG_INFO("[ice] room {}: the host answered", room);
+      REXLOG_INFO("[ice] room {}: {} answered", room, Who(remote_id));
     } else if (kind == "cand") {
       AddRemoteCandidate(m.value("c", ""));
     } else if (kind == "done") {
@@ -206,21 +225,12 @@ struct IceLink::Impl {
     }
   }
 
-  // The handshake's thread: the relayed messages in, the guest's offer again until it is answered.
-  void Pump() {
-    while (!stopping) {
-      lobby::Event event;
-      while (lobby::PollIce(&event)) {
-        if (event.room == room && event.data.is_object()) OnSig(event.data);
-      }
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        if (!host && agent && !answered && NowUs() - offered_at > 1000000) {
-          offered_at = NowUs();
-          SendSig({{"ice", "offer"}, {"from", id}, {"sdp", local_sdp}});
-        }
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  // The offering side's offer again, until it is answered (both sides may be starting up).
+  void Tick() {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (offerer && agent && !answered && NowUs() - offered_at > 1000000) {
+      offered_at = NowUs();
+      SendSig({{"ice", "offer"}, {"from", local_id}, {"sdp", local_sdp}});
     }
   }
 
@@ -266,44 +276,117 @@ struct IceLink::Impl {
   }
 };
 
-std::unique_ptr<IceLink> IceLink::Create(const std::string& room, bool host, const std::string& id) {
+namespace {
+
+// mk9-lauta (2026-11-17): the relayed ICE messages come in one queue (lobby.h PollIce) for every path of this game: a
+// session of four machines has three. One thread for all of them takes each message to the path it is for (by the
+// room and the sender's id) and makes the offering sides offer again until answered (what each link's own thread did
+// while there was one link).
+std::mutex g_links_mutex;
+std::vector<IceLink::Impl*> g_links;
+
+void Route() {
+  for (;;) {
+    lobby::Event event;
+    while (lobby::PollIce(&event)) {
+      if (!event.data.is_object()) continue;
+      const std::string from = event.data.value("from", "");
+      const std::string kind = event.data.value("ice", "");
+      std::lock_guard<std::mutex> lock(g_links_mutex);
+      IceLink::Impl* target = nullptr;
+      // a link whose other side sent it first; then a session of two's host waiting for its guest's offer
+      for (IceLink::Impl* link : g_links) {
+        if (link->room == event.room && !link->learn_remote && link->Takes(from, kind)) target = link;
+      }
+      if (!target) {
+        for (IceLink::Impl* link : g_links) {
+          if (link->room == event.room && link->learn_remote && link->Takes(from, kind)) target = link;
+        }
+      }
+      if (target) target->OnSig(event.data);
+    }
+    {
+      std::lock_guard<std::mutex> lock(g_links_mutex);
+      for (IceLink::Impl* link : g_links) link->Tick();
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+void Register(IceLink::Impl* link) {
+  static const bool started = [] {
+    std::thread(Route).detach();
+    return true;
+  }();
+  (void)started;
+  std::lock_guard<std::mutex> lock(g_links_mutex);
+  g_links.push_back(link);
+}
+
+void Unregister(IceLink::Impl* link) {
+  std::lock_guard<std::mutex> lock(g_links_mutex);
+  g_links.erase(std::remove(g_links.begin(), g_links.end(), link), g_links.end());
+}
+
+// The link's servers and, on the offering side, its first agent.
+std::unique_ptr<IceLink::Impl> NewImpl(const std::string& room, const std::string& local_id,
+                                       const std::string& remote_id, bool learn_remote, bool offerer) {
   static const bool logging = [] {
     juice_set_log_handler(LogFromJuice);
     juice_set_log_level(JUICE_LOG_LEVEL_WARN);
     return true;
   }();
   (void)logging;
-  auto impl = std::make_unique<Impl>();
+  auto impl = std::make_unique<IceLink::Impl>();
   impl->room = room;
-  impl->host = host;
-  impl->id = id;
+  impl->local_id = local_id;
+  impl->remote_id = remote_id;
+  impl->learn_remote = learn_remote;
+  impl->offerer = offerer;
   impl->relay_only = REXCVAR_GET(mk9_ice_relay_only);
   impl->TakeServers(lobby::IceServers());
+  const std::string other = learn_remote ? std::string("its guest") : Who(remote_id);
   if (impl->turn.empty()) {
-    REXLOG_WARN("[ice] room {} as the {}: STUN {}, no TURN server: behind some providers' networks the two games "
-                "will not find each other", room, host ? "host" : "guest",
+    REXLOG_WARN("[ice] room {}, the path to {} ({}): STUN {}, no TURN server: behind some providers' networks the "
+                "two games will not find each other",
+                room, other, offerer ? "offering" : "answering",
                 impl->stun_host.empty() ? "none" : impl->stun_host);
   } else {
-    REXLOG_INFO("[ice] room {} as the {}: STUN {}, {} TURN server(s){}", room, host ? "host" : "guest",
-                impl->stun_host.empty() ? "none" : impl->stun_host, impl->turn.size(),
-                impl->relay_only ? " (relay only: test)" : "");
+    REXLOG_INFO("[ice] room {}, the path to {} ({}): STUN {}, {} TURN server(s){}", room, other,
+                offerer ? "offering" : "answering", impl->stun_host.empty() ? "none" : impl->stun_host,
+                impl->turn.size(), impl->relay_only ? " (relay only: test)" : "");
   }
-  if (!host) {
+  if (offerer) {
     std::random_device rd;
     impl->session = (uint64_t(rd()) << 32 | rd()) & 0x1FFFFFFFFFFFFFull;  // JSON-safe
     std::lock_guard<std::mutex> lock(impl->mutex);
     if (!impl->NewAgent()) return nullptr;
   }
-  Impl* raw = impl.get();
-  raw->pump = std::thread([raw] { raw->Pump(); });
+  return impl;
+}
+
+}  // namespace
+
+std::unique_ptr<IceLink> IceLink::Create(const std::string& room, bool host, const std::string& id) {
+  // a session of two: the host answers whichever guest offers, the guest offers to the host
+  auto impl = host ? NewImpl(room, "", "", true, false) : NewImpl(room, id, "", false, true);
+  if (!impl) return nullptr;
+  Register(impl.get());
+  return std::unique_ptr<IceLink>(new IceLink(std::move(impl)));
+}
+
+std::unique_ptr<IceLink> IceLink::CreatePair(const std::string& room, const std::string& local_id,
+                                             const std::string& remote_id, bool offers) {
+  auto impl = NewImpl(room, local_id, remote_id, false, offers);
+  if (!impl) return nullptr;
+  Register(impl.get());
   return std::unique_ptr<IceLink>(new IceLink(std::move(impl)));
 }
 
 IceLink::IceLink(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 IceLink::~IceLink() {
-  impl_->stopping = true;
-  if (impl_->pump.joinable()) impl_->pump.join();
+  Unregister(impl_.get());
   std::lock_guard<std::mutex> lock(impl_->mutex);
   if (impl_->agent) juice_destroy(impl_->agent);
   impl_->agent = nullptr;
@@ -317,7 +400,7 @@ bool IceLink::HasPeer() const {
 bool IceLink::Failed() const { return impl_->failed.load(); }
 
 bool IceLink::Restart() {
-  if (impl_->host) return false;  // the host follows the guest's new offer
+  if (!impl_->offerer) return false;  // the answering side follows the other's new offer
   {
     std::lock_guard<std::mutex> sig(impl_->sig_mutex);
     std::random_device rd;
@@ -325,13 +408,14 @@ bool IceLink::Restart() {
   }
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->answered = false;
-  impl_->offered_at = 0;  // the pump offers at once
+  impl_->offered_at = 0;  // the router offers at once
   impl_->failed = false;
   if (!impl_->NewAgent()) {
     impl_->failed = true;
     return false;
   }
-  REXLOG_INFO("[ice] room {}: a new exchange (the path was up but carried nothing)", impl_->room);
+  REXLOG_INFO("[ice] room {}: a new exchange with {} (the path was up but carried nothing)", impl_->room,
+              Who(impl_->remote_id));
   return true;
 }
 

@@ -48,31 +48,37 @@ enum class Mode {
 // The frame boundary (game thread), before the frame: the mode of the epoch running.
 void SetMode(PPCContext& ctx, uint8_t* base, Mode mode, uint32_t epoch);
 
+// mk9-lauta (2026-11-17): the session's machines (2-4), before its first frame. Every machine's word is needed where
+// the two machines' was, by slot: 0 this machine's own (a spectator: player 1's), the others from 1 in any order
+// (what is decided depends only on the words' frames).
+void SetMachines(int machines);
+
 // kLockstep: this machine's announcement for the input it is making: a callback it got that the game has not had
 // yet, round robin (0: none).
 uint32_t Announcement();
-// kLockstep: a frame's two inputs' announcements (this machine's and the peer's), before the frame runs: the callbacks
-// both machines' inputs have announced go to the game.
-void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote);
+// kLockstep: a frame's inputs' announcements by slot (words[0] this machine's), before the frame runs: the callbacks
+// every machine's inputs have announced go to the game.
+void Deliver(PPCContext& ctx, uint8_t* base, const uint32_t* words, int machines);
 
-// mk9-lauta (2026-11-10), a spectator (feed.h): Deliver with the two players' recorded announcements (player 1's as
-// this machine's); a callback both said that this machine's FMOD has not given (it plays behind, or fast while
-// catching up) goes from the sound's source anyway, an end after stopping the sound: what the game gets does not wait
-// on this machine's mixer.
-void WatchDeliver(PPCContext& ctx, uint8_t* base, uint32_t p1, uint32_t p2);
+// mk9-lauta (2026-11-10), a spectator (feed.h): Deliver with the players' recorded announcements (player 1's as this
+// machine's); a callback all said that this machine's FMOD has not given (it plays behind, or fast while catching up)
+// goes from the sound's source anyway, an end after stopping the sound: what the game gets does not wait on this
+// machine's mixer.
+void WatchDeliver(PPCContext& ctx, uint8_t* base, const uint32_t* words, int machines);
 
 // kFrames: this machine's announcement for its input of frame input_frame (0: none): each callback once.
 uint32_t AnnounceFor(int64_t input_frame);
-// kFrames: the peer's real input of frame `frame` announces `key`: the frame the callback goes to the game at, once
-// both machines' inputs have said it (-1: not yet, or said before). A frame that already ran without it must run again.
-int64_t RemoteAnnounced(uint32_t key, int64_t frame);
-// mk9-lauta (2026-11-10), a spectator (feed.h): frame `frame` of the recording, the two players' words (player 1's as
-// this machine's, player 2's as the peer's), fed in order; Decide then with the frames fed so far on both sides.
-void WatchWords(int64_t frame, uint32_t p1, uint32_t p2);
-// kFrames: with this machine's inputs made up to local_made_upto and the peer's known up to remote_upto, the callbacks
-// one of the two said and the other did not by kAlone frames after: the earliest frame decided now (-1: none). A
-// frame that already ran without it must run again.
-int64_t Decide(int64_t local_made_upto, int64_t remote_upto);
+// kFrames: another machine's (its slot's) real input of frame `frame` announces `key`: the frame the callback goes to
+// the game at, once every machine's inputs have said it (-1: not yet, or said before). A frame that already ran
+// without it must run again.
+int64_t RemoteAnnounced(int slot, uint32_t key, int64_t frame);
+// mk9-lauta (2026-11-10), a spectator (feed.h): frame `frame` of the recording, the players' words by slot (player 1's
+// as this machine's), fed in order; Decide then with the frames fed so far on every side.
+void WatchWords(int64_t frame, const uint32_t* words);
+// kFrames: with each slot's inputs known up to upto[slot] (this machine's made), the callbacks some machines said and
+// others did not by kAlone frames after the first word: the earliest frame decided now (-1: none). A frame that
+// already ran without it must run again.
+int64_t Decide(const int64_t* upto);
 // kFrames: before frame `frame` runs (its first run or one a rollback makes; game thread), with the frames up to
 // final_upto final: the sounds those frames handed to FMOD are numbered, and the callbacks due at this frame go to the
 // game.

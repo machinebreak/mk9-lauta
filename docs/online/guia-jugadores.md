@@ -72,6 +72,15 @@ en la pelea.
   dos de a dos: en la pelea hay los mismos cuatro luchadores, sólo cambia quién aprieta los botones. Si son tres (dos
   en una PC y uno en la otra), es igual con **3 JUGADORES**: el que queda solo en su equipo elige dos luchadores, como
   en el dos contra dos de a dos.
+- **Dos contra dos con cuatro PCs** (cada uno en su casa): uno crea la sala con **"Sala de 2 contra 2 (cuatro
+  personas)"** marcado (pública, o privada para pasarles el código a los otros tres), o todos tocan **"Partida rápida
+  2 contra 2"**, que entra a una sala de 2 contra 2 que esté esperando o abre una. En la sala se ve quién está y quién
+  está listo; cuando estén todos listos, el host toca **"Empezar la pelea"** y los cuatro juegos se vuelven a abrir ya
+  conectados (cada PC directo con las otras tres). Ahí es igual que arriba: RB hasta **4 JUGADORES > MODO VERSUS**,
+  cada uno elige su equipo en **ELIGE TU EQUIPO** y su luchador, y el relevo es con LB. También se puede mezclar (dos
+  en una PC y dos en otras dos PCs) y jugar de a tres (**3 JUGADORES**, 2 contra 1). El retraso de los botones se
+  ajusta al ping más alto entre los cuatro; si cualquiera se va o se corta, la sesión termina para todos y vuelven al
+  lobby.
 - En la selección de personajes y debajo de las barras de vida aparece la foto, la bandera y el nombre de cada
   jugador. En **F2 > Online** se ocultan las fotos o los nombres en la pelea.
 - Arriba a la derecha (en la pelea, abajo al centro) ves contra quién jugás, unas barras con la calidad de la conexión,

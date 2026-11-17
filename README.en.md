@@ -122,6 +122,8 @@ On the Steam Deck: in desktop mode, **Steam > Add a Non-Steam Game** and pick th
    (one vs one, two vs two or test your luck), the other joins with START, and each picks a fighter.
 4. Four of you, two at each PC? Before "Estoy listo" tick **Somos dos en esta PC**, and in the main menu press RB
    until **4 JUGADORES**: each one picks a team and a fighter.
+5. Four of you, each at their own PC? Create a **2 vs 2 room** (or use **Partida rápida 2 contra 2**): when everyone is
+   ready the host presses **Empezar la pelea**, and in the game it is the same, RB until **4 JUGADORES**.
 
 Both players need the same version; the game updates itself. Online matches always start with the default buttons
 (so both PCs play exactly the same); choose your own for online fights in **F2 > Controles > Botones en el online**.

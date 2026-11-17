@@ -4,6 +4,10 @@
 // (again every second until the host answers: both may be starting up), the host answers with its own, and each sends
 // its candidates as it finds them. The session's datagrams then go over the path ICE picked (transport.h).
 //
+// mk9-lauta (2026-11-17): a session of up to four machines has a path between each two of them. Every relayed message
+// says its sender's lobby id ("from"; the host's is empty, as a message without it), and one thread hands each to the
+// path it is for. Of two guests, the later one in the room offers, as a guest does to the host.
+//
 //   mk9_ice_relay_only=<bool>   tests: take only TURN's relayed path
 
 #pragma once
@@ -23,6 +27,10 @@ class IceLink : public Transport {
  public:
   // room: the room's code; host: this side hosts it; id: the guest's id (on the guest's side; the host learns it).
   static std::unique_ptr<IceLink> Create(const std::string& room, bool host, const std::string& id);
+  // mk9-lauta (2026-11-17): the path to one machine of a session of more than two: this side's lobby id and the other's
+  // (the host's: empty), and whether this side offers (the later machine in the room's order does).
+  static std::unique_ptr<IceLink> CreatePair(const std::string& room, const std::string& local_id,
+                                             const std::string& remote_id, bool offers);
   ~IceLink() override;
 
   bool HasPeer() const override;     // the path is up

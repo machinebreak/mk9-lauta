@@ -112,9 +112,34 @@ std::map<uint32_t, Callback> g_waiting;           // lockstep: number << 8 | slo
 std::vector<Callback> g_late;                     // mk9_test_sound_late without mk9_sound_sync: given late here
 Stats g_stats;
 
-// Lockstep: decided from the two machines' inputs only (game thread): the same on both.
-std::set<uint32_t> g_local_said, g_remote_said, g_delivered;
+// mk9-lauta (2026-11-17): the session's machines; their words by slot (0: this machine's own).
+constexpr int kMaxSlots = 4;
+int g_machines = 2;
+
+// Lockstep: decided from the machines' inputs only (game thread): the same on all.
+std::set<uint32_t> g_said[kMaxSlots], g_delivered;
 uint32_t g_last_announced = 0;
+
+// The lockstep words: the keys every slot has said and the game has not had, in order (their words forgotten).
+std::vector<uint32_t> TakeAgreed() {
+  std::vector<uint32_t> agreed;
+  for (uint32_t key : g_said[0]) {
+    if (g_delivered.count(key)) continue;
+    bool all = true;
+    for (int s = 1; s < g_machines; ++s) all = all && g_said[s].count(key) != 0;
+    if (all) agreed.push_back(key);
+  }
+  for (uint32_t key : agreed) {
+    g_delivered.insert(key);
+    for (int s = 0; s < g_machines; ++s) g_said[s].erase(key);
+  }
+  return agreed;
+}
+
+void ClearSaid() {
+  for (auto& said : g_said) said.clear();
+  g_delivered.clear();
+}
 
 // A fight's epoch.
 std::deque<std::unique_ptr<Handoff>> g_handoffs;            // every hand-off of the epoch (and the live ones before)
@@ -134,8 +159,8 @@ struct Passed {
 bool g_passed_on = false;
 int64_t g_passed_frame = -1;                         // the frame running
 std::map<int64_t, std::vector<Passed>> g_passed;
-std::unordered_map<uint32_t, int64_t> g_first_local, g_first_remote;  // key -> the frame of its first word
-std::map<int64_t, std::set<uint32_t>> g_due;                           // frame -> the keys given at its start
+std::unordered_map<uint32_t, int64_t> g_first[kMaxSlots];  // by slot: key -> the frame of its first word
+std::map<int64_t, std::set<uint32_t>> g_due;                // frame -> the keys given at its start
 std::set<uint32_t> g_decided;                    // the epoch's keys whose frame is set (a late word is not said)
 std::unordered_map<uint32_t, Handoff*> g_by_number;  // a numbered hand-off (a callback this machine gives itself)
 
@@ -251,13 +276,25 @@ void SetDue(uint32_t key, int64_t frame) {
   if (auto it = g_kept.find(key); it != g_kept.end()) it->second.due = frame;
 }
 
+// mk9-lauta (2026-11-17): a key every slot has said: the frame it goes at, min(the latest word, the first + kAlone) +
+// kSlack (with two machines min(max(L, R), min(L, R) + kAlone) + kSlack, as it was); -1 while a slot has not said it.
+int64_t DueWhenAllSaid(uint32_t key) {
+  int64_t lo = INT64_MAX, hi = INT64_MIN;
+  for (int s = 0; s < g_machines; ++s) {
+    const auto it = g_first[s].find(key);
+    if (it == g_first[s].end()) return -1;
+    lo = std::min(lo, it->second);
+    hi = std::max(hi, it->second);
+  }
+  return std::min(hi, lo + kAlone) + kSlack;
+}
+
 // Forgets what a final frame decided: the callbacks given (or no longer to be given) and the word about them.
 void Collect(int64_t final_upto) {
   for (auto it = g_due.begin(); it != g_due.end() && it->first <= final_upto;) {
     for (uint32_t key : it->second) {
       g_kept.erase(key);
-      g_first_local.erase(key);
-      g_first_remote.erase(key);
+      for (auto& first : g_first) first.erase(key);
     }
     it = g_due.erase(it);
   }
@@ -277,8 +314,7 @@ void LeaveFrames(std::vector<Callback>& give) {
   g_handoffs.clear();
   g_by_event.clear();
   g_frame_runs.clear();
-  g_first_local.clear();
-  g_first_remote.clear();
+  for (auto& first : g_first) first.clear();
   g_due.clear();
   g_decided.clear();
   g_by_number.clear();
@@ -295,9 +331,7 @@ void EnterFrames(uint32_t epoch, std::vector<Callback>& give) {
   for (const auto& [key, cb] : g_waiting) give.push_back(cb);
   g_stats.flushed += g_waiting.size();
   g_waiting.clear();
-  g_local_said.clear();
-  g_remote_said.clear();
-  g_delivered.clear();
+  ClearSaid();
   g_sources.clear();
   g_numbered.clear();
   g_next_number = (epoch & 0xFF) << 16;
@@ -451,9 +485,7 @@ void SetDeferringLocked(bool on, std::vector<Callback>& give) {
     for (const auto& [key, cb] : g_waiting) give.push_back(cb);
     g_stats.flushed += g_waiting.size();
     g_waiting.clear();
-    g_local_said.clear();
-    g_remote_said.clear();
-    g_delivered.clear();
+    ClearSaid();
   }
   g_deferring = on;
 }
@@ -500,10 +532,16 @@ uint32_t Announcement() {
   return 0;
 }
 
-void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote) {
-  if (local) g_local_said.insert(local);
-  if (remote) g_remote_said.insert(remote);
-  // a sound long gone leaves the decision (both machines' numbers are the same, so both forget the same keys)
+void SetMachines(int machines) {
+  std::lock_guard lock(g_mutex);
+  g_machines = std::clamp(machines, 2, kMaxSlots);
+}
+
+void Deliver(PPCContext& ctx, uint8_t* base, const uint32_t* words, int machines) {
+  for (int s = 0; s < machines && s < kMaxSlots; ++s) {
+    if (words[s]) g_said[s].insert(words[s]);
+  }
+  // a sound long gone leaves the decision (every machine's numbers are the same, so all forget the same keys)
   uint32_t newest = 0;
   {
     std::lock_guard lock(g_mutex);
@@ -511,16 +549,10 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote) {
   }
   if (newest > kForget) {
     const uint32_t below = (newest - kForget) << 8;
-    for (auto* set : {&g_local_said, &g_remote_said, &g_delivered}) set->erase(set->begin(), set->lower_bound(below));
+    for (auto& set : g_said) set.erase(set.begin(), set.lower_bound(below));
+    g_delivered.erase(g_delivered.begin(), g_delivered.lower_bound(below));
   }
-  std::vector<uint32_t> agreed;
-  for (uint32_t key : g_local_said) {
-    if (g_remote_said.count(key) && !g_delivered.count(key)) agreed.push_back(key);
-  }
-  for (uint32_t key : agreed) {
-    g_delivered.insert(key);
-    g_local_said.erase(key);
-    g_remote_said.erase(key);
+  for (uint32_t key : TakeAgreed()) {
     Callback cb;
     bool have = false;
     {
@@ -538,17 +570,11 @@ void Deliver(PPCContext& ctx, uint8_t* base, uint32_t local, uint32_t remote) {
   }
 }
 
-void WatchDeliver(PPCContext& ctx, uint8_t* base, uint32_t p1, uint32_t p2) {
-  if (p1) g_local_said.insert(p1);
-  if (p2) g_remote_said.insert(p2);
-  std::vector<uint32_t> agreed;
-  for (uint32_t key : g_local_said) {
-    if (g_remote_said.count(key) && !g_delivered.count(key)) agreed.push_back(key);
+void WatchDeliver(PPCContext& ctx, uint8_t* base, const uint32_t* words, int machines) {
+  for (int s = 0; s < machines && s < kMaxSlots; ++s) {
+    if (words[s]) g_said[s].insert(words[s]);
   }
-  for (uint32_t key : agreed) {
-    g_delivered.insert(key);
-    g_local_said.erase(key);
-    g_remote_said.erase(key);
+  for (uint32_t key : TakeAgreed()) {
     Callback cb;
     bool have = false, make = false;
     {
@@ -603,57 +629,62 @@ uint32_t AnnounceFor(int64_t input_frame) {
     if (g_decided.count(key)) continue;  // decided without this word (only the other machine had said it)
     ++g_stats.announced;
     LogLine("a", input_frame, key, kept.cb.source, kept.cb.event, 0);
-    g_first_local.emplace(key, input_frame);
-    if (auto r = g_first_remote.find(key); r != g_first_remote.end()) {
-      SetDue(key, std::min(std::max(input_frame, r->second), std::min(input_frame, r->second) + kAlone) + kSlack);
-    }
+    g_first[0].emplace(key, input_frame);
+    if (const int64_t due = DueWhenAllSaid(key); due >= 0) SetDue(key, due);
     return key;
   }
   return 0;
 }
 
-int64_t RemoteAnnounced(uint32_t key, int64_t frame) {
+int64_t RemoteAnnounced(int slot, uint32_t key, int64_t frame) {
   std::lock_guard lock(g_mutex);
-  if (g_mode != Mode::kFrames || !key) return -1;
-  if (g_decided.count(key) || !g_first_remote.emplace(key, frame).second) return -1;
-  LogLine("r", frame, key, 0, 0, 0);
-  auto l = g_first_local.find(key);
-  if (l == g_first_local.end()) return -1;
-  const int64_t due = std::min(std::max(l->second, frame), std::min(l->second, frame) + kAlone) + kSlack;
+  if (g_mode != Mode::kFrames || !key || slot <= 0 || slot >= kMaxSlots) return -1;
+  if (g_decided.count(key) || !g_first[slot].emplace(key, frame).second) return -1;
+  LogLine("r", frame, key, uint32_t(slot), 0, 0);
+  const int64_t due = DueWhenAllSaid(key);
+  if (due < 0) return -1;
   SetDue(key, due);
   return due;
 }
 
-void WatchWords(int64_t frame, uint32_t p1, uint32_t p2) {
+void WatchWords(int64_t frame, const uint32_t* words) {
   std::lock_guard lock(g_mutex);
   if (g_mode != Mode::kFrames) return;
-  auto due = [](int64_t a, int64_t b) { return std::min(std::max(a, b), std::min(a, b) + kAlone) + kSlack; };
-  if (p1 && !g_decided.count(p1) && g_first_local.emplace(p1, frame).second) {
-    if (auto r = g_first_remote.find(p1); r != g_first_remote.end()) SetDue(p1, due(frame, r->second));
-  }
-  if (p2 && !g_decided.count(p2) && g_first_remote.emplace(p2, frame).second) {
-    if (auto l = g_first_local.find(p2); l != g_first_local.end()) SetDue(p2, due(l->second, frame));
+  for (int s = 0; s < g_machines; ++s) {
+    const uint32_t key = words[s];
+    if (!key || g_decided.count(key) || !g_first[s].emplace(key, frame).second) continue;
+    if (const int64_t due = DueWhenAllSaid(key); due >= 0) SetDue(key, due);
   }
 }
 
-int64_t Decide(int64_t local_made_upto, int64_t remote_upto) {
+int64_t Decide(const int64_t* upto) {
   std::lock_guard lock(g_mutex);
   if (g_mode != Mode::kFrames) return -1;
   int64_t earliest = -1;
-  auto decide = [&](uint32_t key, int64_t first) {
-    const int64_t due = first + kAlone + kSlack;
-    SetDue(key, due);
-    ++g_stats.alone;
-    LogLine("1", first, key, uint32_t(due), 0, 0);
-    if (earliest < 0 || due < earliest) earliest = due;
-  };
-  // this machine's word alone: the peer's inputs up to kAlone frames after it did not say it
-  for (const auto& [key, first] : g_first_local) {
-    if (!g_first_remote.count(key) && !g_decided.count(key) && remote_upto >= first + kAlone) decide(key, first);
-  }
-  // the peer's word alone: this machine's inputs up to kAlone frames after it did not say it
-  for (const auto& [key, first] : g_first_remote) {
-    if (!g_first_local.count(key) && !g_decided.count(key) && local_made_upto >= first + kAlone) decide(key, first);
+  // mk9-lauta (2026-11-17): a key some machines said and some did not: once every one that did not has its inputs
+  // known kAlone frames past the first word without it, it goes at that word + kAlone + kSlack on every machine (with
+  // two: one machine's word alone, as it was)
+  for (int s0 = 0; s0 < g_machines; ++s0) {
+    for (const auto& [key, unused] : g_first[s0]) {
+      (void)unused;
+      if (g_decided.count(key)) continue;
+      int64_t first = INT64_MAX;
+      for (int s = 0; s < g_machines; ++s) {
+        if (const auto it = g_first[s].find(key); it != g_first[s].end()) first = std::min(first, it->second);
+      }
+      bool silent_past = true, missing = false;
+      for (int s = 0; s < g_machines; ++s) {
+        if (g_first[s].count(key)) continue;
+        missing = true;
+        if (upto[s] < first + kAlone) silent_past = false;
+      }
+      if (!missing || !silent_past) continue;
+      const int64_t due = first + kAlone + kSlack;
+      SetDue(key, due);
+      ++g_stats.alone;
+      LogLine("1", first, key, uint32_t(due), 0, 0);
+      if (earliest < 0 || due < earliest) earliest = due;
+    }
   }
   return earliest;
 }

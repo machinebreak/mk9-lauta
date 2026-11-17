@@ -1032,3 +1032,55 @@ Un intento descartado: antes de encontrar el 4 JUGADORES, forzar desde C++ la ba
 consola, que el online del juego pone en 1 o 2: "MKOnline_1Player/2Player") abría el mismo ELIGE TU EQUIPO desde DOS
 CONTRA DOS, pero con 3 personas colgaba el juego al volver con B: el menú del juego lo hace bien y no hace falta tocar
 nada.
+
+### Cuatro PCs: el dos contra dos de a uno por PC (1.4.0, 2026-11-17)
+
+La sesión pasa de dos máquinas a hasta cuatro (`netplay.cpp`, protocolo 12). La máquina 0 es el host y las 1-3 los
+invitados en el orden de la sala; cada una manda sus entradas a todas las demás y recibe las de todas (una malla: nada
+pasa por una tercera, así ningún par espera más que su propio camino). Todo lo de arriba que decía "el otro" vale para
+cada una de las otras:
+
+- **Entradas y rollback.** Cada otra máquina es un `Peer` con sus entradas, su ack, sus hashes y su ping. Un cuadro de
+  la pelea corre con la última entrada de cada una como predicción, y el rollback vuelve al primer cuadro que cualquiera
+  de ellas contradiga. En lockstep el cuadro espera las de todas.
+- **Banderas y sonido.** Ocupado es el de cualquier máquina y listo el de todas. Un callback de sonido espera la palabra
+  de todas (`sound_sync`: por "slots", 0 la propia; va en `min(la última palabra, la primera + kAlone) + kSlack`, que con
+  dos es lo de siempre; los que sólo dijeron algunas, en la primera + kAlone + kSlack cuando las que faltan ya pasaron
+  ese cuadro).
+- **Hashes.** Cada par compara los suyos; el primer cuadro distinto deja el informe con el número del jugador.
+- **Retraso y sincronía de tiempo.** El retraso cubre el camino más largo (el round trip típico del peor par). La fase y
+  la ventaja se miden con cada máquina y decide la que esta máquina tiene más atrás: todas vuelven hacia la que va
+  detrás de las demás, como hacía el que iba adelante con dos.
+- **Barrera.** Espera a todas. Con más de dos apareció un problema nuevo: mientras la primera ya espera en la barrera,
+  las otras siguen cargando y comparan esos cuadros entre ellas, y en 1.1.0 cada una los jugaba con controles neutros
+  desde que *se enteraba* de la barrera y con sus propias banderas: tres máquinas hashearon distinto los cuadros
+  4522-4552 del menú (y volvieron a coincidir al pasar la barrera). Ahora el BARRIER dice también la última entrada que
+  hizo esa máquina (`made_upto`): hasta ahí todas usan sus entradas reales (les llegan o les van a llegar: la que
+  espera las reenvía), y desde ahí la cuentan como parada; las que siguen cargando se esperan entre ellas y usan las
+  banderas de ellas solas. Llegaron las cuatro a la barrera en el mismo cuadro. Con dos máquinas sigue como estaba.
+- **Asientos.** Los usuarios de XInput 0-3 son las máquinas en orden y después los segundos jugadores de las que
+  tienen dos (`SeatOf`); con dos máquinas siguen los de 1.1.0 (2 el segundo del host, 3 el del invitado).
+- **Grabación y espectadores.** Con más de dos máquinas la grabación lleva un registro `N` (máquinas y jugadores) y los
+  cuadros `H` (la entrada de cada máquina en orden); el espectador y los replays los leen.
+- **Fin.** Un BYE de cualquiera termina la sesión para todas, como en el uno contra uno.
+
+El camino de cada par es su propio ICE (`ice_link.h`): los mensajes del lobby llevan el id del que los manda (`from`;
+el host el vacío) y un hilo se los da al enlace que corresponde; de cada par ofrece la máquina de número más alto. La
+sala de cuatro está en `lobby.md`. Pruebas: `tools/online/mesh_test.ps1` (de 2 a 4 instancias por UDP local,
+`mk9_net_mesh`; `gen_mesh_scripts.py` arma los guiones de los cuatro desde los de 1.1.0) y
+`tools/online/room4_test.ps1` (la sala de cuatro por un lobby local, con ICE entre cada par).
+
+Medido en esta PC (Radeon 760M, cuatro instancias a la vez):
+
+| Prueba | Red | Resultado |
+| --- | --- | --- |
+| 1v1 por UDP (regresión) | 30 ± 10 ms | 116 rollbacks (hasta 3 cuadros), 1.635 cuadros comparados, 0 desync |
+| 4 máquinas, 2 contra 2 con relevos | local (16 ms) | 60 fps las cuatro, 18.663 cuadros comparados cada una, 0 desync |
+| 4 máquinas, 2 contra 2 | 40 ± 15 ms en cada camino | ~500 rollbacks cada una (hasta 5 cuadros); con la barrera nueva, 0 desync |
+| Sala de cuatro por el lobby local | ICE directo entre los 6 pares | sesión de 4, pelea con rollback, 0 desync |
+| Sala de dos por el lobby local (regresión) | ICE | sesión de 2, pelea con rollback, 0 desync |
+| Replay de una grabación de 4 máquinas | - | 4.520 de 4.521 cuadros iguales (el distinto, de antes del arreglo de la barrera) |
+
+Con cuatro instancias más otros programas abiertos en la misma PC el juego bajó a 12-16 fps (la PC no daba; cada
+jugador real tiene la suya). El diagnóstico de los luchadores (no el hash de sincronía) marcó una vez el campo
+`+0x79a8` (un tiempo de carga: 7,01 contra 7,20, 0,1875 de diferencia), el mismo falso positivo de 2026-11-11.

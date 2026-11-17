@@ -124,8 +124,10 @@ struct SessionInfo {
   // mk9-lauta (2026-11-11, A3): the folder of this session's desync report (logs\desync_<date>_p<N>; empty: none)
   std::string desync_report;
   // mk9-lauta (2026-11-13): the people at this machine and at the other one (mk9_net_local_players; a spectator: the
-  // host's and the guest's)
+  // host's and the guest's). mk9-lauta (2026-11-17): with more machines, peer_players is all the others' together
   int local_players = 1, peer_players = 1;
+  // mk9-lauta (2026-11-17): the session's machines (2-4; the connection's numbers are the farthest one's)
+  int machines = 2;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

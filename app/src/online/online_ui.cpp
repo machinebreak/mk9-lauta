@@ -450,9 +450,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::BeginDisabled(!online || room.phase != room::Phase::kNone);
     if (ImGui::Button(T("Partida rápida"))) QuickMatch(lobby);
     ImGui::SameLine();
-    if (ImGui::Button(T("Crear sala pública"))) room::CreateRoom(true);
+    // mk9-lauta (2026-11-17): two against two, each at a PC (or two at one): four people
+    if (ImGui::Button(T("Partida rápida 2 contra 2"))) QuickMatch(lobby, 4);
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", T("Entrás a una sala de 2 contra 2 que esté esperando (o abrís una): juegan cuatro, "
+                                "cada uno desde su PC."));
+    }
+    ImGui::Checkbox(T("Sala de 2 contra 2 (cuatro personas)"), &four_room_);
     ImGui::SameLine();
-    if (ImGui::Button(T("Crear sala privada"))) room::CreateRoom(false);
+    if (ImGui::Button(T("Crear sala pública"))) room::CreateRoom(true, four_room_ ? 4 : 2);
+    ImGui::SameLine();
+    if (ImGui::Button(T("Crear sala privada"))) room::CreateRoom(false, four_room_ ? 4 : 2);
     ImGui::Text("%s", T("Unirse con código:"));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
@@ -546,7 +554,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     // mk9-lauta (2026-11-11): the two players with their pictures; the rival's name or picture shows its profile
     const float picture = std::round(46.0f * options_ui::UiScale());
     auto player = [&](const std::string& name, const std::string& country, const std::string& hash, const char* role,
-                      bool other) {
+                      bool other, bool record = true) {
       ImGui::PushID(role);
       avatars::Item(hash, name.empty() ? std::string("?") : name, picture);
       bool clicked = other && ImGui::IsItemClicked();
@@ -563,7 +571,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
           ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
           ImGui::SetTooltip("%s", T("Ver perfil"));
         }
-        RecordInline(room);
+        if (record) RecordInline(room);
       }
       ImGui::EndGroup();
       if (clicked && !name.empty()) OpenProfile(name, country);
@@ -571,7 +579,23 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     };
     const std::string theirs =
         avatars::ShowOthers() && !session::IsBlocked(room.other) ? room.other_avatar : std::string();
-    if (room.host) {
+    if (room.capacity == 4) {
+      // mk9-lauta (2026-11-17): a room of four: everyone in it in its order (the host first), and who is ready
+      ImGui::TextColored(kGrey, T("Sala de 2 contra 2: %d de 4 personas"), People(room));
+      for (size_t i = 0; i < room.members.size(); ++i) {
+        const room::Member& m = room.members[i];
+        const std::string hash =
+            m.me ? avatars::MineHash()
+                 : avatars::ShowOthers() && !session::IsBlocked(m.name) ? m.avatar : std::string();
+        std::string role = i == 0 ? std::string(m.me ? T("Host (vos)") : "Host") : std::string(m.me ? T("Vos") : T("Jugador"));
+        if (m.players == 2) role += T(" · dos en esa PC");
+        ImGui::PushID(int(i));
+        player(m.me ? room.me : m.name, m.me ? flags::Mine() : m.country, hash, role.c_str(), !m.me, false);
+        ImGui::SameLine();
+        ImGui::TextColored(m.ready ? kGreen : kGrey, "%s", T(m.ready ? "listo" : "todavía no está listo"));
+        ImGui::PopID();
+      }
+    } else if (room.host) {
       player(room.me, flags::Mine(), avatars::MineHash(), T("Host (vos)"), false);
       player(room.other, room.other_country, theirs, T("Rival"), true);
     } else {
@@ -611,14 +635,29 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                           "Controles) es el otro. Si en la otra PC también son dos, juegan los "
                                           "cuatro en 4 JUGADORES > MODO VERSUS."));
       }
-      if (room.other_players == 2) {
+      if (room.other_players == 2 && room.capacity != 4) {
         ImGui::TextColored(kGold, T("%s y otro jugador juegan desde la misma PC."), room.other.c_str());
       }
       if (ImGui::Button(Label(room.my_ready ? "Cancelar listo" : "Estoy listo").c_str())) room::SetReady(!room.my_ready);
-      ImGui::SameLine();
-      ImGui::TextColored(room.other_ready ? kGreen : kGrey, T(room.other_ready ? "%s está listo" : "%s todavía no está listo"),
-                         room.other.c_str());
-      ImGui::TextColored(kGrey, "%s", T("Cuando los dos estén listos, el juego arranca de nuevo ya conectado."));
+      if (room.capacity == 4) {
+        // mk9-lauta (2026-11-17): the host starts it, once everyone in it is ready (two to four people)
+        if (room.host) {
+          ImGui::SameLine();
+          ImGui::BeginDisabled(!room.can_start);
+          if (ImGui::Button(T("Empezar la pelea"))) room::Start();
+          ImGui::EndDisabled();
+          ImGui::TextColored(kGrey, "%s", T("Cuando estén todos listos, empezá la pelea: con cuatro juegan 2 contra 2, "
+                                            "con tres 2 contra 1. El juego arranca de nuevo ya conectado."));
+        } else {
+          ImGui::TextColored(kGrey, "%s", T("Cuando estén todos listos, el host empieza la pelea y el juego arranca de "
+                                            "nuevo ya conectado."));
+        }
+      } else {
+        ImGui::SameLine();
+        ImGui::TextColored(room.other_ready ? kGreen : kGrey,
+                           T(room.other_ready ? "%s está listo" : "%s todavía no está listo"), room.other.c_str());
+        ImGui::TextColored(kGrey, "%s", T("Cuando los dos estén listos, el juego arranca de nuevo ya conectado."));
+      }
     } else if (room.phase == room::Phase::kStarting) {
       ImGui::TextColored(kGreen, "%s", T("Arrancando la pelea..."));
     }
@@ -735,16 +774,41 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     netplay::Leave();
   }
 
-  static std::string Other(const room::State& room) { return room.other.empty() ? T("el rival") : room.other; }
+  // The rival's name; mk9-lauta (2026-11-17): in a room of four, everyone else's ("Ana, Beto y Caro").
+  static std::string Other(const room::State& room) {
+    if (room.capacity == 4 && room.members.size() > 2) {
+      std::vector<std::string> names;
+      for (const room::Member& m : room.members) {
+        if (!m.me && !m.name.empty()) names.push_back(m.name);
+      }
+      std::string out;
+      for (size_t i = 0; i < names.size(); ++i) {
+        out += (i == 0 ? std::string() : i + 1 == names.size() ? std::string(T(" y ")) : std::string(", ")) + names[i];
+      }
+      if (!out.empty()) return out;
+    }
+    return room.other.empty() ? T("el rival") : room.other;
+  }
+
+  // The people in a room of four (each machine's players).
+  static int People(const room::State& room) {
+    int people = 0;
+    for (const room::Member& m : room.members) people += m.players;
+    return people;
+  }
 
   // mk9-lauta (2026-11-10): quick match picks, of the rooms waiting, the one with the shortest round trip to expect
   // (then the one waiting longest), leaving out the silenced players'; with none, the lobby's own quick match (it opens
   // a room for the next one who looks).
-  void QuickMatch(const lobby::State& lobby) {
+  // mk9-lauta (2026-11-17): four: the rooms of four alone (two against two), and with none a new public one of four;
+  // two: the others (one against one), and with none the lobby's own quick match.
+  void QuickMatch(const lobby::State& lobby, int people = 2) {
     const lobby::Room* best = nullptr;
     double best_ms = 0;
     for (const lobby::Room& r : lobby.rooms) {
       if (r.playing || session::IsBlocked(r.host)) continue;
+      const bool four = r.title.rfind(room::kFourTitle, 0) == 0;
+      if (four != (people == 4)) continue;
       double ms = flags::EstimatedRoundTripMs(flags::Mine(), r.country);
       if (ms <= 0) ms = 200;  // a country not said: as a far one
       if (!best || ms < best_ms - 15 || (std::abs(ms - best_ms) <= 15 && r.since < best->since)) {
@@ -753,7 +817,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       }
     }
     if (best) {
-      room::JoinRoom(best->code);
+      room::JoinRoom(best->code, people);
+    } else if (people == 4) {
+      room::CreateRoom(true, 4);
     } else {
       room::QuickMatch();
     }
@@ -1112,14 +1178,17 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     fight_state::Result r;
     while (fight_state::Take(&r)) {
       if (!room.in_session) continue;
-      const int me = r.me, them = 1 - r.me;
+      // mk9-lauta (2026-11-17): a session of three or four machines is the game's two against two, whose sides the
+      // players chose in its own team screen: no side of this machine's here (and a tag match counts no result)
+      const bool sides = netplay::Info().machines == 2 && (r.me == 0 || r.me == 1);
+      const int me = sides ? r.me : 0, them = 1 - me;
       stats::Match m;
       m.at = int64_t(std::time(nullptr));
       m.rival = Other(room);
       m.rival_country = room.other_country;
-      m.mine = r.characters[me];
-      m.theirs = r.characters[them];
-      if (!r.tag && r.health[me] >= 0 && r.health[them] >= 0 && r.health[me] != r.health[them]) {
+      m.mine = sides ? r.characters[me] : std::string();
+      m.theirs = sides ? r.characters[them] : std::string();
+      if (sides && !r.tag && r.health[me] >= 0 && r.health[them] >= 0 && r.health[me] != r.health[them]) {
         m.result = r.health[me] > r.health[them] ? 1 : -1;
       }
       stats::Add(m);
@@ -1596,6 +1665,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   int64_t offline_since_ = 0;        // an offline fight began (seconds since 1970; Discord's timer)
   int64_t fight_since_ = 0;          // the session's fight began (seconds since 1970; Discord's timer)
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
+  bool four_room_ = false;  // mk9-lauta (2026-11-17): the rooms made are of four (two against two)
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;
   Clock::time_point toast_until_{}, leave_deadline_{}, ended_at_{};
   const Clock::time_point started_ = Clock::now();

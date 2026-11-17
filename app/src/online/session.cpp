@@ -110,7 +110,8 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
         a.rfind(MK9_ARG("--mk9_online_name"), 0) == 0 || a.rfind(MK9_ARG("--mk9_online_show"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_online_test="), 0) == 0 || a.find(MK9_ARG("online_session")) != Arg::npos ||
         a.rfind(MK9_ARG("--mk9_net_replay"), 0) == 0 || a.rfind(MK9_ARG("--mk9_lobby_by_address"), 0) == 0 ||
-        a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_peers"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_net_id"), 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; }) ||
         std::any_of(dropping.begin(), dropping.end(), [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; })) {
@@ -163,9 +164,17 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
 }  // namespace
 
 void Launch(const std::string& room, bool host, const std::string& name, const std::string& title, bool listed,
-            int players) {
-  // a profile made anew: both games start from the same save (the role's own, so two games on one PC do not share it)
-  const std::filesystem::path profile = ExeDir() / (host ? "online_session_host" : "online_session_guest");
+            int players, const std::vector<std::string>& machines, const std::string& id) {
+  // a profile made anew: every game starts from the same save (the role's own, so games on one PC do not share it;
+  // mk9-lauta 2026-11-17: a guest of a room of more than two, its place's)
+  std::string folder = host ? "online_session_host" : "online_session_guest";
+  if (!host && machines.size() > 2) {
+    const auto place = std::find(machines.begin(), machines.end(), id);
+    if (place != machines.end() && place - machines.begin() > 1) {
+      folder += std::to_string(place - machines.begin());
+    }
+  }
+  const std::filesystem::path profile = ExeDir() / folder;
   std::error_code ec;
   std::filesystem::remove_all(profile, ec);
   std::filesystem::create_directories(profile, ec);
@@ -174,6 +183,13 @@ void Launch(const std::string& room, bool host, const std::string& name, const s
   options.push_back(Arg(MK9_ARG("--mk9_net_role=")) + (host ? MK9_ARG("host") : MK9_ARG("guest")));
   options.push_back(MK9_ARG("--mk9_online_name=") + Wide(name));
   if (players == 2) options.push_back(MK9_ARG("--mk9_net_local_players=2"));  // two at this PC (netplay.h)
+  if (machines.size() > 2) {
+    // mk9-lauta (2026-11-17): every machine's lobby id in the room's order, and this one's (netplay.cpp)
+    std::string list;
+    for (size_t i = 0; i < machines.size(); ++i) list += (i ? "," : "") + machines[i];
+    options.push_back(MK9_ARG("--mk9_net_peers=") + Wide(list));
+    if (!host) options.push_back(MK9_ARG("--mk9_net_id=") + Wide(id));
+  }
   if (host && listed) {
     options.push_back(MK9_ARG("--mk9_net_room_listed=true"));
     if (!title.empty()) options.push_back(MK9_ARG("--mk9_net_room_title=") + Wide(title));

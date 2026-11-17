@@ -1,9 +1,13 @@
-// MK9 online: the two-player session, in lockstep through menus and loads and with rollback in the fight (netplay.h).
+// MK9 online: the players' session, in lockstep through menus and loads and with rollback in the fight (netplay.h).
 //
 //   mk9_net_room=<code>          the session of a lobby's room (lobby.h), over the players' own path (ice_link.h),
 //   mk9_net_role=host|guest      as its host (player 1) or its guest (player 2); mk9_online_name: the player's name
+//   mk9_net_peers=<id,id,...>    a room's session of three or four machines: every machine's lobby id in the room's
+//   mk9_net_id=<id>              order (the host's first, empty), and this guest's own
 //   mk9_net_host=<port>          or: open a session on this UDP port and wait for the other player (player 1; tests,
 //   mk9_net_join=<host:port>     a LAN, a forwarded port), or join one (player 2)
+//   mk9_net_mesh=<port>          or (tests): a session of mk9_net_machines machines over UDP on mk9_net_mesh_host, this
+//                                one machine number mk9_net_machine (0 the host)
 //   mk9_net_delay=<frames>       input delay in lockstep (menus, loads); the host's counts for both
 //   mk9_net_rollback=<bool>      fights with rollback (else lockstep all along)
 //   mk9_net_rollback_delay=<f>   this player's input delay in a fight with rollback (each side its own): -1 = automatic
@@ -58,7 +62,8 @@
 // Packets (little-endian): u16 'M9', u8 version, u8 type, then
 //   HELLO    u8 player, u8 delay, u32 build, u32 seed (the host's: the generators start from it, seed.h),
 //            u8 rollback (the host's mk9_net_rollback), u8 rollback delay, u8 release length + the release (8 and
-//            up), u8 settings (10 and up: bit 0, the game thread's clock made of frames, virtual_time.h)
+//            up), u8 settings (10 and up: bit 0, the game thread's clock made of frames, virtual_time.h), u8 the
+//            session's machines (12 and up; the player byte is the sender's machine number)
 //   INPUT    u32 epoch, u32 ack (the peer's last frame received in order, +1), u32 first, u8 count, count x 18 bytes
 //            (the guest's X_INPUT_GAMEPAD, big-endian, then the busy and the ready flags, then u32 a sound callback's
 //            announcement, sound_sync.h), u32 hash frame (~0: none),
@@ -75,6 +80,17 @@
 // which frame two fights parted, before the sync hash sees it, and leaves a report; it tells nobody, as what it hashes
 // is chosen from dumps (2026-11-11: a load's time it had kept differed by 0.1875 s between two machines whose fights
 // went on alike).
+//
+// mk9-lauta (2026-11-17), up to four machines (two against two, each player at a PC): machine 0 is the host and 1-3 the
+// guests in the room's order. Every machine sends its inputs to every other one and hears theirs (a mesh: no input
+// goes through a third machine); everything above that said "the peer" holds for each of them: a frame waits in
+// lockstep for all of their inputs, a fight's frame runs on each one's last input as its prediction and goes back to
+// the first frame any of them contradicts, the busy flags are any machine's and the ready ones every machine's, a
+// sound's callback waits for every machine's word (sound_sync.h), each pair compares its sync hashes, the barrier
+// waits for all, the delays and the time sync go by the farthest of them, and a goodbye from any of them ends the
+// session for all. The game's players (XInput users 0-3) are the machines' in order, then the second players of the
+// machines that have two. A session of two machines is what it was (its users 2 and 3 the host's and the guest's
+// second players).
 
 #include "mk9_kratos.h"
 #include "mk9_platform.h"
@@ -148,6 +164,18 @@ REXCVAR_DEFINE_BOOL(mk9_net_room_listed, false, "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_net_room_title, "", "MK9 Online", "mk9_net_room_listed: the room's title in the list");
 REXCVAR_DEFINE_INT32(mk9_net_host, 0, "MK9 Online", "Host a two-player session on this UDP port (0 = off)");
 REXCVAR_DEFINE_STRING(mk9_net_join, "", "MK9 Online", "Join a two-player session at host:port");
+REXCVAR_DEFINE_STRING(mk9_net_peers, "", "MK9 Online",
+                      "A room's session of three or four machines: every machine's lobby id in the room's order, "
+                      "comma-separated (the host's first, empty)");
+REXCVAR_DEFINE_STRING(mk9_net_id, "", "MK9 Online", "mk9_net_peers: this guest's own lobby id in the room");
+REXCVAR_DEFINE_INT32(mk9_net_mesh, 0, "MK9 Online",
+                     "Tests: a session of mk9_net_machines machines over UDP, machine i's datagrams to machine j going "
+                     "from port mk9_net_mesh + 8 i + j to port mk9_net_mesh + 8 j + i of mk9_net_mesh_host (0 = off)");
+REXCVAR_DEFINE_INT32(mk9_net_machines, 2, "MK9 Online", "mk9_net_mesh: the session's machines")
+    .range(2, 4);
+REXCVAR_DEFINE_INT32(mk9_net_machine, 0, "MK9 Online", "mk9_net_mesh: this machine's number (0: the host)")
+    .range(0, 3);
+REXCVAR_DEFINE_STRING(mk9_net_mesh_host, "127.0.0.1", "MK9 Online", "mk9_net_mesh: where the other machines are");
 REXCVAR_DEFINE_INT32(mk9_net_delay, 2, "MK9 Online",
                      "Input delay in frames in lockstep (menus, loads; the host's is used by both)");
 REXCVAR_DEFINE_BOOL(mk9_net_rollback, true, "MK9 Online", "Fights with rollback (the host's is used by both)");
@@ -250,8 +278,10 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // says the release ("0.2.1"). 9 from 0.3.0 on: an epoch's last frame (its barrier's) has a sync hash of its own (it
 // went into the next epoch's first frame's), and it is recorded (spectators: feed.h). 11 from 1.1.0 on: Test Your
 // Luck's fights have a barrier and rollback too (mk9_capture.cpp, native 82495b68), where 1.0.0 stays in lockstep,
-// and its lockstep frames settle (mk9_net_settle_luck: the slot machine draws the same modifiers on both).
-constexpr uint8_t kVersion = 11;
+// and its lockstep frames settle (mk9_net_settle_luck: the slot machine draws the same modifiers on both). 12 from
+// 1.4.0 on: sessions of up to four machines (the HELLO says how many; a sound's callback waits for every machine's
+// word).
+constexpr uint8_t kVersion = 12;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -286,45 +316,86 @@ constexpr int kPadBytes = 18;   // a machine's pad on the wire and in a recordin
 constexpr int kPadBytes2 = 30;  // ... with its second player's (a machine with two players; the recording's 'G')
 int PadBytes(int players) { return players >= 2 ? kPadBytes2 : kPadBytes; }
 
+constexpr int kMaxMachines = 4;  // a session's machines: the host (0) and up to three guests (mk9-lauta, 2026-11-17)
+
+// The last pings sent to a machine (their send time) and whether a pong came back (loss, the indicator).
+struct PingSent {
+  uint64_t at_us = 0;
+  bool answered = false;
+};
+
+// mk9-lauta (2026-11-17): another machine of the session, by its number (0 the host, then the guests in the room's
+// order). A session of two has one, of four three: each machine's inputs go to every other one.
+struct Peer {
+  bool on = false;                   // a machine of this session
+  int players = 1;                   // its players, as its HELLO said (a spectator: the recording's)
+  std::string id;                    // its lobby id (a room's session; the host's "")
+  std::unique_ptr<net::Transport> link;
+  uint16_t local_port = 0;
+  bool heard = false, hello = false;
+  int delay = -1, rollback = -1, rollback_delay = -1;
+  int version = -1;                  // the protocol version of a HELLO that was not this one's (another release)
+  int machines = -1;                 // the session's machines, as its HELLO said
+  std::string release;               // its release, as its HELLO said it (8 and up)
+  int64_t seed = -1;
+  uint32_t barrier = 0;              // the newest epoch it has reached the barrier of
+  int64_t last_frame = -1;           // ... and its last frame of the epoch before (its later pads: neutral)
+  // ... and its last input made then (12 and up): a session of more than two machines plays its inputs up to it, and
+  // it is stopped after it (LockstepFrame)
+  int64_t made_upto = -1;
+  std::vector<Pad> pads;             // its inputs by frame
+  std::vector<uint8_t> have;
+  int64_t upto = -1;                 // every input of its <= this is here
+  int64_t acked = -1;                // it has every local input <= this
+  std::vector<uint64_t> hash, fighters;  // its sync hashes and fighters' state hashes by frame; 0 = not known
+  // the newest frame it sent its hash of: each packet carries only its newest final frame's, so the frames it skipped
+  // (a lost packet, or several frames made final at once by a rollback) never come and are not waited for
+  int64_t hash_newest = -1;
+  int64_t compared_upto = -1;        // final frames compared with its so far
+  int64_t latest = -1;               // its live frame, from its packets (time sync)
+  double advantage = 0;              // time sync: frames this side is ahead of it, averaged
+  double phase = 0;                  // C1: ms this side started its frames before it did (its packets')
+  double peer_phase = 0;             // ... and its own measure, from its packets (the other way round)
+  uint64_t phase_samples = 0;
+  uint64_t last_heard_us = 0, last_sent_us = 0, last_ping_us = 0;
+  double rtt_ms = 0;
+  double rtt_samples[8] = {};        // the last pongs' round trips (their floor sets the lockstep delay)
+  int rtt_count = 0;
+  PingSent pings[32] = {};
+  int ping_next = 0;
+  bool relayed = false;              // its path goes through TURN (checked every few seconds)
+  uint64_t relayed_checked_us = 0;
+  uint64_t sent = 0, received = 0;
+};
+
 struct Session {
   bool configured = false, failed = false, started = false, ended = false;
   bool host = false;
   int local_players = 1;  // mk9_net_local_players: this machine's (a spectator: the host's)
-  int peer_players = 1;   // the other machine's, as its HELLO said (a spectator: the guest's)
+  // mk9-lauta (2026-11-17): the session's machines and the players at each (this one's local_players, the others' as
+  // their HELLOs said; a spectator: the recording's)
+  int machines = 2;
+  int players[kMaxMachines] = {1, 1, 1, 1};
+  std::array<Peer, kMaxMachines> peers;  // by machine; this one's own unused
   std::string room;  // a lobby room's session (else a direct UDP one)
-  int player = 0;  // 0 = player 1 (the host), 1 = player 2
+  int player = 0;  // this machine's number: 0 = player 1 (the host), 1 = player 2, ...
   int lockstep_delay = 2, rollback_delay = 1;
   bool rollback_wanted = true;
   int delay = 2;                     // this epoch's (a lockstep stretch raises it with the round trip)
   int64_t delay_check_at = 0;        // the lockstep frame that looks at the round trip next
   int lower_votes = 0;               // checks in a row that found the delay longer than needed
   int64_t local_made_upto = -1;      // the newest frame with a local input
-  std::unique_ptr<net::Transport> link;
-  uint16_t local_port = 0;
-  bool heard_peer = false, peer_hello = false;
-  int peer_delay = -1, peer_rollback = -1, peer_rollback_delay = -1;
-  int peer_version = -1;             // the protocol version of a HELLO that was not this one's (another release)
-  std::string peer_release;          // the other player's release, as its HELLO said it (8 and up)
   uint32_t seed = 0;                 // the host's
-  int64_t peer_seed = -1;
   bool seed_pending = false;         // for TakeSessionSeed (epoch 0; barriers reseed on the spot)
   // epochs
   uint32_t epoch = 0;
   bool at_barrier = false;           // this side reached the next epoch's barrier during the frame running
-  uint32_t peer_barrier = 0;         // the newest epoch the peer has reached the barrier of
-  int64_t peer_last_frame = -1;      // ... and its last frame of the epoch before (later remote pads: neutral)
   uint64_t start_game_frame = 0;     // the game frame of this epoch's frame 0
   int64_t frame = 0;                 // the epoch's frame about to run
-  std::vector<Pad> local, remote;    // by frame
-  std::vector<uint8_t> have_remote;
-  int64_t remote_upto = -1;          // every remote frame <= this is here
-  int64_t peer_acked = -1;           // the peer has every local frame <= this
-  std::vector<uint64_t> local_hash, remote_hash;  // by frame; 0 = not known yet
-  std::vector<uint64_t> local_fighters, remote_fighters;  // the fighters' state hash by frame; 0 = none (not a fight)
-  int64_t compared_upto = -1;        // final frames compared so far
-  // the newest frame the peer sent its hash of: each packet carries only its newest final frame's, so the frames it
-  // skipped (a lost packet, or several frames made final at once by a rollback) never come and are not waited for
-  int64_t remote_hash_newest = -1;
+  std::vector<Pad> local;            // by frame
+  int64_t remote_upto = -1;          // every other machine's every input <= this is here
+  std::vector<uint64_t> local_hash;  // by frame; 0 = not known yet
+  std::vector<uint64_t> local_fighters;  // the fighters' state hash by frame; 0 = none (not a fight)
   uint64_t hashes_compared = 0;
   std::vector<std::pair<uint32_t, uint32_t>> sync_ranges;
   uint64_t check_hash = 0;           // this frame's checks so far
@@ -334,18 +405,18 @@ struct Session {
   uint64_t fighters_compared = 0;    // frames whose fighters' state hashes were compared
   int64_t fighters_at = -1;          // the epoch's first frame whose fighters' state differed
   uint64_t fighters_frames = 0;
-  Pad frame_pads[2];                 // this frame's players' pads
-  uint8_t frame_busy = 0;            // either machine's busy flags when this frame's inputs left
+  Pad frame_pads[kMaxMachines];      // this frame's machines' pads
+  uint8_t frame_busy = 0;            // any machine's busy flags when this frame's inputs left
   uint32_t busy_value[8] = {};       // the last busy answer of each flag's poll here (what it says while busy)
-  uint8_t frame_ready = 0;           // ready on both machines in the frame before this frame's inputs left
+  uint8_t frame_ready = 0;           // ready on every machine in the frame before this frame's inputs left
   uint8_t ready_seen = 0;            // the readiness polls that said ready during the frame running
   uint32_t ready_value[8] = {};      // the last ready answer of each flag's poll here
   std::thread::id game_thread;
-  // the pads each frame ran with and their packet numbers (X_INPUT_STATE's, counted per change): by frame, so a frame
-  // run again gets the same ones
-  std::vector<Pad> used[2];
-  std::vector<uint32_t> packet[2];
-  uint32_t packet_base[2] = {};      // the packet numbers at the epoch's start
+  // the pads each frame ran with and their packet numbers (X_INPUT_STATE's, counted per change), by machine and by
+  // frame, so a frame run again gets the same ones
+  std::vector<Pad> used[kMaxMachines];
+  std::vector<uint32_t> packet[kMaxMachines];
+  uint32_t packet_base[kMaxMachines] = {};  // the packet numbers at the epoch's start
   // rollback (a fight's epoch)
   bool rollback = false;             // this epoch runs with rollback
   bool frames_sound = false;         // this epoch started with rollback: its sounds' callbacks by frame (sound_sync.h)
@@ -357,7 +428,7 @@ struct Session {
   bool replay = false;                 // a replay (mk9_net_replay): watching a recording read from a file
   bool replay_swap = false;            // ... recorded by the guest: its frames' two inputs player 2's first
   struct WatchedFrame {
-    Pad p1, p2;
+    Pad pads[kMaxMachines];  // by machine (mk9-lauta, 2026-11-17: player 1's and player 2's were p1 and p2)
     uint64_t hash = 0;
   };
   struct WatchedEpoch {
@@ -365,10 +436,13 @@ struct Session {
     bool rollback = false;
     int64_t mode_end = -1;  // the fight's mode ended at this frame (from then on as lockstep)
     bool frames_sound = false;  // its sounds' callbacks by frame numbers: the players' words in the recording
-    int players[2] = {1, 1};    // at the host's machine and at the guest's (two: their pads carry the second's)
+    // at each machine (two: their pads carry the second's)
+    int players[kMaxMachines] = {1, 1, 1, 1};
     std::vector<WatchedFrame> frames;
   };
   std::vector<WatchedEpoch> watched;  // by epoch
+  int watch_machines = 2;             // the recorded session's machines (its 'N' record; else two)
+  int watch_players[kMaxMachines] = {1, 1, 1, 1};  // ... and their players ('N')
   uint64_t watch_read = 0;            // the recording's bytes parsed
   bool watch_header = false;
   bool watch_other_release = false;  // the recording is of another release's match (its header's protocol)
@@ -389,33 +463,19 @@ struct Session {
   int64_t latest = 0;                // the live edge: the newest frame started + 1 (frame < latest while replaying)
   int64_t rollback_to = -1;          // the earliest frame that ran on a prediction that turned out wrong
   int64_t mode_change_at = -1;       // a frame whose checks showed the game's mode change (tag 8 back to 0)
-  int64_t peer_latest = -1;          // the peer's live frame, from its packets
-  double advantage = 0;              // time sync: frames ahead of the peer, averaged
-  // mk9-lauta (2026-11-11, C1): the two machines' start of the same frame
+  // mk9-lauta (2026-11-11, C1): the machines' start of the same frame (each other machine's measure: its Peer)
   uint64_t release_us = 0;           // the last paced Swap's release a fight's boundary saw (sa2 LastReleaseUs)
   int64_t release_frame = 0;         // the live frame that release started (g.latest at the first boundary after it)
   std::array<std::pair<int64_t, uint64_t>, 128> starts{};  // live frame -> its release, the latest 128
-  double phase = 0;                  // ms this side started the peer's frames before the peer did (the packets')
-  double peer_phase = 0;             // the peer's own measure, from its packets (the other way round)
-  uint64_t phase_samples = 0, phase_check_at = 0, phase_shifts = 0;
+  uint64_t phase_check_at = 0, phase_shifts = 0;
   int phase_ahead_checks = 0;        // checks running that found this side ahead past the dead band
   double phase_shifted_ms = 0;       // this side's grid moved back so far
   uint64_t slept_at_frame = 0;
   // statistics
-  uint64_t last_heard_us = 0, last_sent_us = 0, last_ping_us = 0, log_at_us = 0;
-  double rtt_ms = 0, wait_ms_window = 0, wait_ms_max = 0;
-  double rtt_samples[8] = {};        // the last pongs' round trips (their floor sets the lockstep delay)
-  int rtt_count = 0;
-  // mk9-lauta (2026-11-10): the last pings sent (their send time) and whether a pong came back (loss, the indicator)
-  struct PingSent {
-    uint64_t at_us = 0;
-    bool answered = false;
-  };
-  PingSent pings[32] = {};
-  int ping_next = 0;
-  std::atomic<bool> relayed{false};  // the path goes through TURN (checked every few seconds on the game thread)
-  uint64_t relayed_checked_us = 0;
-  uint64_t frames_window = 0, stalls_window = 0, sent = 0, received = 0;
+  uint64_t log_at_us = 0;
+  double wait_ms_window = 0, wait_ms_max = 0;
+  std::atomic<bool> relayed{false};  // a path goes through TURN (checked every few seconds on the game thread)
+  uint64_t frames_window = 0, stalls_window = 0;
   uint64_t rollbacks = 0, resimulated = 0, max_depth = 0, predicted = 0, mispredicted = 0, syncs_slept = 0;
   uint64_t confirms = 0, confirms_doomed = 0;  // ConfirmFrame: actions a rollback cannot undo, and those left to a rerun
   double ms_keep = 0, ms_restore = 0;
@@ -424,8 +484,62 @@ struct Session {
 
 Session g;
 
-// The players at the host's machine (player 0) or the guest's (1): 2 with mk9_net_local_players on that side.
-int PlayersOf(int player) { return player == g.player ? g.local_players : g.peer_players; }
+// The players at a machine (0 the host's): 2 with mk9_net_local_players on that side.
+int PlayersOf(int machine) {
+  if (machine == g.player) return g.local_players;
+  return machine >= 0 && machine < kMaxMachines ? g.players[machine] : 1;
+}
+
+// mk9-lauta (2026-11-17): the other machines of the session (by number), and whether every one of them has its input of
+// a frame here.
+template <typename F>
+void ForPeers(F f) {
+  for (int m = 0; m < g.machines && m < kMaxMachines; ++m) {
+    if (m != g.player && g.peers[m].on) f(m, g.peers[m]);
+  }
+}
+
+bool HaveAll(int64_t frame) {
+  bool all = true;
+  ForPeers([&](int, Peer& p) {
+    if (frame < 0 || size_t(frame) >= p.have.size() || !p.have[size_t(frame)]) all = false;
+  });
+  return all;
+}
+
+// g.remote_upto: the newest frame every other machine's inputs are here up to.
+void UpdateRemoteUpto() {
+  int64_t upto = INT64_MAX;
+  bool any = false;
+  ForPeers([&](int, Peer& p) {
+    any = true;
+    upto = std::min(upto, p.upto);
+  });
+  g.remote_upto = any ? upto : -1;
+}
+
+// The game's players (XInput users 0-3): a machine and whether it is that machine's second player; machine -1: none.
+// The machines' first players in order, then the second players; a session of two keeps 1.1.0's seats (user 2 the
+// host's second, user 3 the guest's).
+struct Seat {
+  int machine = -1;
+  bool second = false;
+};
+Seat SeatOf(uint32_t user) {
+  if (user >= 4) return {};
+  if (g.machines == 2) {
+    if (user < 2) return {int(user), false};
+    return PlayersOf(int(user) - 2) == 2 ? Seat{int(user) - 2, true} : Seat{};
+  }
+  if (int(user) < g.machines) return {int(user), false};
+  int next = g.machines;
+  for (int m = 0; m < g.machines; ++m) {
+    if (PlayersOf(m) != 2) continue;
+    if (next == int(user)) return {m, true};
+    ++next;
+  }
+  return {};
+}
 
 // mk9_net_record: the session's final frames, to a file in logs. Records (little-endian):
 //   header   "MK9NET1\0", u32 version (1; from protocol 10 on, + the protocol x 256: a spectator of another release
@@ -433,6 +547,10 @@ int PlayersOf(int player) { return player == g.player ? g.local_players : g.peer
 //   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
 //   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
 //   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
+//   'N'      (mk9-lauta, 2026-11-17: a session of more than two machines, right after the header) u8 machines, then
+//            u8 players at each machine in order
+//   'H'      (with 'N', in place of 'F' and 'G') u32 frame, each machine's input in order (18 bytes, 30 with two
+//            players), u64 sync hash
 // mk9-lauta (2026-11-11): the replays are off by default (F2 > Online). The game thread never touches the disk: a
 // frame's records are built in one buffer and handed over at once (to the spectators' feed, and to the recording);
 // with mk9_net_record on, a thread of its own writes them to the file every 2 s. Off, they stay in memory (about 3 KB a
@@ -557,7 +675,7 @@ void RecordOpen() {
     const std::tm local = mk9::platform::LocalTime(std::time(nullptr));
     char name[64];
     std::strftime(name, sizeof(name), "session_%Y%m%d_%H%M%S", &local);
-    const std::filesystem::path path = logs / (std::string(name) + (g.player == 0 ? "_p1" : "_p2") + ".mk9net");
+    const std::filesystem::path path = logs / (std::string(name) + fmt::format("_p{}", g.player + 1) + ".mk9net");
     const std::u8string utf8 = path.u8string();
     g_rec.path.assign(reinterpret_cast<const char*>(utf8.data()), utf8.size());
     g_rec.pending.reserve(64 * 1024);
@@ -565,6 +683,11 @@ void RecordOpen() {
     REXLOG_INFO("[net] the session's inputs go to {} (replays on: mk9_net_record)", g_rec.path);
   }
   RecordHeader();
+  if (g.machines > 2) {  // 'N': the machines and their players (the frames are 'H')
+    RecordValue<uint8_t>('N');
+    RecordValue<uint8_t>(uint8_t(g.machines));
+    for (int m = 0; m < g.machines; ++m) RecordValue<uint8_t>(uint8_t(PlayersOf(m)));
+  }
   RecordHandOver();
 }
 
@@ -575,25 +698,37 @@ void RecordEpoch() {
   RecordValue<uint64_t>(g.start_game_frame);
   // bit 0 rollback; bit 1 (mk9-lauta, 2026-11-10): its sounds' callbacks by frame numbers (sound_sync.h kFrames);
   // bits 2 and 3 (2026-11-13): two players at the host's machine, at the guest's (their frames are 'G')
-  RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0) | (PlayersOf(0) == 2 ? 4 : 0) |
-                               (PlayersOf(1) == 2 ? 8 : 0)));
+  // (a session of more than two machines: its players in its 'N' record)
+  RecordValue<uint8_t>(uint8_t((g.rollback ? 1 : 0) | (g.frames_sound ? 2 : 0) |
+                               (g.machines == 2 && PlayersOf(0) == 2 ? 4 : 0) |
+                               (g.machines == 2 && PlayersOf(1) == 2 ? 8 : 0)));
   g_rec.upto = -1;
   RecordHandOver();
 }
 
 int64_t FinalUpto();
 
-// The frames that are final now (both players' real inputs, their last run done), in order.
+// The frames that are final now (every machine's real inputs, their last run done), in order.
 void RecordFinal() {
   if (!g_rec.open && !g_rec.feeding) return;
   const int64_t upto = std::min(FinalUpto(), g.frame - 1);
   for (int64_t f = g_rec.upto + 1; f <= upto; ++f) {
-    if (!g.have_remote[size_t(f)]) break;
-    const bool four = g.local_players == 2 || g.peer_players == 2;
-    RecordValue<uint8_t>(four ? 'G' : 'F');
-    RecordValue<uint32_t>(uint32_t(f));
-    RecordPad(g.local[size_t(f)], four);
-    RecordPad(g.remote[size_t(f)], four);
+    if (!HaveAll(f)) break;
+    if (g.machines > 2) {
+      // mk9-lauta (2026-11-17): every machine's input in order ('H')
+      RecordValue<uint8_t>('H');
+      RecordValue<uint32_t>(uint32_t(f));
+      for (int m = 0; m < g.machines; ++m) {
+        RecordPad(m == g.player ? g.local[size_t(f)] : g.peers[m].pads[size_t(f)], PlayersOf(m) == 2);
+      }
+    } else {
+      const int other = 1 - g.player;
+      const bool four = g.local_players == 2 || PlayersOf(other) == 2;
+      RecordValue<uint8_t>(four ? 'G' : 'F');
+      RecordValue<uint32_t>(uint32_t(f));
+      RecordPad(g.local[size_t(f)], four);
+      RecordPad(g.peers[other].pads[size_t(f)], four);
+    }
     RecordValue<uint64_t>(g.local_hash[size_t(f)]);
     g_rec.upto = f;
     ++g_rec.frames;
@@ -685,6 +820,7 @@ uint32_t Get32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 |
 uint64_t Get64(const uint8_t* p) { return uint64_t(Get32(p)) | uint64_t(Get32(p + 4)) << 32; }
 
 double RoundTripTypical();
+double RoundTripTypical(const Peer& p);
 
 // mk9-lauta (2026-11-11, C1): a packet from the peer said it left `into_us` after the release that started its live
 // frame `remote_frame`: that frame started on the peer at its arrival minus half the round trip minus into_us, in this
@@ -694,18 +830,19 @@ double RoundTripTypical();
 // (docs/online/baseline-0.3.0.md: 0 against 305). Half the round trip is a guess, and the jitter adds on both sides:
 // the error is the same in the two measures, so the alignment goes by half their difference (the peer's comes in its
 // packets), as NTP does. By frame, not by 1/60 s: a machine late on its grid does not throw it off.
-void NotePhase(int64_t remote_frame, uint64_t into_us) {
-  if (!g.rollback || g.rtt_count == 0 || remote_frame < 0) return;
+// (mk9-lauta, 2026-11-17: each other machine's, from its own packets.)
+void NotePhase(Peer& p, int64_t remote_frame, uint64_t into_us) {
+  if (!g.rollback || p.rtt_count == 0 || remote_frame < 0) return;
   const auto& here = g.starts[size_t(remote_frame) % g.starts.size()];
   if (here.first != remote_frame || !here.second) return;  // not started here yet, or long ago
   const uint64_t now = NowUs();
-  uint64_t arrived = g.link->LastArrivalUs();
+  uint64_t arrived = p.link->LastArrivalUs();
   if (!arrived || arrived > now) arrived = now;
-  const double there = double(arrived) - RoundTripTypical() * 500.0 - double(into_us);
+  const double there = double(arrived) - RoundTripTypical(p) * 500.0 - double(into_us);
   const double ahead_ms = (there - double(here.second)) / 1000.0;
   if (std::abs(ahead_ms) > 300.0) return;  // nonsense
-  g.phase = g.phase_samples ? g.phase * 0.95 + ahead_ms * 0.05 : ahead_ms;
-  ++g.phase_samples;
+  p.phase = p.phase_samples ? p.phase * 0.95 + ahead_ms * 0.05 : ahead_ms;
+  ++p.phase_samples;
 }
 
 // The protocol version this side speaks (mk9_net_test_protocol: another one, for tests).
@@ -746,20 +883,22 @@ void Ensure(int64_t frame) {
   if (g.local.size() < need) {
     const size_t grow = std::max(need, g.local.size() * 2 + 256);
     g.local.resize(grow);
-    g.remote.resize(grow);
-    g.have_remote.resize(grow, 0);
     g.local_hash.resize(grow, 0);
-    g.remote_hash.resize(grow, 0);
     g.local_fighters.resize(grow, 0);
-    g.remote_fighters.resize(grow, 0);
-    for (int p = 0; p < 2; ++p) {
-      g.used[p].resize(grow);
-      g.packet[p].resize(grow, 0);
+    ForPeers([&](int, Peer& p) {
+      p.pads.resize(grow);
+      p.have.resize(grow, 0);
+      p.hash.resize(grow, 0);
+      p.fighters.resize(grow, 0);
+    });
+    for (int m = 0; m < kMaxMachines; ++m) {
+      g.used[m].resize(grow);
+      g.packet[m].resize(grow, 0);
     }
   }
 }
 
-// The newest frame whose last run had both players' real inputs: every frame up to it is final.
+// The newest frame whose last run had every machine's real inputs: every frame up to it is final.
 int64_t FinalUpto() {
   int64_t upto = std::min(g.remote_upto, g.frame - 1);
   if (g.rollback_to >= 0) upto = std::min(upto, g.rollback_to - 1);
@@ -775,12 +914,12 @@ std::string g_desync_report;  // the report's folder (the online screens offer i
 std::mutex g_desync_report_mutex;
 double RoundTripTypical();
 
-void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool fighters_only) {
+void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool fighters_only, int machine) {
   const std::tm when = mk9::platform::LocalTime(std::time(nullptr));
   char name[64];
   std::strftime(name, sizeof(name), "desync_%Y%m%d_%H%M%S", &when);
   const std::filesystem::path dir = mk9::platform::ExeDir() / "logs" /
-                                    (std::string(name) + (g.player == 0 ? "_p1" : "_p2") +
+                                    (std::string(name) + fmt::format("_p{}", g.player + 1) +
                                      (fighters_only ? "_fighters" : ""));
   std::error_code ec;
   std::filesystem::create_directories(dir, ec);
@@ -795,8 +934,8 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool figh
                  fighters_only ? "the fighters' state only (the sync hash agrees there: the game's checks, the "
                                  "health and the positions): a diagnostic"
                                : "the sync hash (the game's checks, or the health or a position: the two games apart)");
-    std::fprintf(f, "hash here %016llx, the other's %016llx\n", static_cast<unsigned long long>(local),
-                 static_cast<unsigned long long>(remote));
+    std::fprintf(f, "hash here %016llx, player %d's %016llx (%d machines)\n", static_cast<unsigned long long>(local),
+                 machine + 1, static_cast<unsigned long long>(remote), g.machines);
     std::fprintf(f, "epoch %s, input delay %d, round trip %.0f ms typical, %llu rollbacks so far\n",
                  g.rollback ? "with rollback (a fight)" : "lockstep", g.delay, RoundTripTypical(),
                  static_cast<unsigned long long>(g.rollbacks));
@@ -830,57 +969,65 @@ void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool figh
 // mk9-lauta (2026-11-11): the fighters' state hashes of a final frame, a diagnostic (the head of this file): its first
 // difference in an epoch is logged, and leaves a report when the sync hash still agrees there (a frame where both
 // differ leaves the desync's own).
-void CompareFighters(int64_t frame, bool checks_agree) {
-  const uint64_t local = g.local_fighters[size_t(frame)], remote = g.remote_fighters[size_t(frame)];
+void CompareFighters(int machine, const Peer& p, int64_t frame, bool checks_agree) {
+  const uint64_t local = g.local_fighters[size_t(frame)], remote = p.fighters[size_t(frame)];
   if (!local || !remote) return;
   ++g.fighters_compared;
   if (local == remote) return;
   ++g.fighters_frames;
   if (g.fighters_at >= 0) return;
   g.fighters_at = frame;
-  REXLOG_WARN("[net] the fighters' state differs from frame {} of epoch {} on (game frame {}; {:016x}, the peer's "
+  REXLOG_WARN("[net] the fighters' state differs from frame {} of epoch {} on (game frame {}; {:016x}, player {}'s "
               "{:016x}){}",
-              frame, g.epoch, g.start_game_frame + frame, local, remote,
+              frame, g.epoch, g.start_game_frame + frame, local, machine + 1, remote,
               checks_agree ? ": the sync hash agrees there, the session goes on as it was (a diagnostic)" : "");
-  if (checks_agree) WriteDesyncReport(frame, local, remote, true);
+  if (checks_agree) WriteDesyncReport(frame, local, remote, true, machine);
 }
 
+// (mk9-lauta, 2026-11-17: with each other machine's, its own way through its hashes.)
 void CompareFinalHashes() {
   const int64_t upto = FinalUpto();
-  while (g.compared_upto < upto) {
-    const int64_t frame = g.compared_upto + 1;
-    const uint64_t local = g.local_hash[size_t(frame)], remote = g.remote_hash[size_t(frame)];
-    if (!remote && frame >= g.remote_hash_newest) break;  // the peer's hash of it may still come
-    g.compared_upto = frame;
-    if (!local || !remote) continue;  // one the peer skipped
-    ++g.hashes_compared;
-    CompareFighters(frame, local == remote);
-    if (local == remote) continue;
-    if (g.desync_at < 0) {
-      g.desync_at = frame;
-      if (!REXCVAR_GET(mk9_net_end_on_desync)) {
-        REXLOG_WARN("[net] the two games differ from frame {} of epoch {} on (the sync hash: the game's checks, the "
-                    "health or a position): the session goes on (mk9_net_end_on_desync); a fight may look different "
-                    "on the two screens from here",
-                    frame, g.epoch);
+  ForPeers([&](int m, Peer& p) {
+    while (p.compared_upto < upto) {
+      const int64_t frame = p.compared_upto + 1;
+      const uint64_t local = g.local_hash[size_t(frame)], remote = p.hash[size_t(frame)];
+      if (!remote && frame >= p.hash_newest) break;  // its hash of it may still come
+      p.compared_upto = frame;
+      if (!local || !remote) continue;  // one it skipped
+      ++g.hashes_compared;
+      CompareFighters(m, p, frame, local == remote);
+      if (local == remote) continue;
+      if (g.desync_at < 0) {
+        g.desync_at = frame;
+        if (!REXCVAR_GET(mk9_net_end_on_desync)) {
+          REXLOG_WARN("[net] this game and player {}'s differ from frame {} of epoch {} on (the sync hash: the game's "
+                      "checks, the health or a position): the session goes on (mk9_net_end_on_desync); a fight may "
+                      "look different on the screens from here",
+                      m + 1, frame, g.epoch);
+        }
+        if (g_rec.to_file) {
+          RecordFlushSoon();
+          REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
+                      "says where the two games parted", g_rec.path);
+        }
+        WriteDesyncReport(frame, local, remote, false, m);
       }
-      if (g_rec.to_file) {
-        RecordFlushSoon();
-        REXLOG_WARN("[net] the session's inputs are in {}: with the other player's, tools/online/session_report.py "
-                    "says where the two games parted", g_rec.path);
+      if (++g.desync_frames <= 10) {
+        REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, player {}'s {:016x}",
+                     g.epoch, frame, g.start_game_frame + frame, local, m + 1, remote);
       }
-      WriteDesyncReport(frame, local, remote, false);
     }
-    if (++g.desync_frames <= 10) {
-      REXLOG_ERROR("[net] DESYNC in epoch {} at frame {} (game frame {}): local {:016x}, peer {:016x}", g.epoch,
-                   frame, g.start_game_frame + frame, local, remote);
-    }
-  }
+  });
 }
 
-void Send(const std::vector<uint8_t>& p) {
-  g.link->Send(p.data(), p.size());
-  g.last_sent_us = NowUs();
+void Send(Peer& peer, const std::vector<uint8_t>& p) {
+  peer.link->Send(p.data(), p.size());
+  peer.last_sent_us = NowUs();
+}
+
+// The same datagram to every other machine.
+void SendAll(const std::vector<uint8_t>& p) {
+  ForPeers([&](int, Peer& peer) { Send(peer, p); });
 }
 
 const char* ReasonText(EndReason why) {
@@ -895,14 +1042,17 @@ const char* ReasonText(EndReason why) {
   }
 }
 
-// The session's end (game thread). goodbye: the peer hears why at once (three datagrams, as one may be lost; the byte
-// after the type says why).
+// The session's end (game thread). goodbye: the other machines hear why at once (three datagrams each, as one may be
+// lost; the byte after the type says why).
 void EndSession(EndReason why, bool goodbye) {
   if (g.ended) return;
-  if (goodbye && g.link && g.link->HasPeer()) {
+  if (goodbye) {
     auto p = Header(kBye);
     p.push_back(uint8_t(why));
-    for (int i = 0; i < 3; ++i) g.link->Send(p.data(), p.size());
+    ForPeers([&](int, Peer& peer) {
+      if (!peer.link || !peer.link->HasPeer()) return;
+      for (int i = 0; i < 3; ++i) peer.link->Send(p.data(), p.size());
+    });
   }
   g.ended = true;
   g_end_reason.store(uint8_t(why), std::memory_order_release);
@@ -930,7 +1080,7 @@ void TakeEndRequest() {
 }
 
 // True when it went out: an ICE link has no path to send on until its pair is chosen (IceLink::Send).
-bool SendHello() {
+bool SendHello(Peer& peer) {
   auto p = Header(kHello);
   p.push_back(uint8_t(g.player));
   p.push_back(uint8_t(g.lockstep_delay));
@@ -945,76 +1095,95 @@ bool SendHello() {
   // (2026-11-13): two players at this machine (its pads carry the second's: PadBytes)
   p.push_back(uint8_t((virtual_time::Enabled() ? 1 : 0) | (mk9::kratos::Installed() ? 2 : 0) |
                       (g.local_players == 2 ? 4 : 0)));
-  const bool sent = g.link->Send(p.data(), p.size());
-  g.last_sent_us = NowUs();
+  p.push_back(uint8_t(g.machines));  // (12 and up) the session's machines: every machine must say the same
+  const bool sent = peer.link->Send(p.data(), p.size());
+  peer.last_sent_us = NowUs();
   return sent;
 }
 
-// A HELLO heard after this side started: the peer is still in its handshake (it never got ours), so it gets ours
+// A HELLO heard after this side started: that machine is still in its handshake (it never got ours), so it gets ours
 // again, at most every 50 ms.
-void AnswerHello() {
-  static uint64_t answered_at = 0;
-  if (NowUs() - answered_at < 50000) return;
-  answered_at = NowUs();
-  SendHello();
+void AnswerHello(int machine, Peer& peer) {
+  static uint64_t answered_at[kMaxMachines] = {};
+  if (NowUs() - answered_at[machine] < 50000) return;
+  answered_at[machine] = NowUs();
+  SendHello(peer);
 }
 
 void SendInputs() {
   // only inputs made: in a fight the next one (latest + delay) is made at the next boundary, and a wait inside a
   // frame (ConfirmFrame: a load, the music changing) resends before that; sent unmade, the peer would keep that
   // empty pad as this frame's input and drop the real one (2026-11-09)
+  // (mk9-lauta, 2026-11-17: the same inputs to every other machine, each from what that one has acknowledged)
   const int64_t newest = g.local_made_upto;
-  int64_t first = std::max<int64_t>(g.peer_acked + 1, 0);
-  // (a machine with two players: 30 bytes a frame, so 40 frames keep a packet as short as 64 of 18)
-  first = std::max<int64_t>(first, newest - (g.local_players == 2 ? 40 : kMaxPerPacket) + 1);
-  auto p = Header(kInput);
-  Put32(p, g.epoch);
-  Put32(p, uint32_t(g.remote_upto + 1));
-  Put32(p, uint32_t(first));
-  const int count = int(std::max<int64_t>(0, newest - first + 1));
-  p.push_back(uint8_t(count));
-  for (int64_t f = first; f < first + count; ++f) {
-    p.insert(p.end(), g.local[size_t(f)].bytes, g.local[size_t(f)].bytes + 12);
-    p.push_back(g.local[size_t(f)].busy);
-    p.push_back(g.local[size_t(f)].ready);
-    Put32(p, g.local[size_t(f)].sound);
-    if (g.local_players == 2) p.insert(p.end(), g.local[size_t(f)].bytes2, g.local[size_t(f)].bytes2 + 12);
-  }
   // the newest final frame's sync hash (a fight's frame sends before the frame that just ran has its hash: the one
   // before then)
   int64_t final_frame = std::min(FinalUpto(), g.frame - 1);
   for (int back = 0; back < 4 && final_frame > 0 && !g.local_hash[size_t(final_frame)]; ++back) --final_frame;
-  if (final_frame >= 0 && g.local_hash[size_t(final_frame)]) {
-    Put32(p, uint32_t(final_frame));
-    Put64(p, g.local_hash[size_t(final_frame)]);
-  } else {
-    Put32(p, kNoHash);
-    Put64(p, 0);
-  }
-  Put32(p, uint32_t(g.rollback ? g.latest : g.frame));
-  // mk9-lauta (2026-11-11, C1): the live frame the last paced release started here and the time since it (10 us
-  // units; 0xFFFF: none yet in this epoch), and this side's own measure of the phase (10 us units, signed): the
-  // peer's two halves of the measure
-  Put32(p, uint32_t(g.release_frame));
-  Put16(p, g.release_us ? uint16_t(std::min<uint64_t>((NowUs() - std::min(NowUs(), g.release_us)) / 10, 0xFFFE))
-                        : uint16_t(0xFFFF));
-  Put16(p, uint16_t(int16_t(std::clamp(g.phase * 100.0, -32767.0, 32767.0))));
-  Put64(p, final_frame >= 0 && g.local_hash[size_t(final_frame)] ? g.local_fighters[size_t(final_frame)] : 0);
-  Send(p);
-  ++g.sent;
+  ForPeers([&](int, Peer& peer) {
+    int64_t first = std::max<int64_t>(peer.acked + 1, 0);
+    // (a machine with two players: 30 bytes a frame, so 40 frames keep a packet as short as 64 of 18)
+    first = std::max<int64_t>(first, newest - (g.local_players == 2 ? 40 : kMaxPerPacket) + 1);
+    auto p = Header(kInput);
+    Put32(p, g.epoch);
+    Put32(p, uint32_t(peer.upto + 1));
+    Put32(p, uint32_t(first));
+    const int count = int(std::max<int64_t>(0, newest - first + 1));
+    p.push_back(uint8_t(count));
+    for (int64_t f = first; f < first + count; ++f) {
+      p.insert(p.end(), g.local[size_t(f)].bytes, g.local[size_t(f)].bytes + 12);
+      p.push_back(g.local[size_t(f)].busy);
+      p.push_back(g.local[size_t(f)].ready);
+      Put32(p, g.local[size_t(f)].sound);
+      if (g.local_players == 2) p.insert(p.end(), g.local[size_t(f)].bytes2, g.local[size_t(f)].bytes2 + 12);
+    }
+    if (final_frame >= 0 && g.local_hash[size_t(final_frame)]) {
+      Put32(p, uint32_t(final_frame));
+      Put64(p, g.local_hash[size_t(final_frame)]);
+    } else {
+      Put32(p, kNoHash);
+      Put64(p, 0);
+    }
+    Put32(p, uint32_t(g.rollback ? g.latest : g.frame));
+    // mk9-lauta (2026-11-11, C1): the live frame the last paced release started here and the time since it (10 us
+    // units; 0xFFFF: none yet in this epoch), and this side's own measure of the phase against that machine (10 us
+    // units, signed): its two halves of the measure
+    Put32(p, uint32_t(g.release_frame));
+    Put16(p, g.release_us ? uint16_t(std::min<uint64_t>((NowUs() - std::min(NowUs(), g.release_us)) / 10, 0xFFFE))
+                          : uint16_t(0xFFFF));
+    Put16(p, uint16_t(int16_t(std::clamp(peer.phase * 100.0, -32767.0, 32767.0))));
+    Put64(p, final_frame >= 0 && g.local_hash[size_t(final_frame)] ? g.local_fighters[size_t(final_frame)] : 0);
+    Send(peer, p);
+    ++peer.sent;
+  });
 }
 
 void SendBarrier(uint32_t epoch, int64_t last_frame) {
   auto p = Header(kBarrier);
   Put32(p, epoch);
   Put32(p, uint32_t(last_frame));
-  Send(p);
+  Put32(p, uint32_t(g.local_made_upto));  // (12 and up) the last input this side made
+  SendAll(p);
 }
 
-void Receive() {
+// mk9-lauta (2026-11-17): a machine's place in sound_sync's words (0: this machine's own; the others from 1 in their
+// numbers' order). Its decisions depend on the words' frames alone, so each machine may number the others its own way.
+int SoundSlot(int machine) { return machine < g.player ? machine + 1 : machine; }
+
+// Each machine's inputs known up to, by sound_sync slot: this one's made, the others' come.
+std::array<int64_t, kMaxMachines> SoundUptos() {
+  std::array<int64_t, kMaxMachines> out;
+  out.fill(-1);
+  out[0] = g.local_made_upto;
+  ForPeers([&](int m, Peer& p) { out[size_t(SoundSlot(m))] = p.upto; });
+  return out;
+}
+
+// What one machine sent (its link's datagrams waiting).
+void ReceiveFrom(int machine, Peer& peer) {
   uint8_t buf[2048];
   for (;;) {
-    const int n = g.link->Receive(buf, sizeof(buf));
+    const int n = peer.link->Receive(buf, sizeof(buf));
     if (n < 4) {
       if (n < 0) return;
       continue;
@@ -1022,115 +1191,132 @@ void Receive() {
     if ((buf[0] | buf[1] << 8) != kMagic) continue;
     if (buf[2] != Protocol()) {
       // another release's game (the HELLO's type byte is where it always was): the handshake ends with the reason
-      if (buf[3] == kHello && g.peer_version < 0) {
-        g.peer_version = buf[2];
+      if (buf[3] == kHello && peer.version < 0) {
+        peer.version = buf[2];
         // 8 and up say their release after the 12 bytes of 0.2.0's HELLO
         if (buf[2] >= 8 && n >= 4 + 13 && n >= 4 + 13 + buf[4 + 12]) {
-          g.peer_release.assign(reinterpret_cast<const char*>(buf + 4 + 13), buf[4 + 12]);
+          peer.release.assign(reinterpret_cast<const char*>(buf + 4 + 13), buf[4 + 12]);
         }
-        REXLOG_WARN("[net] the other player's game speaks the session protocol {} (this one {}): another release of "
+        REXLOG_WARN("[net] player {}'s game speaks the session protocol {} (this one {}): another release of "
                     "mk9-lauta ({}; this one {})",
-                    buf[2], Protocol(), g.peer_release.empty() ? "0.2.0 or older" : g.peer_release, MK9_LAUTA_VERSION);
+                    machine + 1, buf[2], Protocol(), peer.release.empty() ? "0.2.0 or older" : peer.release,
+                    MK9_LAUTA_VERSION);
       }
       continue;
     }
-    g.heard_peer = true;
-    g.last_heard_us = NowUs();
-    ++g.received;
+    peer.heard = true;
+    peer.last_heard_us = NowUs();
+    ++peer.received;
     const uint8_t type = buf[3];
     const uint8_t* p = buf + 4;
     const int left = n - 4;
     if (type == kHello && left >= 12) {
-      g.peer_hello = true;
-      g.peer_delay = p[1];
-      g.peer_seed = Get32(p + 6);
-      g.peer_rollback = p[10];
-      g.peer_rollback_delay = p[11];
-      if (left >= 13 && left >= 13 + p[12] && g.peer_release.empty()) {
-        g.peer_release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
-        REXLOG_INFO("[net] the other player has mk9-lauta {}", g.peer_release);
+      peer.hello = true;
+      peer.delay = p[1];
+      peer.seed = Get32(p + 6);
+      peer.rollback = p[10];
+      peer.rollback_delay = p[11];
+      if (p[0] != machine) {
+        static int said = 0;
+        if (said++ < 4) REXLOG_ERROR("[net] the link to player {} carries player {}'s HELLO", machine + 1, p[0] + 1);
+      }
+      if (left >= 13 && left >= 13 + p[12] && peer.release.empty()) {
+        peer.release.assign(reinterpret_cast<const char*>(p + 13), p[12]);
+        REXLOG_INFO("[net] player {} has mk9-lauta {}", machine + 1, peer.release);
         if (left >= 14 + p[12]) {
-          g.peer_players = ((p[13 + p[12]] >> 2) & 1) ? 2 : 1;
-          if (g.peer_players == 2 || g.local_players == 2) {
-            REXLOG_INFO("[net] players at each machine: {} here, {} there", g.local_players, g.peer_players);
+          peer.players = ((p[13 + p[12]] >> 2) & 1) ? 2 : 1;
+          g.players[machine] = peer.players;
+          if (peer.players == 2 || g.local_players == 2) {
+            REXLOG_INFO("[net] players at each machine: {} here, {} at player {}'s", g.local_players, peer.players,
+                        machine + 1);
           }
         }
         // the settings both games must share (a test switch changed on one side)
         if (left >= 14 + p[12] && ((p[13 + p[12]] >> 1) & 1) != (mk9::kratos::Installed() ? 1 : 0)) {
-          REXLOG_ERROR("[net] the other player's game {} Kratos and this one {}: the games will go apart (the rooms "
-                       "keep such a fight from starting)",
-                       ((p[13 + p[12]] >> 1) & 1) ? "has" : "does not have", mk9::kratos::Installed() ? "has" : "does not");
+          REXLOG_ERROR("[net] player {}'s game {} Kratos and this one {}: the games will go apart (the rooms keep "
+                       "such a fight from starting)",
+                       machine + 1, ((p[13 + p[12]] >> 1) & 1) ? "has" : "does not have",
+                       mk9::kratos::Installed() ? "has" : "does not");
         }
         if (left >= 14 + p[12] && (p[13 + p[12]] & 1) != (virtual_time::Enabled() ? 1 : 0)) {
-          REXLOG_ERROR("[net] the other player's game {} the game thread's clock made of frames and this one {} "
+          REXLOG_ERROR("[net] player {}'s game {} the game thread's clock made of frames and this one {} "
                        "(mk9_virtual_time): their clocks differ, the games may go apart",
-                       (p[13 + p[12]] & 1) ? "has" : "does not have", virtual_time::Enabled() ? "has" : "does not");
+                       machine + 1, (p[13 + p[12]] & 1) ? "has" : "does not have",
+                       virtual_time::Enabled() ? "has" : "does not");
+        }
+        // (12 and up) the session's machines
+        if (left >= 15 + p[12]) {
+          peer.machines = p[14 + p[12]];
+          if (peer.machines != g.machines) {
+            REXLOG_ERROR("[net] player {}'s game counts {} machines in the session and this one {}", machine + 1,
+                         peer.machines, g.machines);
+          }
         }
       }
-      if (g.started) AnswerHello();
+      if (g.started) AnswerHello(machine, peer);
     } else if (type == kInput && left >= 13) {
       const uint32_t epoch = Get32(p);
       if (epoch != g.epoch) {
-        // the peer is past a barrier this side has not finished yet: it got there
-        if (epoch > g.epoch) g.peer_barrier = std::max(g.peer_barrier, epoch);
+        // that machine is past a barrier this side has not finished yet: it got there
+        if (epoch > g.epoch) peer.barrier = std::max(peer.barrier, epoch);
         continue;
       }
       p += 4;
       const int64_t ack = int64_t(Get32(p)) - 1;
       const int64_t first = Get32(p + 4);
       const int count = p[8];
-      const int size = PadBytes(g.peer_players);
+      const int size = PadBytes(peer.players);
       if (left < 13 + count * size + 16) continue;
-      g.peer_acked = std::max(g.peer_acked, ack);
+      peer.acked = std::max(peer.acked, ack);
       for (int i = 0; i < count; ++i) {
         const int64_t f = first + i;
         Ensure(f);
-        if (g.have_remote[size_t(f)]) continue;
-        Pad& pad = g.remote[size_t(f)];
+        if (peer.have[size_t(f)]) continue;
+        Pad& pad = peer.pads[size_t(f)];
         std::memcpy(pad.bytes, p + 9 + i * size, 12);
         pad.busy = p[9 + i * size + 12];
         pad.ready = p[9 + i * size + 13];
         pad.sound = Get32(p + 9 + i * size + 14);
         if (size == kPadBytes2) std::memcpy(pad.bytes2, p + 9 + i * size + 18, 12);
-        g.have_remote[size_t(f)] = 1;
+        peer.have[size_t(f)] = 1;
         // a frame that ran on a prediction this input contradicts: the rollback goes back to it
-        if (g.rollback && f < g.frame && !(g.used[1 - g.player][size_t(f)] == pad)) {
+        if (g.rollback && f < g.frame && !(g.used[machine][size_t(f)] == pad)) {
           ++g.mispredicted;
           g.rollback_to = g.rollback_to < 0 ? f : std::min(g.rollback_to, f);
         }
-        // a sound callback both machines have now said: given at a frame that may have run without it
+        // a sound callback every machine has now said: given at a frame that may have run without it
         if (g.frames_sound && pad.sound) {
-          const int64_t due = sound_sync::RemoteAnnounced(pad.sound, f);
+          const int64_t due = sound_sync::RemoteAnnounced(SoundSlot(machine), pad.sound, f);
           if (g.rollback && due >= 0 && due < g.frame) {
             g.rollback_to = g.rollback_to < 0 ? due : std::min(g.rollback_to, due);
             sound_sync::NoteRollback();
           }
         }
       }
-      while (size_t(g.remote_upto + 1) < g.have_remote.size() && g.have_remote[size_t(g.remote_upto + 1)]) {
-        ++g.remote_upto;
-      }
+      while (size_t(peer.upto + 1) < peer.have.size() && peer.have[size_t(peer.upto + 1)]) ++peer.upto;
       const uint8_t* h = p + 9 + count * size;
       const uint32_t hash_frame = Get32(h);
       if (hash_frame != kNoHash && Get64(h + 4) != 0) {
         Ensure(hash_frame);
-        g.remote_hash[hash_frame] = Get64(h + 4);
-        g.remote_hash_newest = std::max<int64_t>(g.remote_hash_newest, hash_frame);
-        if (left >= 13 + count * size + 32) g.remote_fighters[hash_frame] = Get64(h + 24);
+        peer.hash[hash_frame] = Get64(h + 4);
+        peer.hash_newest = std::max<int64_t>(peer.hash_newest, hash_frame);
+        if (left >= 13 + count * size + 32) peer.fighters[hash_frame] = Get64(h + 24);
       }
-      g.peer_latest = std::max<int64_t>(g.peer_latest, int64_t(Get32(h + 12)));
+      peer.latest = std::max<int64_t>(peer.latest, int64_t(Get32(h + 12)));
       if (left >= 13 + count * size + 24) {
         const uint32_t into = uint32_t(h[20]) | uint32_t(h[21]) << 8;
-        if (into != 0xFFFF) NotePhase(int64_t(Get32(h + 16)), uint64_t(into) * 10);
-        g.peer_phase = double(int16_t(uint16_t(h[22] | h[23] << 8))) / 100.0;
+        if (into != 0xFFFF) NotePhase(peer, int64_t(Get32(h + 16)), uint64_t(into) * 10);
+        peer.peer_phase = double(int16_t(uint16_t(h[22] | h[23] << 8))) / 100.0;
       }
     } else if (type == kBarrier && left >= 8) {
       const uint32_t epoch = Get32(p);
-      if (epoch == g.epoch + 1 && g.peer_barrier < epoch) {
-        g.peer_barrier = epoch;
-        g.peer_last_frame = Get32(p + 4);
-        REXLOG_INFO("[net] the other player is at the barrier of epoch {} (its last frame {}); this side is at frame {}",
-                    epoch, g.peer_last_frame, g.frame);
+      if (epoch == g.epoch + 1 && peer.barrier < epoch) {
+        peer.barrier = epoch;
+        peer.last_frame = Get32(p + 4);
+        peer.made_upto = left >= 12 ? int64_t(Get32(p + 8)) : peer.last_frame;
+        REXLOG_INFO("[net] player {} is at the barrier of epoch {} (its last frame {}, its last input {}); this side "
+                    "is at frame {}",
+                    machine + 1, epoch, peer.last_frame, peer.made_upto, g.frame);
       }
     } else if (type == kPing && left >= 8) {
       // mk9-lauta (2026-11-10): the pong says how long the ping waited here before this side read it (the transport
@@ -1139,58 +1325,104 @@ void Receive() {
       // ms of "round trip" over a 160 ms path, and its delay went up to 7 for half a minute.
       auto r = Header(kPong);
       r.insert(r.end(), p, p + 8);
-      const uint64_t arrived = g.link->LastArrivalUs(), now = NowUs();
+      const uint64_t arrived = peer.link->LastArrivalUs(), now = NowUs();
       Put32(r, arrived && now > arrived ? uint32_t(std::min<uint64_t>(now - arrived, 0xFFFFFFFFull)) : 0);
-      Send(r);
+      Send(peer, r);
     } else if (type == kPong && left >= 8) {
-      const uint64_t arrived = g.link->LastArrivalUs(), now = NowUs();
+      const uint64_t arrived = peer.link->LastArrivalUs(), now = NowUs();
       const uint64_t at = arrived && arrived <= now ? arrived : now;
       const uint64_t held_there = left >= 12 ? Get32(p + 8) : 0;
       const uint64_t sent = Get64(p);
       const double rtt = std::max(0.1, (double(at > sent ? at - sent : 0) - double(held_there)) / 1000.0);
-      g.rtt_ms = g.rtt_ms == 0 ? rtt : g.rtt_ms * 0.8 + rtt * 0.2;
-      g.rtt_samples[g.rtt_count++ % 8] = rtt;
-      for (auto& ping : g.pings) {
+      peer.rtt_ms = peer.rtt_ms == 0 ? rtt : peer.rtt_ms * 0.8 + rtt * 0.2;
+      peer.rtt_samples[peer.rtt_count++ % 8] = rtt;
+      for (auto& ping : peer.pings) {
         if (ping.at_us == sent) ping.answered = true;
       }
     } else if (type == kBye) {
-      // its game found the two out of sync, or its player left
+      // its game found the games out of sync, or its player left: the session ends for every machine
       const bool desync = left >= 1 && p[0] == uint8_t(EndReason::kDesync);
-      if (!g.ended) REXLOG_INFO("[net] the other player's goodbye{}", desync ? " (out of sync)" : "");
+      if (!g.ended) REXLOG_INFO("[net] player {}'s goodbye{}", machine + 1, desync ? " (out of sync)" : "");
       EndSession(desync ? EndReason::kDesync : EndReason::kPeerLeft, false);
     }
   }
 }
 
-void Ping() {
-  if (NowUs() - g.last_ping_us > 500000) {
-    const uint64_t now = NowUs();
-    auto p = Header(kPing);
-    Put64(p, now);
-    Send(p);
-    g.last_ping_us = now;
-    g.pings[g.ping_next++ % 32] = {now, false};
-  }
-  if (NowUs() - g.relayed_checked_us > 3000000) {
-    g.relayed_checked_us = NowUs();
-    g.relayed.store(g.link->Relayed(), std::memory_order_relaxed);
-  }
+void Receive() {
+  ForPeers([](int m, Peer& p) {
+    if (p.link) ReceiveFrom(m, p);
+  });
+  UpdateRemoteUpto();
 }
 
-// Waits until done() (receiving, resending this side's inputs every 4 ms) or the peer goes quiet for the timeout.
+void Ping() {
+  bool relayed = false, checked = false;
+  ForPeers([&](int, Peer& peer) {
+    if (NowUs() - peer.last_ping_us > 500000) {
+      const uint64_t now = NowUs();
+      auto p = Header(kPing);
+      Put64(p, now);
+      Send(peer, p);
+      peer.last_ping_us = now;
+      peer.pings[peer.ping_next++ % 32] = {now, false};
+    }
+    if (NowUs() - peer.relayed_checked_us > 3000000) {
+      peer.relayed_checked_us = NowUs();
+      peer.relayed = peer.link->Relayed();
+      checked = true;
+    }
+    relayed = relayed || peer.relayed;
+  });
+  if (checked) g.relayed.store(relayed, std::memory_order_relaxed);
+}
+
+// The other machine heard from longest ago (the one the session's timeout counts for), or -1.
+int Quietest() {
+  int quiet = -1;
+  ForPeers([&](int m, Peer& p) {
+    if (quiet < 0 || p.last_heard_us < g.peers[quiet].last_heard_us) quiet = m;
+  });
+  return quiet;
+}
+
+// Waits up to timeout_ms for a datagram from any other machine: on the one link of a session of two; with more, on the
+// first one's for a millisecond at most (the others' are read right after: at most that late).
+void WaitAny(int timeout_ms) {
+  int links = 0;
+  Peer* first = nullptr;
+  ForPeers([&](int, Peer& p) {
+    if (!p.link) return;
+    ++links;
+    if (!first) first = &p;
+  });
+  if (!first) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(std::max(1, timeout_ms)));
+    return;
+  }
+  first->link->WaitReadable(links == 1 ? timeout_ms : std::min(timeout_ms, 1));
+}
+
+// The other machine this side sent to longest ago: when it was.
+uint64_t OldestSentUs() {
+  uint64_t oldest = UINT64_MAX;
+  ForPeers([&](int, Peer& p) { oldest = std::min(oldest, p.last_sent_us); });
+  return oldest == UINT64_MAX ? 0 : oldest;
+}
+
+// Waits until done() (receiving, resending this side's inputs every 4 ms) or a machine goes quiet for the timeout.
 template <typename Done>
 void WaitFor(Done done) {
   if (done()) return;
   const uint64_t wait_start = NowUs();
   g_waiting_since_us.store(wait_start, std::memory_order_relaxed);
   while (!done() && !g.ended) {
-    g.link->WaitReadable(1);
+    WaitAny(1);
     Receive();
     TakeEndRequest();
     if (g.ended) break;
-    if (NowUs() - g.last_sent_us > 4000) SendInputs();
-    if (NowUs() - g.last_heard_us > TimeoutUs()) {
-      REXLOG_ERROR("[net] no word from the other player for {} s", TimeoutUs() / 1000000);
+    if (NowUs() - OldestSentUs() > 4000) SendInputs();
+    if (const int quiet = Quietest(); quiet >= 0 && NowUs() - g.peers[quiet].last_heard_us > TimeoutUs()) {
+      REXLOG_ERROR("[net] no word from player {} for {} s", quiet + 1, TimeoutUs() / 1000000);
       EndSession(EndReason::kPeerLost, false);
     }
   }
@@ -1340,6 +1572,50 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
   std::string title = REXCVAR_GET(mk9_net_room_title);
   if (title.empty()) title = name;
   const bool listed = g.host && REXCVAR_GET(mk9_net_room_listed);
+  // mk9-lauta (2026-11-17): a session of more than two machines: every machine's lobby id in the room's order (the
+  // host's empty), this one's among them; a path to each other machine, offered by the later one of the two
+  if (const std::string list = REXCVAR_GET(mk9_net_peers); !list.empty()) {
+    std::vector<std::string> ids;
+    size_t from = 0;
+    for (;;) {
+      const size_t comma = list.find(',', from);
+      ids.push_back(list.substr(from, comma == std::string::npos ? std::string::npos : comma - from));
+      if (comma == std::string::npos) break;
+      from = comma + 1;
+    }
+    id = g.host ? std::string() : std::string(REXCVAR_GET(mk9_net_id));
+    const auto mine = std::find(ids.begin(), ids.end(), id);
+    if (ids.size() < 3 || ids.size() > size_t(kMaxMachines) || !ids[0].empty() || mine == ids.end() ||
+        (!g.host && id.empty())) {
+      REXLOG_ERROR("[net] room {}: the session's machines ({}) and this one's id ({}) do not fit together", room,
+                   list, id.empty() ? "none" : id);
+      g.failed = true;
+      return false;
+    }
+    g.machines = int(ids.size());
+    g.player = int(mine - ids.begin());
+    if (g.host) {
+      lobby::Host(room, title, listed, true);
+    } else {
+      lobby::Join(room, id);
+    }
+    for (int m = 0; m < g.machines; ++m) {
+      if (m == g.player) continue;
+      auto pair = net::IceLink::CreatePair(room, id, ids[size_t(m)], m < g.player);
+      if (!pair) {
+        REXLOG_ERROR("[net] room {}: the path to player {} could not be set up", room, m + 1);
+        g.failed = true;
+        return false;
+      }
+      Peer& p = g.peers[m];
+      p.on = true;
+      p.id = ids[size_t(m)];
+      p.link = net::WithTestConditions(std::move(pair));
+    }
+    g.room = room;
+    room::EnterSession(room, g.host, name, id, title, listed, ids);  // the room's chat goes on in the session
+    return true;
+  }
   if (g.host) {
     lobby::Host(room, title, listed, true);
   } else {
@@ -1353,9 +1629,37 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
     g.failed = true;
     return false;
   }
-  g.link = net::WithTestConditions(std::move(link));
+  g.machines = 2;
+  g.player = g.host ? 0 : 1;
+  Peer& other = g.peers[1 - g.player];
+  other.on = true;
+  other.link = net::WithTestConditions(std::move(link));
   g.room = room;
   room::EnterSession(room, g.host, name, id, title, listed);  // the room's chat goes on in the session
+  return true;
+}
+
+// mk9-lauta (2026-11-17): mk9_net_mesh (tests): every other machine's link a UDP socket of its own, machine i's to
+// machine j from port base + 8 i + j to port base + 8 j + i.
+bool ConfigureMesh(int base) {
+  g.machines = std::clamp(REXCVAR_GET(mk9_net_machines), 2, kMaxMachines);
+  g.player = std::clamp(REXCVAR_GET(mk9_net_machine), 0, g.machines - 1);
+  g.host = g.player == 0;
+  const std::string where = REXCVAR_GET(mk9_net_mesh_host);
+  for (int m = 0; m < g.machines; ++m) {
+    if (m == g.player) continue;
+    auto udp = std::make_unique<net::UdpSocket>();
+    const int mine = base + 8 * g.player + m, theirs = base + 8 * m + g.player;
+    if (!udp->Open(uint16_t(mine)) || !udp->SetPeer(fmt::format("{}:{}", where, theirs))) {
+      REXLOG_ERROR("[net] mk9_net_mesh: the link to player {} (port {} to {}) could not be made", m + 1, mine, theirs);
+      g.failed = true;
+      return false;
+    }
+    Peer& p = g.peers[m];
+    p.on = true;
+    p.local_port = udp->LocalPort();
+    p.link = net::WithTestConditions(std::move(udp));
+  }
   return true;
 }
 
@@ -1379,7 +1683,8 @@ bool Configure() {
   const int host_port = REXCVAR_GET(mk9_net_host);
   const std::string join = REXCVAR_GET(mk9_net_join);
   const std::string room = REXCVAR_GET(mk9_net_room);
-  if (host_port <= 0 && join.empty() && room.empty()) return false;
+  const int mesh = REXCVAR_GET(mk9_net_mesh);
+  if (host_port <= 0 && join.empty() && room.empty() && mesh <= 0) return false;
   g.player = 0;
   g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
   g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), -1, 7);
@@ -1388,31 +1693,43 @@ bool Configure() {
   g.local_players = std::clamp(REXCVAR_GET(mk9_net_local_players), 1, 2);
   if (!room.empty()) {
     if (!ConfigureRoom(room, REXCVAR_GET(mk9_net_role))) return false;
-    g.player = g.host || g.watching ? 0 : 1;
+    if (g.watching) g.player = 0;
+    g.players[g.player] = g.local_players;
     if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
     ParseRanges();
-    REXLOG_INFO("[net] room {} as its {}; lockstep delay {}, rollback {} (delay {}); the host decides", room,
-                g.host ? "host" : g.watching ? "spectator" : "guest", g.lockstep_delay, g.rollback_wanted ? "on" : "off",
-                g.rollback_delay);
+    REXLOG_INFO("[net] room {} as its {}; {} machines; lockstep delay {}, rollback {} (delay {}); the host decides",
+                room, g.host ? "host" : g.watching ? "spectator" : "guest", g.machines, g.lockstep_delay,
+                g.rollback_wanted ? "on" : "off", g.rollback_delay);
+    return true;
+  }
+  if (mesh > 0) {
+    if (!ConfigureMesh(mesh)) return false;
+    g.players[g.player] = g.local_players;
+    if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
+    ParseRanges();
+    REXLOG_INFO("[net] a mesh of {} machines over UDP (ports from {}): this one is player {}; lockstep delay {}, "
+                "rollback {} (delay {}); the host decides; {} sync range(s)",
+                g.machines, mesh, g.player + 1, g.lockstep_delay, g.rollback_wanted ? "on" : "off", g.rollback_delay,
+                g.sync_ranges.size());
     return true;
   }
   g.host = host_port > 0;
+  g.machines = 2;
   g.player = g.host ? 0 : 1;
-  g.lockstep_delay = std::clamp(REXCVAR_GET(mk9_net_delay), 0, 15);
-  g.rollback_delay = std::clamp(REXCVAR_GET(mk9_net_rollback_delay), -1, 7);
-  g.rollback_wanted = REXCVAR_GET(mk9_net_rollback);
-  g.delay = g.lockstep_delay;
+  g.players[g.player] = g.local_players;
   if (g.host && !seed::Configured(&g.seed)) g.seed = std::random_device{}();
   auto udp = std::make_unique<net::UdpSocket>();
   if (!udp->Open(g.host ? uint16_t(host_port) : 0) || (!g.host && !udp->SetPeer(join))) {
     g.failed = true;
     return false;
   }
-  g.local_port = udp->LocalPort();
-  g.link = net::WithTestConditions(std::move(udp));
+  Peer& other = g.peers[1 - g.player];
+  other.on = true;
+  other.local_port = udp->LocalPort();
+  other.link = net::WithTestConditions(std::move(udp));
   ParseRanges();
   REXLOG_INFO("[net] {} on UDP port {}{}; lockstep delay {}, rollback {} (delay {}); the host decides; {} sync range(s)",
-              g.host ? "hosting" : "joining", g.local_port, g.host ? "" : " -> " + join, g.lockstep_delay,
+              g.host ? "hosting" : "joining", other.local_port, g.host ? "" : " -> " + join, g.lockstep_delay,
               g.rollback_wanted ? "on" : "off", g.rollback_delay, g.sync_ranges.size());
   return true;
 }
@@ -1421,87 +1738,127 @@ bool Configure() {
 // mk9-lauta (2026-11-10): 30 s at most (it was 2 minutes of a frozen logo); every 5 s the log says what it waits for;
 // and a guest whose path has been up 6 s without a word from the host starts the ICE exchange over (up to 3 times):
 // the 0.2.0 sessions that froze had ICE "completed" on the guest's side and never a datagram from the host.
+// (mk9-lauta, 2026-11-17: with every other machine; the guests take the host's, machine 0's.)
 bool Handshake() {
   const uint64_t timeout = std::max<uint64_t>(30000000, TimeoutUs() + 10000000);
   const uint64_t start = NowUs();
-  uint64_t hello_at = 0, said_at = start, path_since = 0;
-  int restarts = 0, hellos_sent = 0;
+  uint64_t said_at = start;
+  uint64_t hello_at[kMaxMachines] = {}, path_since[kMaxMachines] = {};
+  int restarts[kMaxMachines] = {}, hellos_sent[kMaxMachines] = {};
   while (NowUs() - start < timeout) {
-    const bool path = g.link->HasPeer();
-    if (path && NowUs() - hello_at > 100000) {
-      if (SendHello()) ++hellos_sent;
-      hello_at = NowUs();
-    }
-    if (!path) {
-      path_since = 0;
-    } else if (!path_since) {
-      path_since = NowUs();
-    }
-    if (!g.host && !g.heard_peer && path_since && NowUs() - path_since > 6000000 && restarts < 3) {
-      REXLOG_WARN("[net] the path to the host has been up {} s with nothing from it: the ICE exchange again ({} of 3)",
-                  (NowUs() - path_since) / 1000000, restarts + 1);
-      if (g.link->Restart()) ++restarts;
-      path_since = 0;
-    }
+    ForPeers([&](int m, Peer& peer) {
+      const bool path = peer.link->HasPeer();
+      if (path && NowUs() - hello_at[m] > 100000) {
+        if (SendHello(peer)) ++hellos_sent[m];
+        hello_at[m] = NowUs();
+      }
+      if (!path) {
+        path_since[m] = 0;
+      } else if (!path_since[m]) {
+        path_since[m] = NowUs();
+      }
+      // (the side that offered the path: a link that cannot start over says no)
+      if (!peer.heard && path_since[m] && NowUs() - path_since[m] > 6000000 && restarts[m] < 3 && !g.host) {
+        REXLOG_WARN("[net] the path to player {} has been up {} s with nothing from it: the ICE exchange again ({} of "
+                    "3)",
+                    m + 1, (NowUs() - path_since[m]) / 1000000, restarts[m] + 1);
+        // (a path this side answered cannot start over: the other side's will)
+        restarts[m] = peer.link->Restart() ? restarts[m] + 1 : 3;
+        path_since[m] = 0;
+      }
+    });
     if (NowUs() - said_at > 5000000) {
       said_at = NowUs();
-      REXLOG_INFO("[net] waiting for the other player ({} s): path {}, heard {}, its HELLO {}, {} HELLOs sent{}",
-                  (NowUs() - start) / 1000000, path ? "up" : "not yet", g.heard_peer ? "yes" : "no",
-                  g.peer_hello ? "yes" : "no", hellos_sent, restarts ? fmt::format(", {} new exchange(s)", restarts) : "");
+      ForPeers([&](int m, Peer& peer) {
+        REXLOG_INFO("[net] waiting for player {} ({} s): path {}, heard {}, its HELLO {}, {} HELLOs sent{}", m + 1,
+                    (NowUs() - start) / 1000000, peer.link->HasPeer() ? "up" : "not yet", peer.heard ? "yes" : "no",
+                    peer.hello ? "yes" : "no", hellos_sent[m],
+                    restarts[m] ? fmt::format(", {} new exchange(s)", restarts[m]) : "");
+      });
     }
-    g.link->WaitReadable(10);
+    WaitAny(10);
     Receive();
     TakeEndRequest();
     if (g.ended) return false;
-    if (g.peer_version >= 0) {
+    bool other_version = false, other_count = false;
+    ForPeers([&](int, Peer& peer) {
+      if (peer.version < 0) return;
       // another release: no session (their netcode is not this one's). Their game hears a goodbye in its own
       // version's words (0.2.0 ends its handshake with "the other player left" instead of waiting 2 minutes).
-      if (g.link->HasPeer()) {
-        const uint8_t bye[5] = {uint8_t(kMagic & 0xFF), uint8_t(kMagic >> 8), uint8_t(g.peer_version), kBye,
+      other_version = true;
+      if (peer.link->HasPeer()) {
+        const uint8_t bye[5] = {uint8_t(kMagic & 0xFF), uint8_t(kMagic >> 8), uint8_t(peer.version), kBye,
                                 uint8_t(EndReason::kLeft)};
-        for (int i = 0; i < 3; ++i) g.link->Send(bye, sizeof(bye));
+        for (int i = 0; i < 3; ++i) peer.link->Send(bye, sizeof(bye));
       }
-      EndSession(EndReason::kOtherVersion, false);
+    });
+    if (other_version) {
+      EndSession(EndReason::kOtherVersion, true);
       return false;
     }
-    // Both sides need the other's HELLO and a path to answer on. Over ICE a HELLO can arrive before the pair this side
-    // sends on is chosen: the host of 0.1.0 started on any word from the guest, its own HELLO went nowhere and the
-    // guest waited for it while the host waited for the guest's inputs (the sessions that froze at their start).
-    if (g.peer_hello && g.link->HasPeer()) {
+    // Every side needs the others' HELLOs and a path to answer each on. Over ICE a HELLO can arrive before the pair
+    // this side sends on is chosen: the host of 0.1.0 started on any word from the guest, its own HELLO went nowhere
+    // and the guest waited for it while the host waited for the guest's inputs (the sessions that froze at their
+    // start).
+    bool all = true;
+    ForPeers([&](int, Peer& peer) {
+      if (!peer.hello || !peer.link->HasPeer()) all = false;
+      if (peer.machines >= 0 && peer.machines != g.machines) other_count = true;
+    });
+    if (other_count) {
+      REXLOG_ERROR("[net] the machines do not agree on how many they are: session off");
+      EndSession(EndReason::kFailed, true);
+      return false;
+    }
+    if (all) {
       // the host's seed and its choice of rollback; the delays are each player's own (mk9-lauta, 2026-11-10: the
-      // inputs carry their frames, so the two sides need not wait the same)
-      if (!g.host && g.peer_delay >= 0) {
-        g.seed = uint32_t(g.peer_seed);
-        g.rollback_wanted = g.peer_rollback != 0;
+      // inputs carry their frames, so the sides need not wait the same)
+      if (!g.host && g.peers[0].on && g.peers[0].delay >= 0) {
+        g.seed = uint32_t(g.peers[0].seed);
+        g.rollback_wanted = g.peers[0].rollback != 0;
       }
       g.delay = g.lockstep_delay;
-      // the side that finished first lets the other finish too; a peer that still misses it gets it again when its
+      // the side that finished first lets the others finish too; one that still misses it gets it again when its
       // next HELLO arrives (AnswerHello)
-      if (SendHello()) return true;
+      bool sent = true;
+      ForPeers([&](int, Peer& peer) { sent = SendHello(peer) && sent; });
+      if (sent) return true;
     }
   }
   REXLOG_ERROR("[net] nobody answered in {} s: session off", timeout / 1000000);
   return false;
 }
 
-// This side reached the next epoch's barrier during its frame g.frame - 1: tells the peer and waits for it there.
+// This side reached the next epoch's barrier during its frame g.frame - 1: tells the other machines and waits for all
+// of them there.
 bool WaitAtBarrier() {
   const uint32_t next = g.epoch + 1;
   const int64_t last = g.frame - 1;
   const uint64_t start = NowUs();
   uint64_t told_at = 0;
   g_waiting_since_us.store(start, std::memory_order_relaxed);
-  while (g.peer_barrier < next && !g.ended) {
+  auto missing = [&] {
+    int m_missing = -1;
+    ForPeers([&](int m, Peer& p) {
+      if (p.barrier < next && m_missing < 0) m_missing = m;
+    });
+    return m_missing;
+  };
+  while (missing() >= 0 && !g.ended) {
     if (NowUs() - told_at > 20000) {
       SendBarrier(next, last);
+      // mk9-lauta (2026-11-17): and the inputs a machine still loading has not acknowledged (a lost datagram would
+      // otherwise keep it waiting for them here)
+      SendInputs();
       told_at = NowUs();
     }
-    g.link->WaitReadable(2);
+    WaitAny(2);
     Receive();
     TakeEndRequest();
     if (g.ended) break;
-    if (NowUs() - g.last_heard_us > TimeoutUs() || NowUs() - start > TimeoutUs() * 3) {
-      REXLOG_ERROR("[net] the other player never reached the barrier of epoch {}", next);
+    const int quiet = Quietest();
+    if ((quiet >= 0 && NowUs() - g.peers[quiet].last_heard_us > TimeoutUs()) || NowUs() - start > TimeoutUs() * 3) {
+      REXLOG_ERROR("[net] player {} never reached the barrier of epoch {}", missing() + 1, next);
       EndSession(EndReason::kPeerLost, false);
     }
   }
@@ -1517,31 +1874,39 @@ int LockstepDelayFor(double rtt_ms);
 
 void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   // the packet numbers go on from where the last frame left them
-  for (int p = 0; p < 2; ++p) {
-    if (g.frame > 0 && size_t(g.frame - 1) < g.packet[p].size()) g.packet_base[p] = g.packet[p][size_t(g.frame - 1)];
+  for (int m = 0; m < kMaxMachines; ++m) {
+    if (g.frame > 0 && size_t(g.frame - 1) < g.packet[m].size()) g.packet_base[m] = g.packet[m][size_t(g.frame - 1)];
   }
   g.epoch = epoch;
   g.start_game_frame = game_frame;
   g.frame = 0;
   g.latest = 0;
   g.local.clear();
-  g.remote.clear();
-  g.have_remote.clear();
   g.local_hash.clear();
-  g.remote_hash.clear();
   g.local_fighters.clear();
-  g.remote_fighters.clear();
-  for (int p = 0; p < 2; ++p) {
-    g.used[p].clear();
-    g.packet[p].clear();
+  for (int m = 0; m < kMaxMachines; ++m) {
+    g.used[m].clear();
+    g.packet[m].clear();
   }
-  g.compared_upto = -1;
-  g.remote_hash_newest = -1;
+  ForPeers([](int, Peer& p) {
+    p.pads.clear();
+    p.have.clear();
+    p.hash.clear();
+    p.fighters.clear();
+    p.compared_upto = -1;
+    p.hash_newest = -1;
+    p.upto = -1;
+    p.acked = -1;
+    p.last_frame = -1;
+    p.made_upto = -1;
+    p.latest = -1;
+    p.advantage = 0;
+    p.phase = 0;
+    p.peer_phase = 0;
+    p.phase_samples = 0;
+  });
   g.hashes_compared = 0;
   g.remote_upto = -1;
-  g.peer_acked = -1;
-  g.peer_last_frame = -1;
-  g.peer_latest = -1;
   g.check_hash = 0;
   g.checks = 0;
   g.desync_at = -1;
@@ -1555,26 +1920,22 @@ void StartEpoch(uint64_t game_frame, uint32_t epoch, bool rollback) {
   g.rollback_to = -1;
   g.prev_hidden = true;
   g.mode_change_at = -1;
-  g.advantage = 0;
   g.release_us = 0;
   g.starts.fill({-1, 0});
-  g.phase = 0;
-  g.peer_phase = 0;
-  g.phase_samples = 0;
   g.phase_check_at = 0;
   g.phase_ahead_checks = 0;
   // the delay the round trip needs (from the pongs so far): a lockstep epoch starts with it instead of the host's
   // and goes on adjusting from its first frame; a fight's first kLearnFrames (its intro, nobody plays yet) run in
   // lockstep with it too, and the fight's own delay comes after them (FightDelay). With the host's 1 frame, 140-220
   // ms of round trip ran the intros at ~13 frames a second (the 0.1.0 testers' "it slows down when the fight starts")
-  const int needed = g.rtt_count > 0 ? LockstepDelayFor(RoundTripTypical()) : g.lockstep_delay;
+  const int needed = RoundTripTypical() > 0 ? LockstepDelayFor(RoundTripTypical()) : g.lockstep_delay;
   g.delay = rollback ? std::max(g.rollback_delay, needed) : std::max(g.lockstep_delay, needed);
   g.delay_check_at = rollback ? 120 : 0;
   g.lower_votes = 0;
   RecordEpoch();
-  g.local_made_upto = g.delay - 1;  // the epoch's first delay frames: neutral on both sides
+  g.local_made_upto = g.delay - 1;  // the epoch's first delay frames: neutral on every side
   Ensure(g.delay + 1);
-  g.last_heard_us = NowUs();
+  ForPeers([](int, Peer& p) { p.last_heard_us = NowUs(); });
 }
 
 // The sync hash of the frame that just ran (its last run), from the game's checks during it.
@@ -1602,23 +1963,66 @@ void FinishFrameHash() {
   g.checks = 0;
 }
 
-// The pads frame g.frame runs with, and their packet numbers (one more for each change since the frame before).
-void SetFramePads(const Pad& local, const Pad& remote) {
-  const Pad pads[2] = {g.player == 0 ? local : remote, g.player == 0 ? remote : local};
-  for (int p = 0; p < 2; ++p) {
+// The pads frame g.frame runs with, by machine, and their packet numbers (one more for each change since the frame
+// before).
+void SetFramePads(const Pad* pads) {
+  for (int m = 0; m < g.machines && m < kMaxMachines; ++m) {
     const size_t f = size_t(g.frame);
-    const uint32_t before = f ? g.packet[p][f - 1] : g.packet_base[p];
-    const bool changed = f ? !(g.used[p][f - 1] == pads[p]) : !(pads[p] == Pad{});
-    g.used[p][f] = pads[p];
-    g.packet[p][f] = before + (changed ? 1 : 0);
-    g.frame_pads[p] = pads[p];
+    const uint32_t before = f ? g.packet[m][f - 1] : g.packet_base[m];
+    const bool changed = f ? !(g.used[m][f - 1] == pads[m]) : !(pads[m] == Pad{});
+    g.used[m][f] = pads[m];
+    g.packet[m][f] = before + (changed ? 1 : 0);
+    g.frame_pads[m] = pads[m];
   }
+}
+
+// mk9-lauta (2026-11-17): frame g.frame's pads as every machine's input of that frame: this one's own, the others'
+// that came, or (a fight's prediction) the last one each of them sent; a machine past its barrier, neutral. The busy
+// flags are any machine's and the ready ones every machine's (out: or-ed and and-ed); sounds: each machine's
+// announcement by its sound_sync slot. Returns whether every other machine's real input was there.
+bool GatherPads(Pad* pads, bool predict, uint8_t* busy, uint8_t* ready, uint32_t* sounds) {
+  const size_t f = size_t(g.frame);
+  bool confirmed = true;
+  pads[g.player] = g.local[f];
+  uint8_t any_busy = g.local[f].busy, all_ready = g.local[f].ready;
+  if (sounds) sounds[0] = g.local[f].sound;
+  ForPeers([&](int m, Peer& p) {
+    Pad pad;
+    if (f < p.have.size() && p.have[f]) {
+      pad = p.pads[f];
+    } else {
+      confirmed = false;
+      if (predict && p.upto >= 0) pad = p.pads[size_t(p.upto)];
+    }
+    pads[m] = pad;
+    any_busy |= pad.busy;
+    all_ready &= pad.ready;
+    if (sounds) sounds[SoundSlot(m)] = pad.sound;
+  });
+  if (busy) *busy = any_busy;
+  if (ready) *ready = all_ready;
+  return confirmed;
 }
 
 void LogStats() {
   const uint64_t now = NowUs();
   if (now < g.log_at_us) return;
   if (g.log_at_us) {
+    // (mk9-lauta, 2026-11-17: the other machines' together; the time sync and the phase, the one farthest behind)
+    double rtt_ms = 0, advantage = 0, phase = 0, peer_phase = 0;
+    uint64_t sent = 0, received = 0;
+    bool first = true;
+    ForPeers([&](int, Peer& p) {
+      rtt_ms = std::max(rtt_ms, p.rtt_ms);
+      sent += p.sent;
+      received += p.received;
+      if (first || p.advantage > advantage) {
+        advantage = p.advantage;
+        phase = p.phase;
+        peer_phase = p.peer_phase;
+      }
+      first = false;
+    });
     std::string rb;
     if (g.rollback) {
       const quiesce::Stats q = quiesce::Totals();
@@ -1635,8 +2039,8 @@ void LogStats() {
                        q.settles ? q.ms_flush / double(q.settles) : 0.0,
                        q.settles ? q.ms_drain / double(q.settles) : 0.0,
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
-                       q.queries_seen, q.pool_waits, g.advantage, g.syncs_slept, (g.phase - g.peer_phase) / 2.0,
-                       g.phase, g.peer_phase, g.phase_shifted_ms, g.phase_shifts, g.light_boundaries, g.light_live,
+                       q.queries_seen, q.pool_waits, advantage, g.syncs_slept, (phase - peer_phase) / 2.0, phase,
+                       peer_phase, g.phase_shifted_ms, g.phase_shifts, g.light_boundaries, g.light_live,
                        g.delay_changes);
     }
     const sound::HeapStats sound = sound::Stats();
@@ -1662,8 +2066,8 @@ void LogStats() {
                       callbacks.alone, callbacks.made, callbacks.rollbacks);
     REXLOG_INFO("[net] epoch {} frame {} (game {}), rtt {:.1f} ms, delay {}, waited {:.1f} ms in total ({} stalls, "
                 "longest {:.1f} ms), peer inputs to {}; sent {}, received {}; {} frames' sync checked{}{}",
-                g.epoch, g.frame, g.start_game_frame + g.frame, g.rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
-                g.wait_ms_max, g.remote_upto, g.sent, g.received, g.hashes_compared, rb,
+                g.epoch, g.frame, g.start_game_frame + g.frame, rtt_ms, g.delay, g.wait_ms_window, g.stalls_window,
+                g.wait_ms_max, g.remote_upto, sent, received, g.hashes_compared, rb,
                 g.desync_at >= 0 ? fmt::format("; {} frame(s) out of sync, the first {}", g.desync_frames, g.desync_at)
                                  : "");
     if (g.fighters_at >= 0) {
@@ -1678,22 +2082,43 @@ void LogStats() {
 
 // The round trip's floor: the lowest of the last pongs (one answered after a long frame of the peer's, a load, says
 // nothing of the network). 0 until one came.
-double RoundTripFloor() {
-  const int n = std::min(g.rtt_count, 8);
+double RoundTripFloor(const Peer& p) {
+  const int n = std::min(p.rtt_count, 8);
   if (n == 0) return 0;
-  return *std::min_element(g.rtt_samples, g.rtt_samples + n);
+  return *std::min_element(p.rtt_samples, p.rtt_samples + n);
 }
 
 // The round trip most frames see: the 75th percentile of the last pongs (the third highest of 8). The floor alone set
 // the delay for the best moments: with 130-180 ms (the 0.1.0 testers) the delay covered 131 ms and the menus waited
 // 8 s of every 10 for inputs that came a few ms late. 0 until one came.
-double RoundTripTypical() {
-  const int n = std::min(g.rtt_count, 8);
+double RoundTripTypical(const Peer& p) {
+  const int n = std::min(p.rtt_count, 8);
   if (n == 0) return 0;
   double sorted[8];
-  std::copy(g.rtt_samples, g.rtt_samples + n, sorted);
+  std::copy(p.rtt_samples, p.rtt_samples + n, sorted);
   std::sort(sorted, sorted + n);
   return sorted[(n * 3) / 4 < n ? (n * 3) / 4 : n - 1];
+}
+
+// mk9-lauta (2026-11-17): the session's, the farthest machine's: a frame waits for every other machine's input, so the
+// delays have to cover the longest way.
+double RoundTripFloor() {
+  double worst = 0;
+  ForPeers([&](int, Peer& p) { worst = std::max(worst, RoundTripFloor(p)); });
+  return worst;
+}
+
+double RoundTripTypical() {
+  double worst = 0;
+  ForPeers([&](int, Peer& p) { worst = std::max(worst, RoundTripTypical(p)); });
+  return worst;
+}
+
+// The session's round trip on average (the farthest machine's).
+double RoundTripAverage() {
+  double worst = 0;
+  ForPeers([&](int, Peer& p) { worst = std::max(worst, p.rtt_ms); });
+  return worst;
 }
 
 // The lockstep delay a round trip needs: the two sides' delays cover it and ~25 ms of jitter, from the host's
@@ -1715,7 +2140,7 @@ void AdjustDelayForRoundTrip() {
   if (wanted == g.delay) return;
   REXLOG_INFO("[net] lockstep delay {} -> {} frames at frame {} (round trip {:.0f} ms at least, {:.0f} typical, {:.0f} "
               "on average)",
-              g.delay, wanted, g.frame, floor_ms, RoundTripTypical(), g.rtt_ms);
+              g.delay, wanted, g.frame, floor_ms, RoundTripTypical(), RoundTripAverage());
   g.delay = wanted;
   g.lower_votes = 0;
 }
@@ -1827,30 +2252,61 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
   FinishFrameHash();
   SendInputs();
   Ping();
-  // the peer waits at the next barrier and sends nothing past its last frame: this side plays on to its own barrier
-  // with neutral pads for both
+  // a machine waiting at the next barrier sends nothing past its last frame: this side plays on to its own barrier
+  // with neutral pads for every machine (loading frames: what anyone presses there counts for nothing).
+  // mk9-lauta (2026-11-17): with more than two machines the others still loading play those frames too, and must play
+  // them alike whenever each hears of the barrier: a machine at it is "stopped" only after the last input it made (its
+  // inputs up to there came, or come, to all), and the machines still loading wait for each other and go by the busy
+  // and ready flags of theirs alone (in 1.1.0's way, each machine's own flags there, three machines' frames 4522-4552
+  // of the menus' epoch hashed apart, 2026-11-17). Two machines: as it was.
   Receive();
-  auto gap = [] { return g.peer_barrier > g.epoch && g.frame > g.peer_last_frame; };
-  WaitFor([&] { return g.remote_upto >= g.frame || gap(); });
+  auto stopped = [](const Peer& p) {
+    return p.barrier > g.epoch && g.frame > (g.machines > 2 ? p.made_upto : p.last_frame);
+  };
+  auto gap = [&] {
+    bool any = false;
+    ForPeers([&](int, Peer& p) {
+      if (stopped(p)) any = true;
+    });
+    return any;
+  };
+  auto can_run = [&] {
+    if (g.machines <= 2) return g.remote_upto >= g.frame || gap();
+    bool all = true;
+    ForPeers([&](int, Peer& p) {
+      if (p.upto < g.frame && !stopped(p)) all = false;
+    });
+    return all;
+  };
+  WaitFor(can_run);
   if (g.ended) return;
   CompareFinalHashes();
   RecordFinal();
-  // the sounds' callbacks only one machine has said (sound_sync.h Decide: their frame is still ahead in lockstep)
-  if (g.frames_sound) sound_sync::Decide(g.local_made_upto, g.remote_upto);
+  // the sounds' callbacks only some machines have said (sound_sync.h Decide: their frame is still ahead in lockstep)
+  if (g.frames_sound) sound_sync::Decide(SoundUptos().data());
   if (gap()) {
-    SetFramePads(Pad{}, Pad{});
+    const Pad neutral[kMaxMachines] = {};
+    SetFramePads(neutral);
     g.frame_busy = g.local[size_t(g.frame)].busy;
     g.frame_ready = g.local[size_t(g.frame)].ready;
+    if (g.machines > 2) {
+      ForPeers([&](int, Peer& p) {
+        if (stopped(p)) return;
+        g.frame_busy |= p.pads[size_t(g.frame)].busy;
+        g.frame_ready &= p.pads[size_t(g.frame)].ready;
+      });
+    }
     if (g.frames_sound) sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
   } else {
-    SetFramePads(g.local[size_t(g.frame)], g.remote[size_t(g.frame)]);
-    g.frame_busy = g.local[size_t(g.frame)].busy | g.remote[size_t(g.frame)].busy;
-    g.frame_ready = g.local[size_t(g.frame)].ready & g.remote[size_t(g.frame)].ready;
-    // the sounds' callbacks both machines' inputs have announced, before the frame (the same frame on both)
+    Pad pads[kMaxMachines] = {};
+    uint32_t sounds[kMaxMachines] = {};
+    GatherPads(pads, false, &g.frame_busy, &g.frame_ready, sounds);
+    SetFramePads(pads);
+    // the sounds' callbacks every machine's inputs have announced, before the frame (the same frame on all)
     if (g.frames_sound) {
       sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
     } else {
-      sound_sync::Deliver(ctx, base, g.local[size_t(g.frame)].sound, g.remote[size_t(g.frame)].sound);
+      sound_sync::Deliver(ctx, base, sounds, g.machines);
     }
   }
   ++g.frames_window;
@@ -1913,10 +2369,10 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     return g.frame - g.remote_upto <= kMaxPrediction;
   });
   if (g.ended) return;
-  // the sounds' callbacks only one machine has said: given at a frame both decide alike (sound_sync.h Decide); one
+  // the sounds' callbacks only some machines have said: given at a frame all decide alike (sound_sync.h Decide); one
   // that frame already ran goes back to it
   if (g.frames_sound) {
-    const int64_t due = sound_sync::Decide(g.local_made_upto, g.remote_upto);
+    const int64_t due = sound_sync::Decide(SoundUptos().data());
     if (due >= 0 && due < g.frame) {
       g.rollback_to = g.rollback_to < 0 ? due : std::min(g.rollback_to, due);
       sound_sync::NoteRollback();
@@ -2039,22 +2495,20 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     if (g.ended) return;
     Receive();
     sound_sync::FrameStart(ctx, base, g.frame, FinalUpto());
-    SetFramePads(g.local[size_t(g.frame)], g.remote[size_t(g.frame)]);
+    Pad pads[kMaxMachines] = {};
+    GatherPads(pads, false, nullptr, nullptr, nullptr);
+    SetFramePads(pads);
     ++g.frame;
     g.latest = g.frame;
     LogStats();
     return;
   }
-  // this frame's pads: the peer's input, or its last one as the prediction
-  const bool confirmed = g.have_remote[size_t(g.frame)] != 0;
-  Pad remote;
-  if (confirmed) {
-    remote = g.remote[size_t(g.frame)];
-  } else {
-    if (g.remote_upto >= 0) remote = g.remote[size_t(g.remote_upto)];
-    ++g.predicted;
+  // this frame's pads: each other machine's input, or its last one as the prediction
+  {
+    Pad pads[kMaxMachines] = {};
+    if (!GatherPads(pads, true, nullptr, nullptr, nullptr)) ++g.predicted;
+    SetFramePads(pads);
   }
-  SetFramePads(g.local[size_t(g.frame)], remote);
   g.frame_busy = 0;
   g.frame_ready = 0xFF;
   // the sounds' callbacks due at this frame (in each of its runs), and the sounds of the frames now final numbered; or,
@@ -2081,26 +2535,42 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
   // a quarter of it, 2 ms at most, once a second, once three checks running found it ahead by 2 ms or more (the 60 Hz
   // grids' phase: the side behind does nothing; on a PC that could not keep 60 fps both sides moved theirs back and
   // forth with half of it each second)
-  if (g.speculating && g.frame == g.latest && g.peer_latest >= 0) {
+  // (mk9-lauta, 2026-11-17: each other machine measured apart; the one this side is farthest ahead of decides, so every
+  // machine comes back toward the one behind all the others, as the side ahead did in a session of two)
+  if (g.speculating && g.frame == g.latest) {
     constexpr double kFrameMs = 1000.0 / 60.0;
-    const double lag = g.rtt_ms / 2.0 / kFrameMs;
-    const double ahead = double(g.latest) - (double(g.peer_latest) + lag);
-    g.advantage = g.advantage * 0.95 + ahead * 0.05;
-    const bool measured = REXCVAR_GET(mk9_net_phase_align) && g.phase_samples >= 60;
-    const double ahead_ms = measured ? (g.phase - g.peer_phase) / 2.0 : g.advantage * kFrameMs;
-    if (ahead_ms >= 2.0 * kFrameMs && uint64_t(g.frame) > g.slept_at_frame + 60) {
+    bool any = false, worst_measured = false;
+    double worst_ms = 0;
+    ForPeers([&](int, Peer& p) {
+      if (p.latest < 0) return;
+      const double lag = p.rtt_ms / 2.0 / kFrameMs;
+      const double ahead = double(g.latest) - (double(p.latest) + lag);
+      p.advantage = p.advantage * 0.95 + ahead * 0.05;
+      const bool measured = REXCVAR_GET(mk9_net_phase_align) && p.phase_samples >= 60;
+      const double ahead_ms = measured ? (p.phase - p.peer_phase) / 2.0 : p.advantage * kFrameMs;
+      if (!any || ahead_ms > worst_ms) {
+        worst_ms = ahead_ms;
+        worst_measured = measured;
+      }
+      any = true;
+    });
+    if (any && worst_ms >= 2.0 * kFrameMs && uint64_t(g.frame) > g.slept_at_frame + 60) {
       std::this_thread::sleep_for(std::chrono::microseconds(16667));
       g.slept_at_frame = uint64_t(g.frame);
-      g.advantage -= 1.0;
-      if (measured) g.phase -= kFrameMs;
+      ForPeers([&](int, Peer& p) {
+        p.advantage -= 1.0;
+        if (REXCVAR_GET(mk9_net_phase_align) && p.phase_samples >= 60) p.phase -= kFrameMs;
+      });
       ++g.syncs_slept;
-    } else if (measured && uint64_t(g.frame) >= g.phase_check_at) {
+    } else if (any && worst_measured && uint64_t(g.frame) >= g.phase_check_at) {
       g.phase_check_at = uint64_t(g.frame) + 60;
-      g.phase_ahead_checks = ahead_ms >= 2.0 ? g.phase_ahead_checks + 1 : 0;
+      g.phase_ahead_checks = worst_ms >= 2.0 ? g.phase_ahead_checks + 1 : 0;
       if (g.phase_ahead_checks >= 3) {
-        const double step = std::min(ahead_ms / 4.0, 2.0);
+        const double step = std::min(worst_ms / 4.0, 2.0);
         sa2::renut::ShiftGrid(step);
-        g.phase -= step;
+        ForPeers([&](int, Peer& p) {
+          if (REXCVAR_GET(mk9_net_phase_align) && p.phase_samples >= 60) p.phase -= step;
+        });
         g.phase_shifted_ms += step;
         ++g.phase_shifts;
       }
@@ -2146,7 +2616,25 @@ void WatchParse() {
   for (;;) {
     uint8_t tag = 0;
     if (!read(g.watch_read, &tag, 1)) return;
-    if (tag == 'E') {
+    // one machine's input in a frame record (18 bytes, 30 with its second player's)
+    auto pad_at = [](const uint8_t* at, int size, Pad* pad) {
+      std::memcpy(pad->bytes, at, 12);
+      pad->busy = at[12];
+      pad->ready = at[13];
+      std::memcpy(&pad->sound, at + 14, 4);
+      if (size == kPadBytes2) std::memcpy(pad->bytes2, at + 18, 12);
+    };
+    if (tag == 'N') {
+      // mk9-lauta (2026-11-17): a session of more than two machines: how many, and their players (frames 'H')
+      uint8_t r[2 + kMaxMachines];
+      if (!read(g.watch_read, r, 2)) return;
+      const int machines = r[1];
+      if (machines < 2 || machines > kMaxMachines || !g.watched.empty()) return broken("machines", machines);
+      if (!read(g.watch_read, r, size_t(2 + machines))) return;
+      g.watch_machines = machines;
+      for (int m = 0; m < machines; ++m) g.watch_players[m] = r[2 + m] == 2 ? 2 : 1;
+      g.watch_read += size_t(2 + machines);
+    } else if (tag == 'E') {
       uint8_t r[14];
       if (!read(g.watch_read, r, sizeof(r))) return;
       uint32_t epoch;
@@ -2156,8 +2644,12 @@ void WatchParse() {
       std::memcpy(&g.watched[epoch].start, r + 5, 8);
       g.watched[epoch].rollback = (r[13] & 1) != 0;
       g.watched[epoch].frames_sound = (r[13] & 2) != 0;
-      g.watched[epoch].players[0] = (r[13] & 4) ? 2 : 1;
-      g.watched[epoch].players[1] = (r[13] & 8) ? 2 : 1;
+      if (g.watch_machines > 2) {
+        for (int m = 0; m < g.watch_machines; ++m) g.watched[epoch].players[m] = g.watch_players[m];
+      } else {
+        g.watched[epoch].players[0] = (r[13] & 4) ? 2 : 1;
+        g.watched[epoch].players[1] = (r[13] & 8) ? 2 : 1;
+      }
       g.watch_read += sizeof(r);
     } else if (tag == 'F' || tag == 'G') {
       const int size = tag == 'G' ? kPadBytes2 : kPadBytes;
@@ -2170,18 +2662,32 @@ void WatchParse() {
       {
         auto& frames = g.watched.back().frames;
         frames.emplace_back();
-        Pad* pads[2] = {&frames[frame].p1, &frames[frame].p2};
+        Pad* pads[2] = {&frames[frame].pads[0], &frames[frame].pads[1]};
         if (g.replay_swap) std::swap(pads[0], pads[1]);
-        for (int p = 0; p < 2; ++p) {
-          const uint8_t* at = r + 5 + p * size;
-          std::memcpy(pads[p]->bytes, at, 12);
-          pads[p]->busy = at[12];
-          pads[p]->ready = at[13];
-          std::memcpy(&pads[p]->sound, at + 14, 4);
-          if (size == kPadBytes2) std::memcpy(pads[p]->bytes2, at + 18, 12);
-        }
+        for (int p = 0; p < 2; ++p) pad_at(r + 5 + p * size, size, pads[p]);
         std::memcpy(&frames[frame].hash, r + 5 + 2 * size, 8);
       }
+      g.watch_read += length;
+    } else if (tag == 'H') {
+      // every machine's input in order (the 'N' record's sizes)
+      if (g.watched.empty()) return broken("frame before an epoch", 0);
+      const auto& e = g.watched.back();
+      size_t length = 1 + 4 + 8;
+      for (int m = 0; m < g.watch_machines; ++m) length += size_t(PadBytes(e.players[m]));
+      uint8_t r[1 + 4 + kMaxMachines * kPadBytes2 + 8];
+      if (!read(g.watch_read, r, length)) return;
+      uint32_t frame;
+      std::memcpy(&frame, r + 1, 4);
+      if (frame != e.frames.size()) return broken("frame", frame);
+      auto& frames = g.watched.back().frames;
+      frames.emplace_back();
+      const uint8_t* at = r + 5;
+      for (int m = 0; m < g.watch_machines; ++m) {
+        const int size = PadBytes(e.players[m]);
+        pad_at(at, size, &frames[frame].pads[m]);
+        at += size;
+      }
+      std::memcpy(&frames[frame].hash, at, 8);
       g.watch_read += length;
     } else if (tag == 'M') {
       uint8_t r[5];
@@ -2266,8 +2772,11 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     }
     g.started = true;
     StartEpoch(game_frame, 0, false);
-    g.local_players = g.watched[0].players[0];  // the spectator in the host's seat: the host's players and the guest's
-    g.peer_players = g.watched[0].players[1];
+    // the spectator in the host's seat: the recorded machines and their players
+    g.machines = g.watch_machines;
+    for (int m = 0; m < kMaxMachines; ++m) g.players[m] = g.watched[0].players[m];
+    g.local_players = g.players[0];
+    sound_sync::SetMachines(g.machines);
     g.seed_pending = true;
     REXLOG_INFO("[watch] the match comes: seed {}, playing it back from game frame {}", g.seed, game_frame);
   } else if (g.at_barrier) {
@@ -2280,8 +2789,8 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
       return;
     }
     StartEpoch(game_frame, next, false);
-    g.local_players = g.watched[next].players[0];
-    g.peer_players = g.watched[next].players[1];
+    for (int m = 0; m < kMaxMachines; ++m) g.players[m] = g.watched[next].players[m];
+    g.local_players = g.players[0];
     REXLOG_INFO("[watch] epoch {} at game frame {}", next, game_frame);
   }
   // the frame's inputs; the match's next epoch already there and this one's frames over: this game missed the barrier
@@ -2370,8 +2879,15 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   Ensure(g.frame + 2);
   WatchCompareLast();
   const auto& f = epoch.frames[size_t(g.frame)];
+  // every recorded machine's flags and sound words (player 1's as this machine's)
+  uint8_t ready = 0xFF, busy = 0;
+  uint32_t words[kMaxMachines] = {};
+  for (int m = 0; m < g.machines; ++m) {
+    ready &= f.pads[m].ready;
+    busy |= f.pads[m].busy;
+    words[m] = f.pads[m].sound;
+  }
   // a scene the players' machines found ready: this one's loads first (its disk may be slower)
-  const uint8_t ready = f.p1.ready & f.p2.ready;
   if (!fight && (ready & ~g.watch_ready_before) != 0) {
     const uint64_t start = NowUs();
     while (Load32(base, kAsyncPackagesNum) != 0 && NowUs() - start < 20000000) {
@@ -2381,29 +2897,33 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     g_frame_started_us = NowUs();
   }
   g.watch_ready_before = fight ? 0 : ready;
-  SetFramePads(f.p1, f.p2);
+  SetFramePads(f.pads);
   if (frames_sound) {
     // the players' words up to this frame (a callback's frame is never earlier than its later word's: the recording
     // up to here decides every one due here)
     if (g.frame == 0) g.watch_words_upto = -1;
     for (; g.watch_words_upto < g.frame; ++g.watch_words_upto) {
       const auto& w = epoch.frames[size_t(g.watch_words_upto + 1)];
-      sound_sync::WatchWords(g.watch_words_upto + 1, w.p1.sound, w.p2.sound);
+      uint32_t said[kMaxMachines] = {};
+      for (int m = 0; m < g.machines; ++m) said[m] = w.pads[m].sound;
+      sound_sync::WatchWords(g.watch_words_upto + 1, said);
     }
-    sound_sync::Decide(g.watch_words_upto, g.watch_words_upto);
+    std::array<int64_t, kMaxMachines> upto;
+    upto.fill(g.watch_words_upto);
+    sound_sync::Decide(upto.data());
     sound_sync::FrameStart(ctx, base, g.frame, g.frame - 1);
   }
   if (fight) {
     g.frame_busy = 0;
     g.frame_ready = 0xFF;
   } else if (frames_sound) {
-    g.frame_busy = f.p1.busy | f.p2.busy;
+    g.frame_busy = busy;
     g.frame_ready = ready;
   } else {
-    g.frame_busy = f.p1.busy | f.p2.busy;
+    g.frame_busy = busy;
     g.frame_ready = ready;
-    // the callbacks the two announced by this frame (one this machine's FMOD has not given goes from its source)
-    sound_sync::WatchDeliver(ctx, base, f.p1.sound, f.p2.sound);
+    // the callbacks every machine announced by this frame (one this machine's FMOD has not given goes from its source)
+    sound_sync::WatchDeliver(ctx, base, words, g.machines);
   }
   ++g.frames_window;
   ++g.frame;
@@ -2412,9 +2932,16 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
 
 }  // namespace
 
+// A machine of this session has a link (the others' are made with the session).
+bool HasLinks() {
+  bool any = false;
+  ForPeers([&](int, Peer& p) { any = any || p.link != nullptr; });
+  return any;
+}
+
 bool SessionGame() {
   if (!g.configured) Configure();
-  return g.watching || g.link != nullptr;
+  return g.watching || HasLinks();
 }
 
 // mk9-lauta (2026-11-11): the game's state sessions or not (OnFrame; GameState: the main menu's corner, Discord).
@@ -2424,13 +2951,17 @@ int GameState() { return g_state_any.load(std::memory_order_relaxed); }
 
 int LocalPlayer() {
   if (!g.configured) Configure();
-  return g.link != nullptr && !g.watching ? g.player : -1;
+  return HasLinks() && !g.watching ? g.player : -1;
 }
 
 bool Active() {
   if (!g.configured) Configure();
-  // a host waits for its guest; a room's guest waits for the path to the host too; a spectator has no path
-  return (g.watching || (g.link && (g.link->HasPeer() || g.host || !g.room.empty()))) && !g.failed && !g.ended;
+  // a host waits for its guests; a room's guest waits for the paths too; a spectator has no path. (mk9-lauta,
+  // 2026-11-17: a mesh's machine, as a host, from the start: its handshake waits for the others)
+  bool path = false;
+  ForPeers([&](int, Peer& p) { path = path || (p.link && p.link->HasPeer()); });
+  const bool waits = g.host || !g.room.empty() || REXCVAR_GET(mk9_net_mesh) > 0;
+  return (g.watching || (HasLinks() && (path || waits))) && !g.failed && !g.ended;
 }
 
 void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
@@ -2492,12 +3023,18 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
       return;
     }
     g.started = true;
+    sound_sync::SetMachines(g.machines);
     RecordOpen();
     StartEpoch(game_frame, 0, false);
     g.seed_pending = true;
-    REXLOG_INFO("[net] session started at game frame {} with {} as the peer; you are player {}; lockstep delay {}, "
+    std::string peers;
+    ForPeers([&](int m, Peer& p) {
+      peers += fmt::format("{}player {} at {}{}", peers.empty() ? "" : ", ", m + 1, p.link->PeerText(),
+                           p.players == 2 ? " (two players)" : "");
+    });
+    REXLOG_INFO("[net] session started at game frame {} with {}; you are player {} of {}; lockstep delay {}, "
                 "fights with rollback {} (delay {}); seed {}",
-                game_frame, g.link->PeerText(), g.player + 1, g.lockstep_delay, g.rollback_wanted ? "on" : "off",
+                game_frame, peers, g.player + 1, g.machines, g.lockstep_delay, g.rollback_wanted ? "on" : "off",
                 g.rollback_delay, g.seed);
   } else if (g.at_barrier) {
     g.at_barrier = false;
@@ -2652,13 +3189,15 @@ SessionInfo Info() {
     info.waiting_s = now > since ? double(now - since) / 1e6 : 0.0;
     info.waiting = info.waiting_s >= 0.5;
   }
-  if (info.active && !g.watching && g.last_heard_us) {
-    const uint64_t now = NowUs();
-    info.silent_s = now > g.last_heard_us ? double(now - g.last_heard_us) / 1e6 : 0.0;
+  // (mk9-lauta, 2026-11-17: the machine heard from longest ago; the connection's numbers, the farthest machine's)
+  if (const int quiet = Quietest(); info.active && !g.watching && quiet >= 0 && g.peers[quiet].last_heard_us) {
+    const uint64_t now = NowUs(), heard = g.peers[quiet].last_heard_us;
+    info.silent_s = now > heard ? double(now - heard) / 1e6 : 0.0;
     info.timeout_s = double(TimeoutUs()) / 1e6;
   }
   info.player = g.player;
-  info.rtt_ms = g.rtt_ms;
+  info.machines = g.machines;
+  info.rtt_ms = RoundTripAverage();
   info.delay = g.delay;
   info.rollback = g.rollback;
   info.speculating = g.speculating;
@@ -2666,27 +3205,35 @@ SessionInfo Info() {
   info.resimulated = g.resimulated;
   // two games apart for good: a lone frame that differed (and matched again) says nothing to the players
   info.desynced = g.desync_at >= 0 && g.desync_frames >= 20;
-  info.peer_release = g.peer_release;
   info.local_players = g.local_players;
-  info.peer_players = g.peer_players;
-  // the connection's indicator
-  const int n = std::min(g.rtt_count, 8);
-  if (n >= 2) {
-    double mean = 0, var = 0;
-    for (int i = 0; i < n; ++i) mean += g.rtt_samples[i];
-    mean /= n;
-    for (int i = 0; i < n; ++i) var += (g.rtt_samples[i] - mean) * (g.rtt_samples[i] - mean);
-    info.jitter_ms = std::sqrt(var / n);
-  }
+  info.peer_players = 0;
+  ForPeers([&](int m, Peer& p) {
+    info.peer_players += PlayersOf(m);
+    // the release a machine of another one said, else the first one's
+    if (info.peer_release.empty() || p.version >= 0) info.peer_release = p.release;
+  });
+  if (g.watching) info.peer_players = PlayersOf(1);
+  if (info.peer_players == 0) info.peer_players = 1;
+  // the connection's indicator: the farthest machine's
   const uint64_t now = NowUs();
-  int sent = 0, lost = 0;
-  for (const auto& ping : g.pings) {
-    // the pings of the last ~14 s that have had 2 s to come back
-    if (!ping.at_us || now - ping.at_us < 2000000 || now - ping.at_us > 14000000) continue;
-    ++sent;
-    if (!ping.answered) ++lost;
-  }
-  info.loss_pct = sent >= 4 ? 100.0 * lost / sent : 0.0;
+  ForPeers([&](int, Peer& p) {
+    const int n = std::min(p.rtt_count, 8);
+    if (n >= 2) {
+      double mean = 0, var = 0;
+      for (int i = 0; i < n; ++i) mean += p.rtt_samples[i];
+      mean /= n;
+      for (int i = 0; i < n; ++i) var += (p.rtt_samples[i] - mean) * (p.rtt_samples[i] - mean);
+      info.jitter_ms = std::max(info.jitter_ms, std::sqrt(var / n));
+    }
+    int sent = 0, lost = 0;
+    for (const auto& ping : p.pings) {
+      // the pings of the last ~14 s that have had 2 s to come back
+      if (!ping.at_us || now - ping.at_us < 2000000 || now - ping.at_us > 14000000) continue;
+      ++sent;
+      if (!ping.answered) ++lost;
+    }
+    if (sent >= 4) info.loss_pct = std::max(info.loss_pct, 100.0 * lost / sent);
+  });
   info.relayed = g.relayed.load(std::memory_order_relaxed);
   info.watching = g.watching;
   info.in_fight = g.watching ? g.watch_in_fight.load(std::memory_order_relaxed) : g.rollback;
@@ -2715,10 +3262,11 @@ void PeerLeft() {
 void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1) {
   if (!g.started || g.ended || g.failed || g.frame <= 0) return;
   // users 0 and 1: the host's and the guest's pads; 2 and 3 (mk9-lauta 2026-11-13): their second players', when that
-  // machine has two (mk9_net_local_players)
-  const Pad* pad = user == 0 ? &g.frame_pads[0] : user == 1 ? &g.frame_pads[1] : nullptr;
-  const bool second = user == 2 || user == 3;
-  if (second && PlayersOf(int(user) - 2) == 2) pad = &g.frame_pads[user - 2];
+  // machine has two (mk9_net_local_players). mk9-lauta (2026-11-17): with more machines, the machines' first players
+  // in order, then the second ones (SeatOf)
+  const Seat seat = SeatOf(user);
+  const Pad* pad = seat.machine >= 0 ? &g.frame_pads[seat.machine] : nullptr;
+  const bool second = seat.second;
   const uint8_t* gamepad = pad ? (second ? pad->bytes2 : pad->bytes) : nullptr;
   uint8_t* out = base + data;
   auto put_be32 = [](uint8_t* p, uint32_t v) {
@@ -2734,7 +3282,8 @@ void OverrideBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, ui
     // X_INPUT_STATE: packet number, then the gamepad
     std::memset(out, 0, 16);
     if (pad) {
-      put_be32(out, g.packet[second ? user - 2 : user][size_t(g.frame - 1)]);
+      // (the machine's packet number: its two players' pads change together; a session of two counted so too)
+      put_be32(out, g.packet[seat.machine][size_t(g.frame - 1)]);
       std::memcpy(out + 4, gamepad, 12);
     }
   } else if (tag == 0x00FF0002 && size == 20) {

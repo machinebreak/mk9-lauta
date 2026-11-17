@@ -126,6 +126,8 @@ En Steam Deck: en el modo escritorio, **Steam > Agregar un juego que no es de St
    contra dos o desafío de suerte), el otro se suma con START y cada uno elige su luchador.
 4. ¿Son cuatro, dos en cada PC? Antes de "Estoy listo" marquen **Somos dos en esta PC**, y en el menú principal
    apreten RB hasta **4 JUGADORES**: cada uno elige su equipo y su luchador.
+5. ¿Cuatro, cada uno en su PC? Creen una **sala de 2 contra 2** (o toquen **Partida rápida 2 contra 2**): cuando estén
+   todos listos el host toca **Empezar la pelea**, y en el juego es igual, RB hasta **4 JUGADORES**.
 
 Los dos tienen que tener la misma versión, y el juego se actualiza solo. La guía completa, con los controles y todas
 las opciones, está en [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` del zip.
