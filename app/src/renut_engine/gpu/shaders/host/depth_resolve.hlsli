@@ -14,12 +14,28 @@
 #define UTILITY_OWN_TEXTURE_TABLE
 #include "utility.hlsli"
 
+#ifdef RENUT_D3D11
+// mk9-lauta (2026-11-16): Direct3D 11: the depth target's view at t0 (the back end binds the index's), the stencil at
+// t2 (none: Direct3D 11 has no stencil views here, param1 is 0 as on Direct3D 12).
+#if DEPTH_RESOLVE_MS
+Texture2DMS<float> g_DepthTexture : register(t0);
+Texture2DMS<uint> g_StencilTexture : register(t2);
+#else
+Texture2D<float> g_DepthTexture : register(t0);
+Texture2D<uint> g_StencilTexture : register(t2);
+#endif
+#define DEPTH_TEXTURE(index) g_DepthTexture
+#define STENCIL_TEXTURE(index) g_StencilTexture
+#else
 #if DEPTH_RESOLVE_MS
 Texture2DMS<float> g_Depth[] : register(t0, space0);
 Texture2DMS<uint> g_Stencil[] : register(t0, space2);
 #else
 Texture2D<float> g_Depth[] : register(t0, space0);
 Texture2D<uint> g_Stencil[] : register(t0, space2);
+#endif
+#define DEPTH_TEXTURE(index) g_Depth[index]
+#define STENCIL_TEXTURE(index) g_Stencil[index]
 #endif
 
 struct PSInput
@@ -58,13 +74,13 @@ PSOutput main(PSInput input)
     const uint index = NonUniformResourceIndex(g_Push.textureIndex);
     uint stencil = 0;
 #if DEPTH_RESOLVE_MS
-    const float depth = g_Depth[index].Load(texel, 0);
+    const float depth = DEPTH_TEXTURE(index).Load(texel, 0);
     if (g_Push.param1 != 0.0)
-        stencil = g_Stencil[NonUniformResourceIndex(g_Push.samplerIndex)].Load(texel, 0) & 0xFF;
+        stencil = STENCIL_TEXTURE(NonUniformResourceIndex(g_Push.samplerIndex)).Load(texel, 0) & 0xFF;
 #else
-    const float depth = g_Depth[index].Load(int3(texel, 0));
+    const float depth = DEPTH_TEXTURE(index).Load(int3(texel, 0));
     if (g_Push.param1 != 0.0)
-        stencil = g_Stencil[NonUniformResourceIndex(g_Push.samplerIndex)].Load(int3(texel, 0)) & 0xFF;
+        stencil = STENCIL_TEXTURE(NonUniformResourceIndex(g_Push.samplerIndex)).Load(int3(texel, 0)) & 0xFF;
 #endif
     const uint word = ((g_Push.param0 != 0.0 ? EncodeFloat20e4(depth) : EncodeUnorm24(depth)) << 8) | stencil;
 

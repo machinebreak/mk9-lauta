@@ -30,10 +30,27 @@ struct StreamConvertPush
 
 #ifdef __spirv__
 [[vk::push_constant]] ConstantBuffer<StreamConvertPush> g_Push;
+#elif defined(RENUT_D3D11)
+// mk9-lauta (2026-11-16): Direct3D 11 (shader model 5.0) indexes no buffer array at run time: three buffers, u0-u2.
+cbuffer StreamConvertPushBuffer : register(b0)
+{
+    StreamConvertPush g_Push;
+};
 #else
 ConstantBuffer<StreamConvertPush> g_Push : register(b0, space1);
 #endif
 
+#ifdef RENUT_D3D11
+RWByteAddressBuffer g_Buffer0 : register(u0);
+RWByteAddressBuffer g_Buffer1 : register(u1);
+RWByteAddressBuffer g_StreamBuffer : register(u2);
+
+uint LoadSource(uint address)
+{
+    return g_Push.source == 0 ? g_Buffer0.Load(address) : g_Buffer1.Load(address);
+}
+#define STREAM_BUFFER g_StreamBuffer
+#else
 RWByteAddressBuffer g_Buffers[3] : register(u0, space0);
 
 static const uint kStreamBuffer = 2;
@@ -42,6 +59,8 @@ uint LoadSource(uint address)
 {
     return g_Buffers[g_Push.source].Load(address);
 }
+#define STREAM_BUFFER g_Buffers[kStreamBuffer]
+#endif
 
 // SwapDword in vertex_format.cpp.
 uint SwapWord(uint value, uint endian)
@@ -97,7 +116,7 @@ void main(uint3 id : SV_DispatchThreadID)
         // mode says so).
         const uint words = (layout >> 19) & 7;
         for (uint i = 0; i < words; ++i)
-            g_Buffers[kStreamBuffer].Store(dst + i * 4, SwapWord(LoadSource(src + i * 4), endian));
+            STREAM_BUFFER.Store(dst + i * 4, SwapWord(LoadSource(src + i * 4), endian));
         return;
     }
 
@@ -186,5 +205,5 @@ void main(uint3 id : SV_DispatchThreadID)
         pick = pick < 6 ? pick : 4;  // 4: 0, 5: 1; the rest read 0
         result[i] = asuint(c[pick]);
     }
-    g_Buffers[kStreamBuffer].Store4(dst, result);
+    STREAM_BUFFER.Store4(dst, result);
 }

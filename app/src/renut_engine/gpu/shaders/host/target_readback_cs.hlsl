@@ -25,12 +25,25 @@ struct TargetReadbackPush
 
 #ifdef __spirv__
 [[vk::push_constant]] ConstantBuffer<TargetReadbackPush> g_Push;
+#elif defined(RENUT_D3D11)
+// mk9-lauta (2026-11-16): Direct3D 11: the copy's view at t0 (the back end binds the index's), the words at u0.
+cbuffer TargetReadbackPushBuffer : register(b0)
+{
+    TargetReadbackPush g_Push;
+};
 #else
 ConstantBuffer<TargetReadbackPush> g_Push : register(b0, space2);
 #endif
 
+#ifdef RENUT_D3D11
+Texture2D<float4> g_Texture : register(t0);
+RWByteAddressBuffer g_Words : register(u0);
+#define READBACK_TEXTURE(index) g_Texture
+#else
 Texture2D<float4> g_Textures[] : register(t0, space0);
 RWByteAddressBuffer g_Words : register(u0, space1);
+#define READBACK_TEXTURE(index) g_Textures[NonUniformResourceIndex(index)]
+#endif
 
 // RenderScale::Coord: a guest edge in host texels, to the nearest.
 uint HostCoord(uint guest)
@@ -45,7 +58,7 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= g_Push.width || id.y >= g_Push.height)
         return;
-    Texture2D<float4> source = g_Textures[NonUniformResourceIndex(g_Push.textureIndex)];
+    Texture2D<float4> source = READBACK_TEXTURE(g_Push.textureIndex);
     uint textureWidth, textureHeight;
     source.GetDimensions(textureWidth, textureHeight);
     const uint2 last = uint2(textureWidth, textureHeight) - 1u;

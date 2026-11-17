@@ -56,7 +56,7 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
 versión de PlayStation 3, se descarga solo la primera vez que abrís el juego.
 
-**Anda en tu PC.** DirectX 12 o Vulkan, de 480p a 4K. La primera vez elige la calidad según tu placa de video (de "Muy
+**Anda en tu PC.** DirectX 12, Vulkan o DirectX 11 (para placas y drivers viejos), de 480p a 4K. La primera vez elige la calidad según tu placa de video (de "Muy
 baja" a "Ultra"), y la resolución dinámica la baja un poco cuando hace falta para no perder los 60 FPS. También
 funciona con gráficos integrados.
 
@@ -89,7 +89,7 @@ partidas guardadas ni tus opciones.
 | | Lo que necesitás |
 |---|---|
 | **Sistema** | Windows 10 u 11 de 64 bits |
-| **Placa de video** | DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, o integrada Intel de 6.ª generación en adelante (HD 520/530, UHD) o AMD Ryzen. Las Intel HD 4000/4400/4600 no alcanzan |
+| **Placa de video** | DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, o integrada Intel de 6.ª generación en adelante (HD 520/530, UHD) o AMD Ryzen. Con DirectX 11 (nivel 11_0) también anda en placas más viejas o con drivers viejos (NVIDIA GTX 400, AMD HD 5000, Intel HD 2500/4000 en adelante), aunque en las integradas viejas puede ir lento |
 | **Memoria** | 4 GB de RAM |
 | **Espacio** | Unos 8 GB libres |
 | **Juego** | Tu copia de Mortal Kombat Komplete Edition de Xbox 360, en `.iso` (versión europea) |
@@ -263,7 +263,7 @@ apagados por defecto: ver [docs/mods/plugins.md](docs/mods/plugins.md).
 |---|---|
 | `app/src/` | Lo propio de PC: opciones y controles, instalador, detección del hardware, textos, ritmo de cuadros |
 | `app/src/online/` | El online: lobby, salas, ICE (libjuice), sesiones, el netcode (lockstep y rollback), la línea de tiempo de la memoria, el sonido sincronizado |
-| `app/src/renut_engine/` | El renderizador Renut, adaptado al Direct3D de MK9 (Direct3D 12 y Vulkan a través de plume) |
+| `app/src/renut_engine/` | El renderizador Renut, adaptado al Direct3D de MK9 (Direct3D 12, Vulkan y Direct3D 11 a través de plume) |
 | `app/thirdparty/` | libjuice, plume, Dear ImGui, el traductor de shaders y sus herramientas |
 | `sdk/` | El SDK ReXGlue: generador de código, kernel y runtime de Xbox 360, audio, entrada y archivos |
 | `shaders/` | XenosRecomp, el traductor de shaders de Xbox 360 |

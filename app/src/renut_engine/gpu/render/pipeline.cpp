@@ -23,6 +23,9 @@
 #include <vector>
 
 #include <plume_render_interface_builders.h>
+#if defined(_WIN32)
+#include <plume_d3d11.h>  // mk9-lauta (2026-11-16): the Direct3D 11 back end's bindings
+#endif
 #include <rex/cvar.h>
 
 // banjo-nx (2026-10-17, deko3d renderer): every graphics pipeline's shaders and specialization constants, one line each,
@@ -1067,6 +1070,26 @@ bool BuildDrawLayout(VideoState &s) {
     RGPU_ERROR("Draw pipeline layout creation failed");
     return false;
   }
+#if defined(_WIN32)
+  if (IsD3D11()) {
+    // mk9-lauta (2026-11-16, docs/renderer/d3d11.md): the guest shaders' Direct3D 11 registers (shader_common.h
+    // RENUT_D3D11): the fetch data at t112 and the memexport buffer at u7; each texture register a fetch slot, its
+    // view by the index SharedConstants holds (root 2: texture_indices at 0, sampler_indices at 384, draw.cpp); the
+    // views' component mappings and the root views' offsets at b3.
+    plume::D3D11SetRootRegister(s.draw_layout.get(), kDrawRootVertexFetchData, 112);
+    plume::D3D11SetRootRegister(s.draw_layout.get(), kDrawRootMemExport, 7);
+    plume::D3D11GuestBinding guest;
+    guest.rootIndex = kDrawRootSharedConstants;
+    guest.textureIndicesOffset = 0;
+    guest.samplerIndicesOffset = 384;
+    guest.textureSet = 0;
+    guest.samplerSet = 3;
+    guest.extrasRegister = 3;
+    guest.fetchRootIndex = kDrawRootVertexFetchData;
+    guest.exportRootIndex = kDrawRootMemExport;
+    plume::D3D11SetGuestBinding(s.draw_layout.get(), guest);
+  }
+#endif
   return true;
 }
 

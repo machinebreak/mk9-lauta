@@ -177,8 +177,8 @@ al volver a abrir el juego.
 - **Gráficos**: resolución interna (480p a 4K), sombras, oclusión ambiental, filtrado de texturas, precisión de los
   efectos, antialiasing (MSAA), **resolución dinámica**, **cuadros dibujados** y **ahorro de memoria** (ver abajo).
 - **Pantalla e idioma**: pantalla completa o ventana (también con **F11** o **Alt+Enter** en cualquier momento),
-  **mostrar FPS** (arriba a la izquierda), la **API gráfica** (DirectX 12 o Vulkan: si el juego anda mal o se ve raro
-  con una, probá la otra; se aplica al volver a abrir el juego) y el idioma del juego: español (con el Modo Historia
+  **mostrar FPS** (arriba a la izquierda), la **API gráfica** (DirectX 12, Vulkan o DirectX 11: si el juego anda mal o se
+  ve raro con una, probá otra; DirectX 11 es para placas o drivers viejos; se aplica al volver a abrir el juego) y el idioma del juego: español (con el Modo Historia
   doblado), inglés, portugués, francés, alemán o italiano. El idioma se aplica al volver a abrir el juego. También:
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K y sigue la escala de Windows, por ejemplo 150 % en una
@@ -241,14 +241,18 @@ dos archivos se ve en qué cuadro se separaron los juegos.
 
 ## PCs con poca placa de video o poca memoria
 
-- Hace falta una placa de video con DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon
+- Lo ideal es una placa de video con DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon
   HD 7000 o más nueva, o el gráfico integrado de un Intel Core de 6.ª generación en adelante (HD 520/530, UHD) o de un
-  AMD Ryzen. Los integrados Intel HD 2500, 4000, 4400, 4600, 5000, 5500 y 6000 (Intel de 2.ª a 5.ª generación, como el
-  i3-4160) no alcanzan: ahí el juego avisa al abrir, y hace falta una placa aparte (sirve una usada barata, como una
-  GTX 750 Ti, una GT 1030 o una RX 550).
+  AMD Ryzen. Las más viejas (NVIDIA GTX 400, AMD HD 5000, los integrados Intel HD 2500 y 4000 en adelante) andan con
+  **DirectX 11**, que el juego elige solo cuando las otras no arrancan; en los integrados viejos puede ir lento (ahí
+  ayuda una placa aparte, aunque sea usada y barata, como una GTX 750 Ti, una GT 1030 o una RX 550).
 - **Drivers viejos**: si el driver de tu placa sólo tiene Vulkan 1.1 (los de 2018 y 2019, que algunos dejan porque
   rinden mejor), el juego lo detecta al abrir y usa DirectX 12 solo, sin cerrarse; te avisa arriba de la pantalla. Si
   después actualizás el driver, Vulkan se vuelve a elegir en **F2 > Pantalla e idioma > API gráfica**.
+- **Si el juego se cierra al arrancar** con DirectX 12 (drivers viejos cuyo compilador de shaders falla, como los de
+  algunas Radeon HD 7000 o el CRT Emudriver), después de dos arranques fallidos prueba con otra API y, si hace falta,
+  con DirectX 11. Para ir directo: en **F2 > Pantalla e idioma > API gráfica** elegí **DirectX 11**, o agregá la línea
+  `renut_gpu_backend = "d3d11"` al archivo `mk9.toml`, al lado del juego.
 - Elegí la calidad **Muy baja** o **Baja** y activá **Mostrar FPS** para ver cómo va.
 - **Resolución dinámica**: si la PC no llega a 60 (un X-Ray, muchos efectos), baja la resolución interna un escalón
   (1080p, 720p, 480p) y la vuelve a subir cuando sobra; nunca pasa de la que elegiste. Viene activada en Alta y

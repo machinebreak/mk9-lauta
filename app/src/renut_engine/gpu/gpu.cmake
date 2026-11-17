@@ -80,6 +80,22 @@ else()
     set(RENUT_DXC_ONE "${RENUT_DXC_BIN_DIR}/dxc-linux")
 endif()
 
+# mk9-lauta (2026-11-16, docs/renderer/d3d11.md): FXC, from the Windows SDK, for Direct3D 11's host shaders (shader
+# model 5.0, RENUT_D3D11). The newest SDK's.
+if(CMAKE_HOST_WIN32)
+    file(GLOB renut_fxc_candidates LIST_DIRECTORIES false "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64/fxc.exe")
+    list(SORT renut_fxc_candidates COMPARE NATURAL ORDER DESCENDING)
+    set(renut_fxc_hints "")
+    foreach(candidate IN LISTS renut_fxc_candidates)
+        get_filename_component(candidate_dir "${candidate}" DIRECTORY)
+        list(APPEND renut_fxc_hints "${candidate_dir}")
+    endforeach()
+    find_program(RENUT_FXC NAMES fxc HINTS ${renut_fxc_hints} "$ENV{WindowsSdkVerBinPath}x64")
+    if(NOT RENUT_FXC)
+        message(FATAL_ERROR "FXC (fxc.exe, the Windows 10 SDK) not found: Direct3D 11's host shaders need it")
+    endif()
+endif()
+
 # renut_host_shader(<target> <stem> <profile>) compiles gpu/shaders/host/<stem>.hlsl
 # to SPIR-V (always) and DXIL (Windows), as headers exposing
 # g_<stem>_spirv / g_<stem>_dxil.
@@ -126,6 +142,23 @@ function(renut_host_shader TARGET STEM PROFILE)
             VERBATIM)
         target_sources(${TARGET} PRIVATE "${out}")
     endforeach()
+
+    # mk9-lauta (2026-11-16): Direct3D 11's: FXC, shader model 5.0, RENUT_D3D11 (g_<stem>_dxbc).
+    if(WIN32 AND RENUT_FXC)
+        string(REGEX REPLACE "_6_0$" "_5_0" fxc_profile "${PROFILE}")
+        set(out "${RENUT_GPU_GEN_DIR}/host_shaders/${STEM}.dxbc.h")
+        file(TO_NATIVE_PATH "${out}" out_native)
+        file(TO_NATIVE_PATH "${src}" src_native)
+        add_custom_command(
+            OUTPUT "${out}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${RENUT_GPU_GEN_DIR}/host_shaders"
+            COMMAND "${RENUT_FXC}" /nologo /T ${fxc_profile} /E main /D RENUT_D3D11=1 /Qstrip_reflect /Qstrip_debug
+                    /Fh "${out_native}" /Vn g_${STEM}_dxbc "${src_native}"
+            DEPENDS "${src}" ${host_includes}
+            COMMENT "Compiling host shader ${STEM}.hlsl (${fxc_profile}, DXBC)"
+            VERBATIM)
+        target_sources(${TARGET} PRIVATE "${out}")
+    endif()
 
     # banjo-nx (2026-10-17): the deko3d back end's blob (tools/deko3d_host_shader.py: DXC, SPIRV-Cross, uam), for Switch
     # builds with plume's deko3d back end (docs/deko3d-renderer.md).

@@ -3085,7 +3085,9 @@ UploadAllocation UploadVertexFetchData(const GuestDevice &device, const DrawCall
   // Without exports the slots count from the start of the upload chunk, so a
   // buffer an earlier draw has queued a copy of in the same chunk is read
   // there (FetchCopy) and not copied again.
-  const bool shared = !any_exported;
+  // mk9-lauta (2026-11-16): not on Direct3D 11, whose back end brings an upload chunk read as a view up to date from
+  // the CPU's pages: the chunk's every written page (the constants' too) instead of the draw's copies.
+  const bool shared = !any_exported && !IsD3D11();
   // banjo-nx (2026-10-19, render-thread proposal 10): room only for the copies to make: those already queued in the
   // chunk the allocation goes to are read there (before, their room was taken anyway, and cleaned at the submit). If
   // the allocation lands in another chunk, none is (that chunk has none of them): then room for all.

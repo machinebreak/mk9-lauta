@@ -18,6 +18,7 @@
 #include <plume_vulkan.h>
 #if defined(_WIN32)
 #include <plume_d3d12.h>
+#include <plume_d3d11.h>  // mk9-lauta (2026-11-16)
 #endif
 #if defined(PLUME_DEKO3D)
 #include <plume_deko3d.h>  // banjo-nx (2026-10-17): the deko3d back end
@@ -28,10 +29,11 @@
 #include "renut_engine/gpu/banjo_renut_record.h"  // banjo-nx (package 28b)
 
 REXCVAR_DEFINE_STRING(renut_gpu_backend, "d3d12", "Nuts&Bolts/Graphics",
-                      "Renderer backend: d3d12 or vulkan. Takes effect after a restart. "
+                      "Renderer backend: d3d12, vulkan or d3d11 (mk9-lauta: Direct3D 11, for GPUs and drivers whose "
+                      "Direct3D 12 and Vulkan cannot run the game; Windows). Takes effect after a restart. "
                       "Non-Windows builds always use vulkan. banjo-nx: deko3d on the Switch, plume's deko3d "
                       "back end (docs/deko3d-renderer.md); elsewhere it means vulkan.")
-    .allowed({"d3d12", "vulkan", "deko3d"})
+    .allowed({"d3d12", "vulkan", "deko3d", "d3d11"})
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_STRING(renut_gpu_adapter, "", "Nuts&Bolts/Graphics",
                       "The graphics card, by the name the API gives it (F2 lists them when there is more than one; "
@@ -76,7 +78,8 @@ Backend ResolveBackend() {
   RGPU_INFO("renut_gpu_backend: deko3d (this build links no Vulkan driver: REXGLUE_SWITCH_NO_NVK)");
   return Backend::Deko3D;
 #elif defined(_WIN32)
-  return REXCVAR_GET(renut_gpu_backend) == "d3d12" ? Backend::D3D12 : Backend::Vulkan;
+  const std::string &name = REXCVAR_GET(renut_gpu_backend);
+  return name == "d3d12" ? Backend::D3D12 : name == "d3d11" ? Backend::D3D11 : Backend::Vulkan;
 #elif defined(PLUME_DEKO3D)
   return REXCVAR_GET(renut_gpu_backend) == "deko3d" ? Backend::Deko3D : Backend::Vulkan;
 #else
@@ -307,12 +310,17 @@ std::vector<std::string> AdapterNames() {
 }
 
 const char *BackendName(Backend backend) {
-  return backend == Backend::Vulkan ? "Vulkan" : backend == Backend::Deko3D ? "deko3d" : "D3D12";
+  return backend == Backend::Vulkan   ? "Vulkan"
+         : backend == Backend::Deko3D ? "deko3d"
+         : backend == Backend::D3D11  ? "D3D11"
+                                      : "D3D12";
 }
 
 plume::RenderShaderFormat HostShaderFormat() {
   if (IsDeko3D())
     return plume::RenderShaderFormat::DEKO3D;
+  if (IsD3D11())
+    return plume::RenderShaderFormat::DXBC;
   return IsVulkan() ? plume::RenderShaderFormat::SPIRV : plume::RenderShaderFormat::DXIL;
 }
 
@@ -325,6 +333,8 @@ std::unique_ptr<plume::RenderInterface> CreateRenderInterface() {
   }
 #endif
 #if defined(_WIN32)
+  if (IsD3D11())
+    return plume::CreateD3D11Interface();  // mk9-lauta (2026-11-16)
   if (!IsVulkan()) {
     if (REXCVAR_GET(renut_gpu_dred))
       EnableDeviceRemovedDiagnostics();
@@ -384,6 +394,8 @@ bool TextureCreated(const plume::RenderTexture *texture) {
     return static_cast<const plume::Deko3DTexture *>(texture)->valid;
 #endif
 #if defined(_WIN32)
+  if (IsD3D11())
+    return plume::D3D11TextureCreated(texture);
   if (!IsVulkan())
     return static_cast<const plume::D3D12Texture *>(texture)->d3d != nullptr;
 #endif
@@ -435,6 +447,15 @@ bool ReportDeviceLost(plume::RenderDevice *device) {
     return true;
   }
 #if defined(_WIN32)
+  if (IsD3D11()) {
+    // mk9-lauta (2026-11-16): Direct3D 11's device removed reason.
+    HRESULT reason = S_OK;
+    if (!plume::D3D11DeviceRemoved(device, &reason) || lost.exchange(true))
+      return lost.load();
+    RGPU_ERROR("D3D11 device removed (reason {:08X})", uint32_t(reason));
+    mk9::renderer_start::DeviceLost();
+    return true;
+  }
   ID3D12Device *d3d = static_cast<plume::D3D12Device *>(device)->d3d;
   if (!d3d)
     return false;
@@ -475,7 +496,8 @@ GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
 #endif
 #if defined(_WIN32)
   if (!IsVulkan()) {
-    IDXGIAdapter1 *adapter = static_cast<plume::D3D12Device *>(device)->adapter;
+    // mk9-lauta (2026-11-16): Direct3D 11's adapter is DXGI's too.
+    IDXGIAdapter1 *adapter = IsD3D11() ? plume::D3D11Adapter(device) : static_cast<plume::D3D12Device *>(device)->adapter;
     IDXGIAdapter3 *adapter3 = nullptr;
     if (!adapter || FAILED(adapter->QueryInterface(IID_PPV_ARGS(&adapter3))) || !adapter3)
       return usage;
@@ -511,6 +533,8 @@ GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
 
 bool SetBlendConstant(plume::RenderCommandList *cmd, const float rgba[4]) {
 #if defined(_WIN32)
+  if (IsD3D11())
+    return plume::D3D11SetBlendConstant(cmd, rgba);  // mk9-lauta (2026-11-16)
   if (!IsVulkan()) {
     ID3D12GraphicsCommandList *d3d = static_cast<plume::D3D12CommandList *>(cmd)->d3d;
     if (!d3d)
@@ -547,6 +571,8 @@ bool GraphicsPipelineCreated(const plume::RenderPipeline *pipeline) {
     return static_cast<const plume::Deko3DGraphicsPipeline *>(pipeline)->valid;
 #endif
 #if defined(_WIN32)
+  if (IsD3D11())
+    return plume::D3D11PipelineCreated(pipeline);
   if (!IsVulkan())
     return static_cast<const plume::D3D12GraphicsPipeline *>(pipeline)->d3d != nullptr;
 #endif
@@ -562,6 +588,10 @@ std::unique_ptr<plume::RenderShader> CreateHostShader(plume::RenderDevice *devic
   if (IsDeko3D()) {  // banjo-nx
     data = blob.deko3d;
     size = blob.deko3d_size;
+  }
+  if (IsD3D11()) {  // mk9-lauta (2026-11-16)
+    data = blob.dxbc;
+    size = blob.dxbc_size;
   }
   if (!device || !data || size == 0) {
     RGPU_ERROR("Host shader '{}' has no {} blob", name, BackendName(ActiveBackend()));

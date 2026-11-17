@@ -150,9 +150,10 @@ const std::vector<Option>& DisplayOptions() {
        "F11 o Alt+Enter cambian entre pantalla completa y ventana en cualquier momento."},
 #if defined(_WIN32)  // mk9-lauta (2026-11-13): Linux has Vulkan only
       {"renut_gpu_backend", "API gráfica",
-       {{"d3d12", "DirectX 12"}, {"vulkan", "Vulkan"}},
-       "Si el juego anda mal o se ve raro con una, probá la otra (algunas placas y drivers van mejor con Vulkan). Se "
-       "aplica al volver a abrir el juego.",
+       {{"d3d12", "DirectX 12"}, {"vulkan", "Vulkan"}, {"d3d11", "DirectX 11 (placas o drivers viejos)"}},
+       "Si el juego anda mal o se ve raro con una, probá otra (algunas placas y drivers van mejor con Vulkan). DirectX "
+       "11 es para placas o drivers viejos donde las otras no arrancan o se cierran. Se aplica al volver a abrir el "
+       "juego.",
        true},
 #endif
       {"mk9_show_fps", "Mostrar FPS",

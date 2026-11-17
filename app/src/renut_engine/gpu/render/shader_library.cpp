@@ -103,6 +103,7 @@ const uint8_t *MapCacheFile(const char *name, const uint8_t *compressed, size_t 
 DecompressedCache g_spirv;
 #if defined(_WIN32)
 DecompressedCache g_dxil;
+DecompressedCache g_dxbc;  // mk9-lauta (2026-11-16): Direct3D 11's
 #endif
 std::atomic<uint64_t> g_decompressed_bytes{0};  // ShaderCacheHostBytes
 
@@ -220,6 +221,14 @@ std::unique_ptr<plume::RenderShader> CreateCachedShader(plume::RenderDevice *dev
   }
 
 #if defined(_WIN32)
+  if (IsD3D11()) {
+    // mk9-lauta (2026-11-16): Direct3D 11's DXBC; none for a shader FXC did not compile (its draws are skipped).
+    const uint8_t *dxbc = Decompress(g_dxbc, g_compressedDxbcCache, g_dxbcCacheCompressedSize,
+                                     g_dxbcCacheDecompressedSize, "DXBC");
+    if (!dxbc || entry.dxbcSize == 0)
+      return nullptr;
+    return device->createShader(dxbc + entry.dxbcOffset, entry.dxbcSize, "main", plume::RenderShaderFormat::DXBC);
+  }
   const uint8_t *cache = Decompress(g_dxil, g_compressedDxilCache, g_dxilCacheCompressedSize,
                                     g_dxilCacheDecompressedSize, "DXIL");
   if (!cache || entry.dxilSize == 0)

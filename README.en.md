@@ -57,7 +57,7 @@ picture, and live spectating of other players' matches.
 Krypt and every Komplete Edition fighter. Kratos, the PlayStation 3 release's guest fighter, downloads by himself the
 first time you open the game.
 
-**Runs on your PC.** Direct3D 12 or Vulkan, from 480p to 4K. The first start picks a quality preset from your graphics
+**Runs on your PC.** Direct3D 12, Vulkan or Direct3D 11 (for old GPUs and drivers), from 480p to 4K. The first start picks a quality preset from your graphics
 card ("Muy baja" to "Ultra"), and dynamic resolution lowers it a little when needed to keep 60 FPS. Integrated graphics
 work too.
 
@@ -86,7 +86,7 @@ or settings.
 | | What you need |
 |---|---|
 | **OS** | Windows 10 or 11, 64-bit |
-| **Graphics** | Direct3D 12 (Shader Model 6) or Vulkan 1.2: NVIDIA GTX 600 or newer, AMD Radeon HD 7000 or newer, or Intel integrated from the 6th generation on (HD 520/530, UHD) or AMD Ryzen. Intel HD 4000/4400/4600 are not enough |
+| **Graphics** | Direct3D 12 (Shader Model 6) or Vulkan 1.2: NVIDIA GTX 600 or newer, AMD Radeon HD 7000 or newer, or Intel integrated from the 6th generation on (HD 520/530, UHD) or AMD Ryzen. Direct3D 11 (feature level 11_0) also runs it on older GPUs or old drivers (NVIDIA GTX 400, AMD HD 5000, Intel HD 2500/4000 and newer), though old integrated GPUs may be slow |
 | **Memory** | 4 GB of RAM |
 | **Disk** | About 8 GB free |
 | **Game** | Your copy of Mortal Kombat Komplete Edition for Xbox 360, as an `.iso` (European release) |

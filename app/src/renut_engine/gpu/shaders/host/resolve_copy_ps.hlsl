@@ -8,5 +8,5 @@
 float4 main(float4 position : SV_Position) : SV_Target0
 {
     const int2 texel = int2(position.xy) + int2(g_Push.translate);
-    return g_Textures[NonUniformResourceIndex(g_Push.textureIndex)].Load(int3(texel, 0));
+    return UTILITY_TEXTURE(g_Push.textureIndex).Load(int3(texel, 0));
 }

@@ -31,6 +31,10 @@
 #if defined(_WIN32)
 #include "host_shaders/overlay_ps.dxil.h"
 #include "host_shaders/overlay_vs.dxil.h"
+// mk9-lauta (2026-11-16): Direct3D 11's (FXC: const BYTE arrays, windows.h's type)
+typedef unsigned char BYTE;
+#include "host_shaders/overlay_ps.dxbc.h"
+#include "host_shaders/overlay_vs.dxbc.h"
 
 #include <windows.h>
 #include <windowsx.h>

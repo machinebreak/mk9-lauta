@@ -32,8 +32,9 @@
 
 REXCVAR_DECLARE(std::string, renut_gpu_backend);
 REXCVAR_DEFINE_STRING(mk9_renderer_test_fail, "", "MK9",
-                      "Tests: a start with this graphics API (d3d12, vulkan) ends right before its device is made, as a "
-                      "start a driver kills (mk9_renderer_start.h: the next start goes back to the API that worked)");
+                      "Tests: a start with this graphics API (d3d12, vulkan, d3d11) ends right before its device is "
+                      "made, as a start a driver kills (mk9_renderer_start.h: the next start goes back to the API that "
+                      "worked)");
 
 // A laptop with two GPUs runs the game on the dedicated one when the executable exports these (NVIDIA Optimus, AMD
 // PowerXpress): the drivers read the .exe's exports, not a DLL's (the SDK's rexgpu DLL has them, to no effect).
@@ -52,6 +53,10 @@ std::string g_api;     // this start's API (DeviceReady)
 int g_failed = 0;      // failed starts in a row before this one, with g_api
 std::string g_ok_api;  // mk9-lauta (2026-11-11): the last API that got an image on screen ("" none yet)
 std::string g_notice;  // an API swapped at this start: shown once the overlay runs
+// mk9-lauta (2026-11-16): the APIs that failed to start on this PC (the marker's fifth field, comma separated): the
+// watchdog does not go back to them (Direct3D 12 crashing in an old driver, then Vulkan without what it needs: Direct3D
+// 11, not Direct3D 12 again).
+std::string g_bad;
 std::atomic<bool> g_presented{false};
 std::atomic<bool> g_lost{false};
 
@@ -59,17 +64,52 @@ std::filesystem::path MarkerPath() {
   return mk9::platform::ExeDir() / "logs" / "renderer_start.txt";
 }
 
-// logs/renderer_start.txt: "<api> <failed starts in a row> <pending|ok|lost> [<the last API that showed an image>]"
+// logs/renderer_start.txt: "<api> <failed starts in a row> <pending|ok|lost> [<the last API that showed an image>
+// [<the APIs that failed to start, comma separated>]]" ("-" for an empty field before another).
 void Write(const std::string& api, int failed, const char* state, const std::string& ok_api) {
   std::error_code ec;
   std::filesystem::create_directories(MarkerPath().parent_path(), ec);
   std::ofstream out(MarkerPath(), std::ios::trunc);
   out << api << ' ' << failed << ' ' << state;
-  if (!ok_api.empty()) out << ' ' << ok_api;
+  if (!ok_api.empty() || !g_bad.empty()) out << ' ' << (ok_api.empty() ? "-" : ok_api);
+  if (!g_bad.empty()) out << ' ' << g_bad;
   out << '\n';
 }
 
-const char* Name(const std::string& api) { return api == "vulkan" ? "Vulkan" : "DirectX 12"; }
+const char* Name(const std::string& api) {
+  return api == "vulkan" ? "Vulkan" : api == "d3d11" ? "DirectX 11" : "DirectX 12";
+}
+
+// renut_gpu_backend's value as one of the three APIs.
+std::string Canonical(const std::string& value) { return value == "vulkan" || value == "d3d11" ? value : "d3d12"; }
+
+renut::gpu::Backend BackendOf(const std::string& api) {
+  return api == "vulkan" ? renut::gpu::Backend::Vulkan
+         : api == "d3d11" ? renut::gpu::Backend::D3D11
+                          : renut::gpu::Backend::D3D12;
+}
+
+bool Listed(const std::string& list, const std::string& api) {
+  return ("," + list + ",").find("," + api + ",") != std::string::npos;
+}
+
+void AddBad(const std::string& api) {
+  if (!Listed(g_bad, api)) g_bad = g_bad.empty() ? api : g_bad + "," + api;
+}
+
+// The API after this one (Direct3D 12, Vulkan, Direct3D 11, in that order), skipping those that failed here; when all
+// did, Direct3D 11 (Direct3D 12 from it).
+std::string NextApi(const std::string& current) {
+  static const char* const kOrder[] = {"d3d12", "vulkan", "d3d11"};
+  int at = 0;
+  for (int i = 0; i < 3; ++i)
+    if (current == kOrder[i]) at = i;
+  for (int step = 1; step < 3; ++step) {
+    const std::string candidate = kOrder[(at + step) % 3];
+    if (!Listed(g_bad, candidate)) return candidate;
+  }
+  return current == "d3d11" ? "d3d12" : "d3d11";
+}
 
 class Notice : public renut::gpu::overlay::Dialog {
  public:
@@ -110,30 +150,34 @@ class Notice : public renut::gpu::overlay::Dialog {
 // API chosen in F2 whose first start fails goes back at once to the one that last showed an image; any other, after
 // two failed starts in a row.
 void BeforeDevice() {
-  std::string current = REXCVAR_GET(renut_gpu_backend) == "vulkan" ? "vulkan" : "d3d12";
-  std::string api, state, ok_api;
+  std::string current = Canonical(REXCVAR_GET(renut_gpu_backend));
+  std::string api, state, ok_api, bad;
   int failed = 0;
   {
     std::ifstream in(MarkerPath());
-    in >> api >> failed >> state >> ok_api;  // (older markers have three fields)
+    in >> api >> failed >> state >> ok_api >> bad;  // (older markers have three or four fields)
   }
+  if (ok_api == "-") ok_api.clear();
+  if (bad == "-") bad.clear();
   if (ok_api.empty() && state == "ok") ok_api = api;
   const bool failed_before = api == current && (state == "pending" || state == "lost");
   failed = failed_before ? failed + 1 : 0;
   const bool chosen_failed = failed_before && !ok_api.empty() && ok_api != current;  // F2's new choice, failed once
   std::lock_guard lock(g_mutex);
+  g_bad = bad;
 #if !defined(_WIN32)
   // mk9-lauta (2026-11-13): Linux has Vulkan only: nothing to go back to (the marker still says how the starts went)
   if (false) {
 #else
   if (failed >= 2 || chosen_failed) {
 #endif
-    const std::string other = chosen_failed ? ok_api : current == "vulkan" ? "d3d12" : "vulkan";
+    AddBad(current);
+    const std::string other = chosen_failed ? ok_api : NextApi(current);
     REXLOG_WARN("[renderer] {} did not get an image on screen in the last {} start(s) (logs/renderer_start.txt): {} "
                 "from now on (renut_gpu_backend, saved in mk9.toml)",
                 Name(current), failed, Name(other));
     rex::cvar::SetFlagByName("renut_gpu_backend", other);
-    renut::gpu::ForceBackend(other == "vulkan" ? renut::gpu::Backend::Vulkan : renut::gpu::Backend::D3D12);
+    renut::gpu::ForceBackend(BackendOf(other));
     options_ui::SaveToConfig({{"renut_gpu_backend", other}});
     g_notice = chosen_failed
                    ? fmt::format("El juego no pudo arrancar con {} en esta PC: volvió a {}, que sí anda. Si querés "
@@ -165,18 +209,25 @@ void DeviceReady(const char* api) {
   Write(g_api, g_failed, "pending", g_ok_api);
 }
 
-void VulkanUnusable(const std::string& why) {
-  REXLOG_WARN("[renderer] Vulkan cannot draw this game on this PC ({}): Direct3D 12 from now on (renut_gpu_backend, "
-              "saved in mk9.toml)",
-              why);
-  rex::cvar::SetFlagByName("renut_gpu_backend", "d3d12");
-  options_ui::SaveToConfig({{"renut_gpu_backend", "d3d12"}});
+void VulkanUnusable(const std::string& why, const char* api) {
+  REXLOG_WARN("[renderer] Vulkan cannot draw this game on this PC ({}): {} from now on (renut_gpu_backend, saved in "
+              "mk9.toml)",
+              why, Name(api));
+  rex::cvar::SetFlagByName("renut_gpu_backend", api);
+  options_ui::SaveToConfig({{"renut_gpu_backend", api}});
   std::lock_guard lock(g_mutex);
+  AddBad("vulkan");
   g_failed = 0;  // a start of another API: no failures of its own yet
-  g_notice =
+  g_notice = fmt::format(
       "El driver de tu placa de video no tiene lo que el juego necesita de Vulkan (Vulkan 1.2 con direcciones de "
-      "buffer): ahora usa DirectX 12. Si actualizás el driver, Vulkan se puede volver a elegir en F2 > Pantalla e "
-      "idioma > API gráfica.";
+      "buffer): ahora usa {}. Si actualizás el driver, Vulkan se puede volver a elegir en F2 > Pantalla e idioma > API "
+      "gráfica.",
+      Name(api));
+}
+
+const char* FallbackAfterVulkan() {
+  std::lock_guard lock(g_mutex);
+  return Listed(g_bad, "d3d12") ? "d3d11" : "d3d12";
 }
 
 void FramesDone() {
@@ -196,7 +247,11 @@ void DeviceLost() {
     if (!api.empty()) Write(api, failed, "lost", g_ok_api);
   }
 #if defined(_WIN32)
-  const std::string other = api == "vulkan" ? "DirectX 12" : "Vulkan";
+  std::string other;
+  {
+    std::lock_guard lock(g_mutex);
+    other = Name(NextApi(Canonical(api)));
+  }
   REXLOG_ERROR("[renderer] the {} device was lost: told the player; a second time in a row swaps to {} at the next "
                "start",
                Name(api), other);

@@ -18,7 +18,9 @@
 namespace renut::gpu {
 
 // banjo-nx (2026-10-17): Deko3D, plume's deko3d back end on the Switch (docs/deko3d-renderer.md).
-enum class Backend { D3D12, Vulkan, Deko3D };
+// mk9-lauta (2026-11-16): D3D11, plume's Direct3D 11 back end (docs/renderer/d3d11.md): Direct3D 12's way of binding
+// (root descriptors, the same layouts), with DXBC shaders.
+enum class Backend { D3D12, Vulkan, Deko3D, D3D11 };
 
 // Resolved once from renut_gpu_backend on first call; stable afterwards, so a
 // change from the settings takes effect on the next start.
@@ -31,6 +33,8 @@ inline Backend ActiveBackend() {
   return b ? static_cast<Backend>(b - 1) : detail::LatchBackend();
 }
 inline bool IsVulkan() { return ActiveBackend() == Backend::Vulkan; }
+// mk9-lauta (2026-11-16): Direct3D 11.
+inline bool IsD3D11() { return ActiveBackend() == Backend::D3D11; }
 // mk9-nx (2026-11-08): Direct3D 12 did not start (an old GPU or driver): Vulkan from here on, before the device.
 void FallBackToVulkan();
 // mk9-lauta (2026-11-11): this API from now on, before or after the first ActiveBackend (mk9_renderer_start.h).
@@ -43,7 +47,11 @@ std::vector<std::string> AdapterNames();
 inline bool IsDeko3D() { return ActiveBackend() == Backend::Deko3D; }
 // banjo-nx: Vulkan's way of binding (dynamic constant buffer sets, push constants, buffer device addresses,
 // specialization constants), which the deko3d back end takes too; D3D12 has root descriptors instead.
-inline bool UsesVulkanBindings() { return ActiveBackend() != Backend::D3D12; }
+// mk9-lauta (2026-11-16): Direct3D 11 binds as Direct3D 12 does.
+inline bool UsesVulkanBindings() {
+  const Backend backend = ActiveBackend();
+  return backend == Backend::Vulkan || backend == Backend::Deko3D;
+}
 const char *BackendName(Backend backend);
 
 plume::RenderShaderFormat HostShaderFormat();
@@ -104,6 +112,9 @@ struct HostShaderBlob {
   // banjo-nx: the deko3d back end's (plume::Deko3DShaderBlob: GLSL for uam and its default DKSH; Switch builds).
   const uint8_t *deko3d = nullptr;
   size_t deko3d_size = 0;
+  // mk9-lauta (2026-11-16): Direct3D 11's (FXC, shader model 5.0; Windows builds).
+  const uint8_t *dxbc = nullptr;
+  size_t dxbc_size = 0;
 };
 
 std::unique_ptr<plume::RenderShader> CreateHostShader(plume::RenderDevice *device,
@@ -113,11 +124,13 @@ std::unique_ptr<plume::RenderShader> CreateHostShader(plume::RenderDevice *devic
 } // namespace renut::gpu
 
 // RENUT_HOST_SHADER(overlay_vs) -> HostShaderBlob for gpu/shaders/host/overlay_vs.hlsl.
-// The including TU must include "host_shaders/<stem>.spirv.h" (and .dxil.h on Windows).
+// The including TU must include "host_shaders/<stem>.spirv.h" (and .dxil.h and .dxbc.h on Windows, the latter with
+// BYTE declared: FXC's headers declare const BYTE arrays).
 #if defined(_WIN32)
 #define RENUT_HOST_SHADER(stem)                                                    \
   ::renut::gpu::HostShaderBlob {                                                   \
-    g_##stem##_spirv, sizeof(g_##stem##_spirv), g_##stem##_dxil, sizeof(g_##stem##_dxil) \
+    g_##stem##_spirv, sizeof(g_##stem##_spirv), g_##stem##_dxil, sizeof(g_##stem##_dxil), nullptr, 0, \
+        g_##stem##_dxbc, sizeof(g_##stem##_dxbc)                                   \
   }
 #elif defined(PLUME_DEKO3D)
 // banjo-nx: and "host_shaders/<stem>.deko3d.h" (tools/deko3d_host_shader.py) for the deko3d back end.

@@ -5,7 +5,8 @@
 gpu_plugin = "xenos"
 
 # mk9-nx online (PC): Renut's Direct3D-level renderer, 60 fps with its own graphics options, on D3D12 by default
-# (renut_gpu_backend = "vulkan" works too). "xenos" = the emulated GPU (slow; the reference image).
+# (renut_gpu_backend = "vulkan" works too, and "d3d11" for old GPUs and drivers). "xenos" = the emulated GPU (slow; the
+# reference image).
 sa2_renderer = "renut"
 # Internal resolution: "480p", "720p" (the console's), "1080p", "1440p" or "4K". Other options: docs/online/README.md.
 renut_resolution = "720p"

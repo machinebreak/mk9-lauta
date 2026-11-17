@@ -13,11 +13,15 @@ namespace mk9::renderer_start {
 // Before the render device is made (video.cpp CreateHostDevice): the last start's outcome read; the second failure
 // in a row with this API: the other one from now on (renut_gpu_backend).
 void BeforeDevice();
-// The device was made, with this API ("d3d12" or "vulkan").
+// The device was made, with this API ("d3d12", "vulkan" or "d3d11").
 void DeviceReady(const char* api);
 // mk9-lauta (2026-11-15): this start could not use Vulkan (why: the device's lack, renut_gpu's VulkanCanDraw) and
-// went on with Direct3D 12: kept for the next starts (mk9.toml) and said on screen.
-void VulkanUnusable(const std::string& why);
+// went on with another API (api: "d3d12" or, mk9-lauta 2026-11-16, "d3d11"): kept for the next starts (mk9.toml) and
+// said on screen.
+void VulkanUnusable(const std::string& why, const char* api = "d3d12");
+// mk9-lauta (2026-11-16): the API a start that cannot use Vulkan goes on with: Direct3D 12, or Direct3D 11 where
+// Direct3D 12 already failed to start on this PC (logs/renderer_start.txt).
+const char* FallbackAfterVulkan();
 // The GPU finished 120 frames, shown or not (the render thread; a game started minimized presents nothing): this
 // start is good.
 void FramesDone();

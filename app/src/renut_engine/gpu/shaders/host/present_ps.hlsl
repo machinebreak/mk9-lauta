@@ -18,9 +18,9 @@ float4 main(PSInput input) : SV_Target0
     if (ramp != 0u)
     {
         const uint3 i = uint3(saturate(color.rgb) * 255.0 + 0.5);
-        color.rgb = float3(g_Textures[NonUniformResourceIndex(ramp)].Load(int3(i.x, 0, 0)).x,
-                           g_Textures[NonUniformResourceIndex(ramp)].Load(int3(i.y, 0, 0)).y,
-                           g_Textures[NonUniformResourceIndex(ramp)].Load(int3(i.z, 0, 0)).z);
+        color.rgb = float3(UTILITY_RAMP(ramp).Load(int3(i.x, 0, 0)).x,
+                           UTILITY_RAMP(ramp).Load(int3(i.y, 0, 0)).y,
+                           UTILITY_RAMP(ramp).Load(int3(i.z, 0, 0)).z);
     }
     // param0 = output gamma exponent (1 = passthrough). sa2-nx: skipped at 1, where pow's exp2(log2) could move a
     // value by an ulp.

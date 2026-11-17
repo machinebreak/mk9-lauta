@@ -26,6 +26,9 @@
 
 #include <plume_render_interface.h>
 #include <plume_render_interface_builders.h>
+#if defined(_WIN32)
+#include <plume_d3d11.h>  // mk9-lauta (2026-11-16): the Direct3D 11 back end's bindings
+#endif
 
 #include "renut_engine/perf/frame_stats.h"
 #include "renut_engine/gpu/backend/backend.h"
@@ -77,6 +80,18 @@
 #include "host_shaders/target_readback_cs.dxil.h"
 #include "host_shaders/texture_mip_ps.dxil.h"
 #include "host_shaders/resolve_copy_ps.dxil.h"
+// mk9-lauta (2026-11-16): Direct3D 11's (FXC: const BYTE arrays, windows.h's type)
+typedef unsigned char BYTE;
+#include "host_shaders/depth_resolve_ms_ps.dxbc.h"
+#include "host_shaders/depth_resolve_ps.dxbc.h"
+#include "host_shaders/present_ps.dxbc.h"
+#include "host_shaders/present_vs.dxbc.h"
+#include "host_shaders/rectangle_list_gs.dxbc.h"
+#include "host_shaders/point_sprite_gs.dxbc.h"
+#include "host_shaders/stream_convert_cs.dxbc.h"
+#include "host_shaders/target_readback_cs.dxbc.h"
+#include "host_shaders/texture_mip_ps.dxbc.h"
+#include "host_shaders/resolve_copy_ps.dxbc.h"
 #endif
 
 REXCVAR_DECLARE(std::string, renut_gpu_adapter);  // backend.cpp
@@ -143,6 +158,19 @@ bool BuildUtilityLayout(VideoState &s) {
     RGPU_ERROR("Utility pipeline layout creation failed");
     return false;
   }
+#if defined(_WIN32)
+  if (IsD3D11()) {
+    // mk9-lauta (2026-11-16, docs/renderer/d3d11.md): Direct3D 11 has no descriptor tables: the back end binds the
+    // views and the sampler the push constants name (shaders/host/utility.hlsli RENUT_D3D11): t0 the texture, s0 its
+    // sampler, t1 the gamma ramp (present_ps: param1's bits).
+    const plume::D3D11TableBinding bindings[] = {
+        {plume::D3D11TableBinding::Kind::SRV, 0, 0, 0, uint32_t(offsetof(UtilityPush, texture_index)), 0xFFFFFFFFu},
+        {plume::D3D11TableBinding::Kind::SAMPLER, 0, 1, 0, uint32_t(offsetof(UtilityPush, sampler_index)), 0xFFFFFFFFu},
+        {plume::D3D11TableBinding::Kind::SRV, 1, 0, 0, uint32_t(offsetof(UtilityPush, param1)), 0xFFFFFFFFu},
+    };
+    plume::D3D11SetTableBindings(s.utility_layout.get(), bindings, uint32_t(std::size(bindings)));
+  }
+#endif
   return true;
 }
 
@@ -396,6 +424,14 @@ void BuildTargetReadbackPipeline(VideoState &s) {
                          plume::RenderShaderStageFlag::COMPUTE);  // b0, space2
   layout.end();
   s.target_readback_layout = layout.create(s.device.get());
+#if defined(_WIN32)
+  if (IsD3D11() && s.target_readback_layout) {
+    // mk9-lauta (2026-11-16): Direct3D 11: the copy's view at t0, by the push constants' index.
+    const plume::D3D11TableBinding binding = {plume::D3D11TableBinding::Kind::SRV, 0, 0, 0,
+                                              uint32_t(offsetof(TargetReadbackPush, texture_index)), 0xFFFFFFFFu};
+    plume::D3D11SetTableBindings(s.target_readback_layout.get(), &binding, 1);
+  }
+#endif
   s.target_readback_cs = CreateHostShader(s.device.get(), RENUT_HOST_SHADER(target_readback_cs),
                                           "target_readback_cs");
   if (s.target_readback_layout && s.target_readback_cs) {
@@ -921,20 +957,24 @@ bool Video::CreateHostDevice() {
   // 12 instead, kept for the next starts (mk9_renderer_start.h VulkanUnusable)
   const bool tried_vulkan = IsVulkan();
   if (!s.device && IsVulkan()) {
-    RGPU_WARN("Vulkan {}: trying D3D12", vulkan_unusable          ? "cannot draw this game on this device"
-                                         : s.render_interface ? "device creation failed"
-                                                              : "is not available");
+    // mk9-lauta (2026-11-16): Direct3D 12, or Direct3D 11 where Direct3D 12 already failed to start on this PC
+    const char *fallback = mk9::renderer_start::FallbackAfterVulkan();
+    const bool to_d3d11 = std::string(fallback) == "d3d11";
+    RGPU_WARN("Vulkan {}: trying {}", vulkan_unusable          ? "cannot draw this game on this device"
+                                      : s.render_interface ? "device creation failed"
+                                                           : "is not available",
+              to_d3d11 ? "D3D11" : "D3D12");
     s.device.reset();
     s.render_interface.reset();
-    ForceBackend(Backend::D3D12);
+    ForceBackend(to_d3d11 ? Backend::D3D11 : Backend::D3D12);
     s.render_interface = CreateRenderInterface();
     if (s.render_interface)
       s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
     if (s.device)
-      mk9::renderer_start::VulkanUnusable(vulkan_unusable ? vulkan_why : "no Vulkan device");
+      mk9::renderer_start::VulkanUnusable(vulkan_unusable ? vulkan_why : "no Vulkan device", fallback);
   }
   // mk9-nx (2026-11-08): no Direct3D 12 on this GPU or driver: Vulkan instead (renut_gpu_backend stays as it is)
-  if (!s.device && !IsVulkan() && !tried_vulkan) {
+  if (!s.device && ActiveBackend() == Backend::D3D12 && !tried_vulkan) {
     RGPU_WARN("D3D12 {}: trying Vulkan", s.render_interface ? "device creation failed" : "is not available");
     s.device.reset();
     s.render_interface.reset();
@@ -947,6 +987,17 @@ bool Video::CreateHostDevice() {
       s.device.reset();
     }
   }
+  // mk9-lauta (2026-11-16, docs/renderer/d3d11.md): neither Direct3D 12 nor Vulkan: Direct3D 11, the last resort
+  // (shader model 5.0, GPUs from 2010 on); renut_gpu_backend stays as it is
+  if (!s.device && !IsD3D11()) {
+    RGPU_WARN("{} did not start: trying D3D11", BackendName(ActiveBackend()));
+    s.device.reset();
+    s.render_interface.reset();
+    ForceBackend(Backend::D3D11);
+    s.render_interface = CreateRenderInterface();
+    if (s.render_interface)
+      s.device = s.render_interface->createDevice(REXCVAR_GET(renut_gpu_adapter));
+  }
 #endif
   if (!s.render_interface || !s.device) {
     RGPU_ERROR("{} {} creation failed", BackendName(ActiveBackend()),
@@ -955,13 +1006,12 @@ bool Video::CreateHostDevice() {
     // mk9-nx (2026-11-08): neither works: say so in the players' language instead of a black window
     rex::ShowSimpleMessageBox(
         rex::SimpleMessageBoxType::Error,
-        "Tu placa de video no pudo arrancar el juego: hace falta una compatible con DirectX 12 (Shader Model 6) o "
-        "Vulkan 1.2 (casi todas desde 2013: NVIDIA GeForce GTX 600 o más nueva, AMD Radeon HD 7000 o más nueva, o el "
-        "gráfico integrado de un Intel Core de 6.ª generación en adelante, HD 520/530 o UHD).\n\nLos gráficos "
-        "integrados Intel HD 2500, 4000, 4400, 4600, 5000, 5500 y 6000 (procesadores Intel de 2.ª a 5.ª generación, "
-        "como el i3-4160) no alcanzan: ahí hace falta una placa de video aparte (sirve una usada barata, como una "
-        "GTX 750 Ti, una GT 1030 o una RX 550).\n\nSi la tuya es compatible, actualizá su driver desde la página "
-        "de NVIDIA, AMD o Intel y volvé a abrir el juego.");
+        "Tu placa de video no pudo arrancar el juego: hace falta una compatible con DirectX 11 (nivel 11_0), "
+        "DirectX 12 o Vulkan 1.2 (casi todas desde 2010: NVIDIA GeForce GTX 400 o más nueva, AMD Radeon HD 5000 o "
+        "más nueva, o el gráfico integrado de un Intel Core de 3.ª generación en adelante, HD 2500/4000 o más "
+        "nuevo).\n\nSi la tuya es compatible, actualizá su driver desde la página de NVIDIA, AMD o Intel y volvé a "
+        "abrir el juego. Si es más vieja, hace falta una placa de video aparte (sirve una usada barata, como una GTX "
+        "750 Ti, una GT 1030 o una RX 550).");
     std::_Exit(1);
 #elif defined(__linux__) && !defined(__SWITCH__)
     // mk9-lauta (2026-11-15): Linux: Vulkan is the only API there; say what is missing instead of a crash or a black
@@ -978,7 +1028,7 @@ bool Video::CreateHostDevice() {
     return false;
   }
   banjo::renut_gpu::OnDeviceCreated(s.device.get());
-  mk9::renderer_start::DeviceReady(IsVulkan() ? "vulkan" : "d3d12");
+  mk9::renderer_start::DeviceReady(IsVulkan() ? "vulkan" : IsD3D11() ? "d3d11" : "d3d12");
   SetAdapterNames(s.render_interface->getDeviceNames());  // F2's choice of graphics card
   s.backend_description =
       std::string(BackendName(ActiveBackend())) + " on " + s.device->getDescription().name;

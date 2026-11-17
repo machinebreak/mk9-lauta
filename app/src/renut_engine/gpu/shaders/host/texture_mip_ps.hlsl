@@ -8,7 +8,7 @@
 
 float4 main(float4 position : SV_Position) : SV_Target0
 {
-    Texture2D<float4> source = g_Textures[NonUniformResourceIndex(g_Push.textureIndex)];
+    Texture2D<float4> source = UTILITY_TEXTURE(g_Push.textureIndex);
     uint width, height;
     source.GetDimensions(width, height);
     const int box = int(g_Push.param0);

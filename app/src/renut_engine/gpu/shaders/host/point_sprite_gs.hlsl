@@ -49,6 +49,17 @@ float4 ViewportState() { return vk::RawBufferLoad<float4>(g_PushConstants.Shared
 
 // The vertex shaders' clip space has y flipped (-fvk-invert-y).
 static const float kUp = -1.0;
+#elif defined(RENUT_D3D11)
+cbuffer SharedConstants : register(b2)
+{
+    float4 g_PointState : packoffset(c82);
+    float4 g_ViewportState : packoffset(c83);
+};
+
+float4 PointState() { return g_PointState; }
+float4 ViewportState() { return g_ViewportState; }
+
+static const float kUp = 1.0;
 #else
 cbuffer SharedConstants : register(b2, space4)
 {

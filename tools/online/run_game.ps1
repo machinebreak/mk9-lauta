@@ -2,7 +2,7 @@
 # the [fps] lines and the end of the log, and converts the snapshots to PNG (tools/online/ppm2png.py).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\online\run_game.ps1 [-Renderer renut|native|xenos]
-#       [-Backend vulkan|d3d12] [-Resolution 720p] [-Seconds 60] [-Script "20 START;26 A"] [-ScriptFile path]
+#       [-Backend vulkan|d3d12|d3d11] [-Resolution 720p] [-Seconds 60] [-Script "20 START;26 A"] [-ScriptFile path]
 #       [-Snapshots "10,20,30"] [-GameArgs "pchr1=scorpion"] [-Visible] [-Sound] [-Set "name=value;name=value"]
 #       [-Affinity 0x0F]
 #
@@ -16,7 +16,7 @@
 # Test runs are muted and minimized unless -Sound / -Visible. The game is stopped after -Seconds.
 param(
     [ValidateSet('renut', 'native', 'xenos')][string]$Renderer = 'renut',
-    [ValidateSet('vulkan', 'd3d12')][string]$Backend = 'vulkan',
+    [ValidateSet('vulkan', 'd3d12', 'd3d11')][string]$Backend = 'vulkan',
     [string]$Resolution = '',
     [int]$Seconds = 60,
     [string]$Script = '',
