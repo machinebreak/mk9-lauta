@@ -30,6 +30,12 @@ def main():
         text = text[:m.start(2)] + '0' + text[m.end(2):]
         text = re.sub(r'(const size_t g_dxilCacheCompressedSize\s*=\s*)\d+', r'\g<1>0', text)
         text = re.sub(r'(const size_t g_dxilCacheDecompressedSize\s*=\s*)\d+', r'\g<1>0', text)
+    # mk9-lauta (2026-11-16): Direct3D 11's DXBC (Windows only), as the DXIL
+    m = re.search(r'(const uint8_t g_compressedDxbcCache\[\]\s*=\s*\{)(.*?)(\};)', text, re.S)
+    if m:
+        text = text[:m.start(2)] + '0' + text[m.end(2):]
+        text = re.sub(r'(const size_t g_dxbcCacheCompressedSize\s*=\s*)\d+', r'\g<1>0', text)
+        text = re.sub(r'(const size_t g_dxbcCacheDecompressedSize\s*=\s*)\d+', r'\g<1>0', text)
 
     out_dir = os.path.join(ROOT, 'app', 'out', 'renut_switch')
     os.makedirs(out_dir, exist_ok=True)

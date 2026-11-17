@@ -37,6 +37,12 @@ def main():
     text = text[:m.start(2)] + '\n0\n' + text[m.end(2):]
     text = re.sub(r'(const size_t g_dxilCacheCompressedSize\s*=\s*)\d+', r'\g<1>0', text)
     text = re.sub(r'(const size_t g_dxilCacheDecompressedSize\s*=\s*)\d+', r'\g<1>0', text)
+    # mk9-lauta (2026-11-16): Direct3D 11's DXBC (Windows only), as the DXIL
+    m = re.search(r'(const uint8_t g_compressedDxbcCache\[\]\s*=\s*\{)(.*?)(\};)', text, re.S)
+    if m:
+        text = text[:m.start(2)] + '\n0\n' + text[m.end(2):]
+        text = re.sub(r'(const size_t g_dxbcCacheCompressedSize\s*=\s*)\d+', r'\g<1>0', text)
+        text = re.sub(r'(const size_t g_dxbcCacheDecompressedSize\s*=\s*)\d+', r'\g<1>0', text)
     if '#embed "shader_cache.cpp.spirv.zst"' not in text:
         sys.exit('renut_linux_shader_cache: the SPIR-V cache is not embedded from shader_cache.cpp.spirv.zst')
     text = text.replace('#embed "shader_cache.cpp.spirv.zst"', '#embed "shader_cache_linux.cpp.spirv.zst"')

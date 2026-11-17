@@ -40,6 +40,11 @@ struct ShaderCacheEntry {
   uint32_t literalCount;
   // banjo-nx (banjo_gpu_depth_only, package 28): kShaderFlagPixelKill, kShaderFlagPixelDepth.
   uint32_t shaderFlags;
+  // mk9-lauta (2026-11-16, docs/renderer/d3d11.md): Direct3D 11's DXBC (FXC, shader model 5.0) in the decompressed
+  // g_compressedDxbcCache; size 0 when FXC did not compile the shader. The last fields: a cache written before them
+  // zero-fills them (no DXBC), so the layout stays 7.
+  uint32_t dxbcOffset;
+  uint32_t dxbcSize;
 };
 
 // ShaderCacheEntry::shaderFlags: the pixel shader kills pixels (a kill instruction, not the alpha test) / writes depth.
@@ -90,3 +95,8 @@ extern const size_t g_dxilCacheDecompressedSize;
 extern const uint8_t g_compressedSpirvCache[];
 extern const size_t g_spirvCacheCompressedSize;
 extern const size_t g_spirvCacheDecompressedSize;
+
+// mk9-lauta (2026-11-16): Direct3D 11's DXBC, Windows builds only (XenosRecomp built with XENOS_RECOMP_DXBC).
+extern const uint8_t g_compressedDxbcCache[];
+extern const size_t g_dxbcCacheCompressedSize;
+extern const size_t g_dxbcCacheDecompressedSize;

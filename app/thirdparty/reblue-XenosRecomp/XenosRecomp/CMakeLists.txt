@@ -2,6 +2,8 @@ project(XenosRecomp)
 
 if (WIN32)
     option(XENOS_RECOMP_DXIL "Generate DXIL shader cache" ON)
+    # mk9-lauta (2026-11-16): Direct3D 11's shaders (FXC, from the Windows SDK's d3dcompiler).
+    option(XENOS_RECOMP_DXBC "Generate the DXBC shader cache (Direct3D 11)" ON)
 endif()
 
 option(XENOS_RECOMP_RENUT "Recompile for reNut (Banjo-Kazooie: Nuts & Bolts)" OFF)
@@ -52,6 +54,11 @@ endif()
 if (XENOS_RECOMP_DXIL)
     target_compile_definitions(XenosRecomp PRIVATE XENOS_RECOMP_DXIL)
     target_link_libraries(XenosRecomp PRIVATE Microsoft::DXIL)
+endif()
+
+if (XENOS_RECOMP_DXBC)
+    target_compile_definitions(XenosRecomp PRIVATE XENOS_RECOMP_DXBC)
+    target_link_libraries(XenosRecomp PRIVATE d3dcompiler)
 endif()
 
 if (XENOS_RECOMP_RENUT)

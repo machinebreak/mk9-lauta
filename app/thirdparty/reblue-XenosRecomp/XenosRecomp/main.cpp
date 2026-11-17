@@ -15,6 +15,50 @@ static std::atomic<size_t> banjoKillShaders{0}, banjoDepthShaders{0};  // banjo-
 #include <thread>
 #include <vector>
 
+#ifdef XENOS_RECOMP_DXBC
+#include <d3dcompiler.h>
+
+// mk9-lauta (2026-11-16, docs/renderer/d3d11.md): Direct3D 11's shader (plume_d3d11): the same HLSL compiled by FXC,
+// shader model 5.0, with RENUT_D3D11 (shader_common.h). Reflection and debug data stripped: the back end reads the
+// declarations of the program itself, and Direct3D 11 needs only the program and its signatures.
+static bool compileDxbc(const std::string& hlsl, bool isPixelShader, std::vector<uint8_t>& out, std::string& errors)
+{
+    const D3D_SHADER_MACRO defines[] = { { "RENUT_RECOMP", "1" }, { "RENUT_D3D11", "1" }, { nullptr, nullptr } };
+    ID3DBlob* code = nullptr;
+    ID3DBlob* messages = nullptr;
+    const HRESULT result = D3DCompile(hlsl.data(), hlsl.size(), "shader.hlsl", defines, nullptr, "main",
+        isPixelShader ? "ps_5_0" : "vs_5_0", 0, 0, &code, &messages);
+    if (FAILED(result) || code == nullptr)
+    {
+        if (messages != nullptr)
+            errors.assign(static_cast<const char*>(messages->GetBufferPointer()), messages->GetBufferSize());
+        if (messages != nullptr)
+            messages->Release();
+        if (code != nullptr)
+            code->Release();
+        return false;
+    }
+    if (messages != nullptr)
+        messages->Release();
+    ID3DBlob* stripped = nullptr;
+    if (SUCCEEDED(D3DStripShader(code->GetBufferPointer(), code->GetBufferSize(),
+            D3DCOMPILER_STRIP_REFLECTION_DATA | D3DCOMPILER_STRIP_DEBUG_INFO | D3DCOMPILER_STRIP_TEST_BLOBS, &stripped)) &&
+        stripped != nullptr)
+    {
+        code->Release();
+        code = stripped;
+    }
+    const uint8_t* bytes = static_cast<const uint8_t*>(code->GetBufferPointer());
+    out.assign(bytes, bytes + code->GetBufferSize());
+    code->Release();
+    return true;
+}
+
+// The shaders FXC did not compile: reported, not fatal (Direct3D 11 then skips their draws).
+static std::mutex g_dxbcFailureMutex;
+static std::vector<std::pair<uint64_t, std::string>> g_dxbcFailures;
+#endif
+
 static std::unique_ptr<uint8_t[]> readAllBytes(const char* filePath, size_t& fileSize)
 {
     FILE* file = fopen(filePath, "rb");
@@ -62,6 +106,7 @@ struct RecompiledShader
     uint8_t* data = nullptr;
     IDxcBlob* dxil = nullptr;
     std::vector<uint8_t> spirv;
+    std::vector<uint8_t> dxbc;  // mk9-lauta: Direct3D 11's (XENOS_RECOMP_DXBC)
     uint32_t specConstantsMask = 0;
 #ifdef RENUT_RECOMP
     uint32_t vertexFetchMemoryMask = 0;
@@ -347,6 +392,26 @@ int main(int argc, char** argv)
 
                 spirv->Release();
 
+#ifdef XENOS_RECOMP_DXBC
+                {
+                    // mk9-lauta: from the text DXC compiled; a rewritten one (BANJO_HLSL_OVERRIDE) FXC does not take
+                    // falls back to the shader's own, as with DXC above.
+                    std::string fxcErrors;
+                    bool compiled = compileDxbc(recompiler.out, recompiler.isPixelShader, shader.dxbc, fxcErrors);
+#ifdef RENUT_RECOMP
+                    if (!compiled && !originalHlsl.empty())
+                        compiled = compileDxbc(originalHlsl, recompiler.isPixelShader, shader.dxbc, fxcErrors);
+#endif
+                    if (!compiled)
+                    {
+                        shader.dxbc.clear();
+                        const size_t line = fxcErrors.find('\n');
+                        std::lock_guard<std::mutex> lock(g_dxbcFailureMutex);
+                        g_dxbcFailures.emplace_back(hash, fxcErrors.substr(0, line));
+                    }
+                }
+#endif
+
 #ifdef RENUT_RECOMP
                 // banjo-nx (deko3d renderer, docs/deko3d-renderer.md): with BANJO_DEKO3D_SPIRV_DIR, also the SPIR-V the
                 // deko3d build converts (tools/deko3d_shaders.py): -DBANJO_DEKO3D, D3D clip space. <dir>/<vs|ps>_<hash>.spv,
@@ -403,6 +468,16 @@ int main(int argc, char** argv)
                 worker.join();
         }
 
+#ifdef XENOS_RECOMP_DXBC
+        if (!g_dxbcFailures.empty())
+        {
+            fmt::println(stderr, "mk9-lauta: {} shaders FXC did not compile (Direct3D 11 skips their draws):",
+                         g_dxbcFailures.size());
+            for (const auto& failure : g_dxbcFailures)
+                fmt::println(stderr, "  hash=0x{:016X} {}", failure.first, failure.second);
+        }
+#endif
+
         if (!g_failures.empty())
         {
             fmt::println(stderr, "Recompile failures ({}):", g_failures.size());
@@ -437,6 +512,7 @@ int main(int argc, char** argv)
 
         std::vector<uint8_t> dxil;
         std::vector<uint8_t> spirv;
+        std::vector<uint8_t> dxbc;  // mk9-lauta
 #ifdef RENUT_RECOMP
         StringBuffer vertexInputs;
         size_t vertexInputCount = 0;
@@ -450,13 +526,13 @@ int main(int argc, char** argv)
             const uint32_t* me = shader.memExportConstants;
             const uint32_t* fc = shader.floatConstants;
             f.println("\t{{ 0x{:X}, {}, {}, {}, {}, {}, 0x{:X}, 0x{:X}, {{ 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X} }}, "
-                "{{ 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X} }}, {}, {}, {}, {}, 0x{:X} }},",
+                "{{ 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X} }}, {}, {}, {}, {}, 0x{:X}, {}, {} }},",
                 hash, dxil.size(), (shader.dxil != nullptr) ? shader.dxil->GetBufferSize() : 0, spirv.size(), shader.spirv.size(), shader.specConstantsMask,
                 shader.vertexFetchMemoryMask, shader.textureFetchMask,
                 me[0], me[1], me[2], me[3], me[4], me[5], me[6], me[7],
                 fc[0], fc[1], fc[2], fc[3], fc[4], fc[5], fc[6], fc[7],
                 vertexInputCount, shader.vertexInputs.size(), literalCount, shader.cbufLiterals.size(),
-                shader.shaderFlags);
+                shader.shaderFlags, dxbc.size(), shader.dxbc.size());
             for (const auto& l : shader.cbufLiterals)
                 literals.println("\t{{ {}, {{ 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X} }} }},", l[0], l[1], l[2], l[3], l[4]);
             literalCount += shader.cbufLiterals.size();
@@ -478,6 +554,7 @@ int main(int argc, char** argv)
             }
             
             spirv.insert(spirv.end(), shader.spirv.begin(), shader.spirv.end());
+            dxbc.insert(dxbc.end(), shader.dxbc.begin(), shader.dxbc.end());  // mk9-lauta
         }
 
         f.println("}};");
@@ -517,6 +594,16 @@ int main(int argc, char** argv)
 
         f.println("const size_t g_spirvCacheCompressedSize = {};", spirvCompressed.size());
         f.println("const size_t g_spirvCacheDecompressedSize = {};", spirv.size());
+
+#ifdef XENOS_RECOMP_DXBC
+        // mk9-lauta (2026-11-16): Direct3D 11's (entries' dxbcOffset and dxbcSize, at the end of each entry).
+        fmt::println("Compressing DXBC cache...");
+        std::vector<uint8_t> dxbcCompressed(ZSTD_compressBound(dxbc.size()));
+        dxbcCompressed.resize(ZSTD_compress(dxbcCompressed.data(), dxbcCompressed.size(), dxbc.data(), dxbc.size(), level));
+        writeCompressedArray(f, output, ".dxbc.zst", "g_compressedDxbcCache", dxbcCompressed);
+        f.println("const size_t g_dxbcCacheCompressedSize = {};", dxbcCompressed.size());
+        f.println("const size_t g_dxbcCacheDecompressedSize = {};", dxbc.size());
+#endif
         f.println("const size_t g_shaderCacheEntryCount = {};", shaders.size());
 #ifdef RENUT_RECOMP
         // Entries carry vertexFetchMemoryMask, textureFetchMask, memExportConstants,
