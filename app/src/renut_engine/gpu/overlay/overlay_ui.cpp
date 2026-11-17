@@ -944,6 +944,19 @@ bool Start(UIThreadRunner run_on_ui_thread) {
     io.BackendPlatformName = "renut";
     io.BackendRendererName = "renut";
     io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
+#if defined(__linux__) && !defined(__SWITCH__)
+    // mk9-lauta (2026-11-17): the system's clipboard through SDL's (Dear ImGui's own on Linux is a buffer of its own:
+    // "Copiar código" and Apóyame's Mercado Pago alias never left the overlay). The build runs on SDL's main thread.
+    ImGuiPlatformIO &platform = ImGui::GetPlatformIO();
+    platform.Platform_SetClipboardTextFn = [](ImGuiContext *, const char *text) { SDL_SetClipboardText(text); };
+    platform.Platform_GetClipboardTextFn = [](ImGuiContext *) -> const char * {
+      static std::string held;  // valid until the next call, as Dear ImGui asks
+      char *text = SDL_GetClipboardText();
+      held = text ? text : "";
+      SDL_free(text);
+      return held.c_str();
+    };
+#endif
     ImGui::StyleColorsDark();
     {
       // mk9-nx online (2026-11-08): the online screens' look: near-black panels, a dark red for what can be pressed and

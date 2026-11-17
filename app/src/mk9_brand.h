@@ -19,17 +19,19 @@
 
 namespace mk9::brand {
 
-// mk9-lauta (2026-11-16): after the networks, "Apóyame"'s: Cafecito (from Argentina), Ko-fi (the rest of Latin America
-// and the world), Patreon (every month) and the heart of the button that opens F2 > Apóyame (no page of its own).
-enum class Social { kDiscord, kWhatsApp, kInstagram, kKick, kYouTube, kX, kCafecito, kKofi, kPatreon, kHeart };
+// mk9-lauta (2026-11-16): after the networks, "Apóyame"'s: Mercado Pago (from Argentina: an alias, copied when its
+// button is pressed; Cafecito's place until 2026-11-17), Ko-fi (the rest of Latin America and the world), Patreon (every
+// month) and the heart of the button that opens F2 > Apóyame (no page of its own).
+enum class Social { kDiscord, kWhatsApp, kInstagram, kKick, kYouTube, kX, kMercadoPago, kKofi, kPatreon, kHeart };
 constexpr int kSocialCount = 10;
 
 struct Link {
   Social id;
   const char* name;   // "Discord"
   const char* label;  // the button's words, in Spanish (i18n::T has the others): "Unirme al Discord"
-  const char* url;    // "" for the heart: its button opens F2 > Apóyame
+  const char* url;    // "" for the heart (its button opens F2 > Apóyame) and Mercado Pago (its button copies `copy`)
   ImU32 color;        // the network's
+  const char* copy = nullptr;  // what pressing the button copies to the clipboard instead of opening a page (the alias)
 };
 const Link& LinkOf(Social social);
 
@@ -54,7 +56,7 @@ bool SocialButton(Social social, const ImVec2& size, bool solid = false, const c
 void SocialButtons(float width, int columns, float height);
 
 // mk9-lauta (2026-11-16): F2 > Apóyame: what a donation keeps going (the online's server, the updates), the three ways
-// to give (Cafecito, Ko-fi, Patreon: who each is for) and, for whoever cannot, the networks to follow. `width` px wide,
+// to give (Mercado Pago, Ko-fi, Patreon: who each is for) and, for whoever cannot, the networks to follow. `width` px wide,
 // in the current window; `scale`: the overlay's text size (options_ui::UiScale).
 void SupportPanel(float width, float scale);
 

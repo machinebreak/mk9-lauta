@@ -194,7 +194,8 @@ al volver a abrir el juego.
   retraso.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 - **Apóyame**: cómo apoyar el proyecto. Con una donación ayudás a mantener el servidor del online activo y las
-  actualizaciones constantes: **Cafecito** desde Argentina (en pesos), **Ko-fi** desde el resto de Latinoamérica y del
+  actualizaciones constantes: **Mercado Pago** desde Argentina (en pesos, al alias `lautatwt`: tocá el botón y se
+  copia), **Ko-fi** desde el resto de Latinoamérica y del
   mundo, y **Patreon** si querés aportar todos los meses. Si no podés donar, también ayudás siguiendo a Lauta en sus
   redes. El botón **Apoyar** del menú principal abre esta misma pestaña. Donar es voluntario y no desbloquea nada.
 
@@ -243,7 +244,7 @@ dos archivos se ve en qué cuadro se separaron los juegos.
 
 - Lo ideal es una placa de video con DirectX 12 (Shader Model 6) o Vulkan 1.2: NVIDIA GTX 600 o más nueva, AMD Radeon
   HD 7000 o más nueva, o el gráfico integrado de un Intel Core de 6.ª generación en adelante (HD 520/530, UHD) o de un
-  AMD Ryzen. Las más viejas (NVIDIA GTX 400, AMD HD 5000, los integrados Intel HD 2500 y 4000 en adelante) andan con
+  AMD Ryzen. Las más viejas (NVIDIA GTX 400, AMD HD 5000, los integrados Intel HD 2500 y 4000 en adelante) usan
   **DirectX 11**, que el juego elige solo cuando las otras no arrancan; en los integrados viejos puede ir lento (ahí
   ayuda una placa aparte, aunque sea usada y barata, como una GTX 750 Ti, una GT 1030 o una RX 550).
 - **Drivers viejos**: si el driver de tu placa sólo tiene Vulkan 1.1 (los de 2018 y 2019, que algunos dejan porque

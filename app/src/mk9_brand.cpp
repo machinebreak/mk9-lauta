@@ -70,10 +70,10 @@ const Link kLinks[kSocialCount] = {
     {Social::kYouTube, "YouTube", "Seguirme en YouTube", "https://www.youtube.com/@LautaTWT?sub_confirmation=1",
      IM_COL32(255, 0, 51, 255)},
     {Social::kX, "X", "Seguirme en Twitter", "https://x.com/LautaTWT", IM_COL32(231, 231, 234, 255)},
-    // mk9-lauta (2026-11-16): Apóyame. Cafecito's lavender (its own buttons'), Ko-fi's orange (Simple Icons), Patreon's
-    // coral (its black would not show on the dark windows), the heart in the logo's red.
-    {Social::kCafecito, "Cafecito", "Invitame un cafecito", "https://cafecito.app/lautatwt",
-     IM_COL32(174, 184, 214, 255)},
+    // mk9-lauta (2026-11-16): Apóyame. Mercado Pago's blue and Ko-fi's orange (Simple Icons), Patreon's coral (its black
+    // would not show on the dark windows), the heart in the logo's red. Mercado Pago (2026-11-17, Cafecito's place): the
+    // alias itself on the button, copied when it is pressed (an alias has no page to open).
+    {Social::kMercadoPago, "Mercado Pago", "Alias: lautatwt", "", IM_COL32(0, 177, 234, 255), "lautatwt"},
     {Social::kKofi, "Ko-fi", "Donar en Ko-fi", "https://ko-fi.com/lautatwt", IM_COL32(255, 100, 51, 255)},
     {Social::kPatreon, "Patreon", "Sumarme al Patreon", "https://www.patreon.com/lautatwt", IM_COL32(255, 66, 77, 255)},
     {Social::kHeart, "Apóyame", "Apoyar", "", IM_COL32(229, 57, 80, 255)},
@@ -212,7 +212,17 @@ bool SocialButton(Social social, const ImVec2& size, bool solid, const char* lab
   if (ImGui::IsItemHovered()) {
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     if (*link.url) ImGui::SetTooltip("%s", link.url);
+    else if (link.copy) ImGui::SetTooltip("%s", T("Copiar el alias de Mercado Pago"));
   }
+  // mk9-lauta (2026-11-17): a button that copies (Mercado Pago's alias) says so for two seconds instead of its words
+  static double copied_at[kSocialCount] = {-1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9, -1e9};
+  if (pressed && link.copy) {
+    ImGui::SetClipboardText(link.copy);
+    copied_at[int(social)] = ImGui::GetTime();
+    REXLOG_INFO("[brand] {}'s alias copied", link.name);
+  }
+  const bool copied = link.copy && ImGui::GetTime() - copied_at[int(social)] < 2.0;
+  const char* shown = copied ? T("¡Copiado!") : text;
   ImDrawList* list = ImGui::GetWindowDrawList();
   const ImVec2 end(at.x + size.x, at.y + size.y);
   const float rounding = size.y * 0.24f;
@@ -240,13 +250,13 @@ bool SocialButton(Social social, const ImVec2& size, bool solid, const char* lab
   // the words, then a chevron at the right end while there is room for it
   ImFont* font = Strong();
   const float font_size = std::round(size.y * 0.40f);
-  const ImVec2 extent = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text);
+  const ImVec2 extent = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, shown);
   const float text_x = icon_at.x + icon_size + size.y * 0.26f;
   const float chevron = size.y * 0.13f;
   const bool room = text_x + extent.x + pad + chevron * 2.0f < end.x;
   list->PushClipRect(at, ImVec2(end.x - pad * 0.5f, end.y), true);
   list->AddText(font, font_size, ImVec2(std::round(text_x), std::round(at.y + (size.y - extent.y) * 0.5f)),
-                Faded(words), text);
+                Faded(words), shown);
   list->PopClipRect();
   if (room) {
     const float cx = end.x - pad - (hovered ? 0.0f : chevron * 0.5f), cy = at.y + size.y * 0.5f;
@@ -313,7 +323,7 @@ void SupportPanel(float width, float scale) {
     Social social;
     const char* who;
   };
-  static const Way kWays[] = {{Social::kCafecito, "Desde Argentina, en pesos"},
+  static const Way kWays[] = {{Social::kMercadoPago, "Por Mercado Pago, desde Argentina (tocalo para copiar el alias)"},
                               {Social::kKofi, "Desde Latinoamérica y el resto del mundo"},
                               {Social::kPatreon, "Un aporte todos los meses"}};
   const int columns = width >= 540.0f * scale ? 3 : 1;

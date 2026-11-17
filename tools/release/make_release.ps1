@@ -97,8 +97,9 @@ INSTALACIÓN
 3. La primera vez tarda un poco más en arrancar: prepara los gráficos de tu placa de video.
 
 Requisitos: Windows 10 u 11 de 64 bits, una placa de video con DirectX 12 (Shader Model 6) o Vulkan 1.2 (NVIDIA GTX
-600 o más nueva, AMD Radeon HD 7000 o más nueva, o integrada Intel de 6.ª generación en adelante o AMD Ryzen; las Intel
-HD 4000/4400/4600 no alcanzan) y 4 GB de RAM o más. La primera vez el juego elige la calidad según tu PC; se cambia en F2 > Gráficos
+600 o más nueva, AMD Radeon HD 7000 o más nueva, o integrada Intel de 6.ª generación en adelante o AMD Ryzen) y 4 GB
+de RAM o más. Las placas más viejas (NVIDIA GTX 400, AMD HD 5000, Intel HD 4000 en adelante) usan DirectX 11, que el
+juego elige solo si las otras no arrancan (en las integradas viejas puede ir lento). La primera vez el juego elige la calidad según tu PC; se cambia en F2 > Gráficos
 (para PCs con poca placa de video: "Baja" o "Muy baja").
 
 Si algo falla, la carpeta logs tiene lo que pasó: mandá en el Discord el último archivo mk9_*.log (y, si el juego

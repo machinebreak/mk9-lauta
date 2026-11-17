@@ -13,8 +13,9 @@
 
 The icons are Simple Icons' (CC0 1.0, simpleicons.org; the same paths as the project's site), drawn by Microsoft
 Edge in headless mode at 256 px and scaled down with Lanczos. mk9-lauta (2026-11-16): after the six networks, the
-"Apóyame" ones: a cup (Cafecito, drawn for mk9-lauta), Ko-fi's and Patreon's (Simple Icons 13.21.0) and a heart (drawn
-for mk9-lauta).
+"Apóyame" ones: Mercado Pago's (2026-11-17, in Cafecito's place), Ko-fi's and Patreon's (Simple Icons 13.21.0) and a
+heart (drawn for mk9-lauta). An icon marked "filled" in social_icons.json is drawn solid: everything within its outer
+line opaque and its inner lines cut out (Mercado Pago's oval is a thin outline, faint at the buttons' 20 px).
 """
 import json
 import os
@@ -22,16 +23,18 @@ import subprocess
 import sys
 import tempfile
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 BRAND = os.path.join(ROOT, 'app', 'src', 'brand')
 ASSETS = os.path.join(ROOT, 'docs', 'assets')
 
-# the order is mk9_brand.h's Social (Discord, WhatsApp, Instagram, Kick, YouTube, X, Cafecito, Ko-fi, Patreon, the
+# the order is mk9_brand.h's Social (Discord, WhatsApp, Instagram, Kick, YouTube, X, Mercado Pago, Ko-fi, Patreon, the
 # heart): social_icons.json, the networks' paths as the project's site has them
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'social_icons.json'), encoding='utf-8') as _f:
-    ICONS = [(i['name'], i['path']) for i in json.load(_f)['icons']]
+    _icons = json.load(_f)['icons']
+ICONS = [(i['name'], i['path']) for i in _icons]
+FILLED = {i['name'] for i in _icons if i.get('filled')}
 CELL = 256  # Edge's drawing; the atlas's rows are 128, 64 and 32
 ROWS = (128, 64, 32)
 
@@ -64,6 +67,14 @@ def draw_icons(work):
     return image
 
 
+def solid(cell):
+    """An outlined icon drawn solid: what its outer line encloses is opaque, every line (the outer one too) cut out."""
+    enclosed = cell.point(lambda v: 255 if v >= 96 else 0)
+    ImageDraw.floodfill(enclosed, (0, 0), 128)  # the outside: the cell's corner is in the margin
+    enclosed = enclosed.point(lambda v: 0 if v == 128 else 255)
+    return ImageChops.multiply(enclosed, ImageChops.invert(cell))
+
+
 def icon_atlas(strip):
     """Rows of 128, 64 and 32 px cells; white everywhere with the coverage as alpha (no dark fringe when scaled)."""
     alpha = strip.getchannel('A')
@@ -71,7 +82,10 @@ def icon_atlas(strip):
     y = 0
     for size in ROWS:
         for i in range(len(ICONS)):
-            cell = alpha.crop((i * CELL, 0, (i + 1) * CELL, CELL)).resize((size, size), Image.LANCZOS)
+            cell = alpha.crop((i * CELL, 0, (i + 1) * CELL, CELL))
+            if ICONS[i][0] in FILLED:
+                cell = solid(cell)
+            cell = cell.resize((size, size), Image.LANCZOS)
             atlas.paste(cell, (i * size, y))
         y += size
     white = Image.new('RGBA', atlas.size, (255, 255, 255, 0))

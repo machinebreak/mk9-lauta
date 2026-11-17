@@ -230,12 +230,13 @@ servidor del online activo (las salas, la partida rápida y las conexiones entre
 actualizaciones.
 
 <p align="center">
-<a href="https://cafecito.app/lautatwt"><img src="https://cdn.cafecito.app/imgs/buttons/button_1.png" alt="Invitame un café en cafecito.app" height="28"></a>
+<a href="#apóyame"><img src="https://img.shields.io/badge/Mercado%20Pago-alias%20lautatwt-00B1EA?style=for-the-badge&logo=mercadopago&logoColor=white" alt="Mercado Pago: alias lautatwt"></a>
 <a href="https://ko-fi.com/lautatwt"><img src="https://img.shields.io/badge/Ko--fi-Donar-FF6433?style=for-the-badge&logo=kofi&logoColor=white" alt="Donar en Ko-fi"></a>
 <a href="https://www.patreon.com/lautatwt"><img src="https://img.shields.io/badge/Patreon-Sumarme-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Sumarme al Patreon"></a>
 </p>
 
-- **[Cafecito](https://cafecito.app/lautatwt)**: desde Argentina, en pesos.
+- **Mercado Pago**: desde Argentina, en pesos: transferí al alias **`lautatwt`** (desde Mercado Pago o desde
+  cualquier banco o billetera).
 - **[Ko-fi](https://ko-fi.com/lautatwt)**: desde el resto de Latinoamérica y del mundo.
 - **[Patreon](https://www.patreon.com/lautatwt)**: si querés aportar todos los meses.
 
