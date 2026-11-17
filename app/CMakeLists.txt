@@ -90,6 +90,8 @@ set(MK9_SOURCES
     # The release's logo and Lauta's networks: the welcome, F2, the main menu's corner (mk9_brand.h).
     src/mk9_brand.cpp
     src/mk9_input_display.cpp
+    # mk9-lauta (2026-11-17): frame data in Practice: each attack's startup and advantage (mk9_frame_data.h).
+    src/mk9_frame_data.cpp
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
     src/mk9_localization.cpp

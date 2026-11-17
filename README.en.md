@@ -55,7 +55,8 @@ picture, and live spectating of other players' matches.
 
 **The whole game.** Story mode, Ladder and Tag Ladder, two-player Versus on one PC, the Challenge Tower, Training, the
 Krypt and every Komplete Edition fighter. Kratos, the PlayStation 3 release's guest fighter, downloads by himself the
-first time you open the game.
+first time you open the game. In Practice each attack shows its frame data (startup and advantage on hit or on block),
+and in any fight your inputs can show on screen.
 
 **Runs on your PC.** Direct3D 12, Vulkan or Direct3D 11 (for old GPUs and drivers), from 480p to 4K. The first start picks a quality preset from your graphics
 card ("Muy baja" to "Ultra"), and dynamic resolution lowers it a little when needed to keep 60 FPS. Integrated graphics

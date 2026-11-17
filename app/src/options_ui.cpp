@@ -773,6 +773,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       Set({{"mk9_input_display", inputs ? "true" : "false"}},
           T(inputs ? "Entradas en pantalla activadas" : "Entradas en pantalla desactivadas"));
     }
+    // mk9-lauta (2026-11-17): Practice's frame data (mk9_frame_data.h)
+    bool frames = rex::cvar::GetFlagByName("mk9_frame_data") == "true";
+    if (ImGui::Checkbox(Tid("Mostrar la frame data en Práctica (arranque y ventaja de cada golpe)").c_str(), &frames)) {
+      Set({{"mk9_frame_data", frames ? "true" : "false"}}, T(frames ? "Frame data activada" : "Frame data desactivada"));
+    }
     ImGui::Text("%s", T("Mandos conectados:"));
     bool any_pad = false;
     for (const controls::Device& d : controls::Devices()) {

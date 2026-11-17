@@ -54,7 +54,8 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 
 **El juego completo.** El modo Historia (doblado al español), Torneo y Torneo por equipos, Versus de a dos en la misma
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
-versión de PlayStation 3, se descarga solo la primera vez que abrís el juego.
+versión de PlayStation 3, se descarga solo la primera vez que abrís el juego. En Práctica, cada golpe muestra su frame
+data (arranque y ventaja al golpear o al bloquear), y en cualquier pelea podés ver tus entradas en pantalla.
 
 **Anda en tu PC.** DirectX 12, Vulkan o DirectX 11 (para placas y drivers viejos), de 480p a 4K. La primera vez elige la calidad según tu placa de video (de "Muy
 baja" a "Ultra"), y la resolución dinámica la baja un poco cuando hace falta para no perder los 60 FPS. También

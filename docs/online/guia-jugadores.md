@@ -175,6 +175,13 @@ siempre: **1** puño frontal, **2** puño trasero, **3** patada frontal, **4** p
 agarre, **SS** cambio de guardia y **TAG** relevo. Sirve en cualquier pelea (Práctica, Versus, online: ahí, las tuyas);
 el juego no se entera.
 
+**Frame data en Práctica** (viene activada; **F2 > Controles > Mostrar la frame data en Práctica**): a la derecha, cada
+golpe que tirás muestra su **arranque** (los cuadros hasta que pega, contando ese), cuántos cuadros te deja **al
+golpear** o **al bloquear** (+ verde: te recuperás antes que el rival; − rojo: él se recupera antes) y su **total**. Si
+no toca, dice "No tocó" con su arranque y su total. Se mide en el momento, de lo que pasa en la pelea: un golpe que
+conecta con un cuadro activo tardío deja un cuadro más de ventaja. Si el rival ataca (grabación o IA), muestra lo suyo
+como "RIVAL". Para que el muñeco se cubra: pausa > **OPCIONES DE IA > MODO DE BLOCK > SIEMPRE** (aceptar con A).
+
 Los botones que muestra el juego (en los menús y en la lista de movimientos) son los de tu mando: el juego mira el
 primer mando conectado al abrirse y muestra los botones de PlayStation (cruz, círculo, cuadrado, triángulo), de
 Switch o de Xbox; sin mando, muestra tus teclas. En **F2 > Controles > Íconos de los botones** se fija uno; se aplica

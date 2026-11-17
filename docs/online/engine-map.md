@@ -230,3 +230,20 @@ pelea, `+0xE4` la altura. Lo que es igual en las dos máquinas y cambia en una p
 3. Los hilos: juego, render de UE3, FMOD, streaming, workers del sistema de jobs (`mk9_jobs.cpp`).
 4. Los allocators (memoria física, Scaleform) y los rangos de memoria del juego para la instantánea.
 5. Probar `pchr1=`/`pchr2=`/`bgnd=` con `--cl` y detectar el inicio y el fin de cada round.
+
+## Frame data (2026-11-17, `mk9_frame_data.cpp`)
+
+Encontrado con `mk9_fighter_dump` cuadro por cuadro en Práctica (Scorpion contra Sub-Zero) y comprobado contra las
+tablas de la comunidad de MK9 (1, 2, 3, 4, d1, d3, d4 y f4 de Scorpion: arranque, total y ventaja al golpear y al
+bloquear, iguales). Todo en el objeto del luchador:
+
+| Qué | Dónde | Valores |
+|---|---|---|
+| Lo que hace | `+0x1D4` | el tipo en los bits 8-15: `0x52` ataque de pie, `0x53` agachado, `0x46`/`0x47` golpeado, `0x0A` cubriéndose, `0x20` caminando o saltando (`0x2000` adelante, `0x2001` atrás, `0x200E`/`0x2009`/`0x200F` salto), `0x01` agachado; 0 parado. Con `0x40` en el tipo no puede actuar: el ataque y el aturdimiento terminan cuando sale de ahí |
+| El ataque | `+0x188` | id del golpe (`0x1000xxxx`, -1 sin golpe); cada golpe tiene uno, un golpe en dos partes (el 4) cambia antes de tocar |
+| Fase del ataque | `+0x2F74` | 1 arranque, 2 activo, 3 recuperación; al tocar pasa a 3 en el acto. El arranque = primer cuadro con 2 o 3 |
+| Animación | `+0x2D4` | float: cuadro de la animación actual, -1 en el primero de una nueva. Cubriéndose, vuelve a -1 al recibir el golpe y otra vez al terminar el aturdimiento del bloqueo (el tipo sigue en `0x0A`) |
+| Daño hecho (acumulado) | `+0x3014` | float (0,03 = 3 %) |
+
+En la pausa del juego nada se mueve (las dos animaciones quietas): esos cuadros no cuentan. El contador de cuadros de la
+partida (+108) sigue corriendo en la pausa.

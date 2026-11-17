@@ -20,6 +20,24 @@ float Health(uint8_t* base, int player);
 enum GameState : int { kStateLoadingFight = 1, kStateMainMenu = 3, kStateSelect = 7, kStatePlay = 8 };
 int State(uint8_t* base);
 
+// mk9-lauta (2026-11-17): the game's mode ([[0x833848D4] + 8], as the scripts ask it: 0 the Ladder, 1 VERSUS, 2
+// Practice, 12 / 13 Test Your Luck), -1 when there is none. Game thread.
+int Mode(uint8_t* base);
+
+// mk9-lauta (2026-11-17): what the frame data reads of a fighter at a frame's boundary (mk9_frame_data.h; found with
+// mk9_fighter_dump in Practice and checked against the community's MK9 frame data, engine-map.md). Game thread.
+struct FighterFrame {
+  uint32_t action = 0;      // object +0x1D4: what it does, its kind in bits 8-15: 0x52 / 0x53 an attack standing /
+                            // crouching, 0x46 / 0x47 hit, 0x0A blocking, 0x20 walking or jumping, 0x01 crouching; 0
+                            // standing. Kinds with 0x40 hold the fighter (it cannot act)
+  uint32_t move = ~0u;      // +0x188: the attack's id (~0u: none), a new one for each attack
+  uint32_t attack = 0;      // +0x2F74: the attack's state: 1 under way, 3 once it touched (a hit or a block)
+  float animation = 0.0f;   // +0x2D4: the frame of its animation (-1 at a new animation's first)
+  float health = 0.0f;      // +0x78C0
+};
+// False when there is no fighter object (or it cannot be read).
+bool ReadFighter(uint8_t* base, int player, FighterFrame* out);
+
 // A match decided (the fight's mode over: netplay.cpp), as both games see it.
 struct Result {
   int me = 0;                 // this machine's player (0: the host, player 1)

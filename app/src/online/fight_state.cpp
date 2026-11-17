@@ -177,6 +177,32 @@ int State(uint8_t* base) {
   return int(state);
 }
 
+int Mode(uint8_t* base) {
+  QuietFaults quiet;
+  uint32_t game = 0, mode = 0;
+  if (!Read32(base, kGameObject, &game) || game < 0x30000000u || game >= 0xA0000000u) return -1;
+  if (!Read32(base, game + 8, &mode) || mode > 64) return -1;
+  return int(mode);
+}
+
+bool ReadFighter(uint8_t* base, int player, FighterFrame* out) {
+  QuietFaults quiet;
+  uint32_t object = 0;
+  if (!Read32(base, kGameInfo + kObject + uint32_t(player) * kPlayerStride, &object) || object < 0x30000000u ||
+      object >= 0xA0000000u) {
+    return false;
+  }
+  uint32_t animation = 0, health = 0;
+  if (!Read32(base, object + 0x1D4, &out->action) || !Read32(base, object + 0x188, &out->move) ||
+      !Read32(base, object + 0x2F74, &out->attack) || !Read32(base, object + 0x2D4, &animation) ||
+      !Read32(base, object + kHealth, &health)) {
+    return false;
+  }
+  std::memcpy(&out->animation, &animation, 4);
+  std::memcpy(&out->health, &health, 4);
+  return true;
+}
+
 void Report(uint8_t* base, int me) {
   Result r;
   r.me = me;
