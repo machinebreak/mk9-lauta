@@ -24,6 +24,7 @@ std::vector<Match> Recent(size_t n);
 
 struct Summary {
   int played = 0, won = 0, lost = 0;
+  int streak = 0;  // mk9-lauta (2026-11-17): the matches won in a row up to the newest (those with no result skipped)
   std::vector<std::pair<std::string, int>> characters;  // the player's own, most played first
 };
 Summary Totals();

@@ -318,17 +318,20 @@ void SupportPanel(float width, float scale) {
                            "el servidor del online activo y las actualizaciones constantes."));
   ImGui::PopTextWrapPos();
   ImGui::Spacing();
-  // the three ways, side by side when they fit (else one under the other), each with who it is for under it
+  // the ways, side by side when they fit (else one under the other), each with who it is for under it. mk9-lauta
+  // (2026-11-17): Ko-fi alone for now (Mercado Pago's alias and Patreon off: the user's call; their links stay in
+  // kLinks), its button centered
   struct Way {
     Social social;
     const char* who;
   };
-  static const Way kWays[] = {{Social::kMercadoPago, "Por Mercado Pago, desde Argentina (tocalo para copiar el alias)"},
-                              {Social::kKofi, "Desde Latinoamérica y el resto del mundo"},
-                              {Social::kPatreon, "Un aporte todos los meses"}};
-  const int columns = width >= 540.0f * scale ? 3 : 1;
+  static const Way kWays[] = {{Social::kKofi, "Desde cualquier país"}};
+  const int count = int(std::size(kWays));
+  const int columns = count > 1 && width >= 540.0f * scale ? count : 1;
   const float height = std::round(46.0f * scale);
-  if (ImGui::BeginTable("##support_ways", columns, ImGuiTableFlags_SizingStretchSame)) {
+  const float table_w = count == 1 ? std::min(width, std::round(340.0f * scale)) : width;
+  if (table_w < width) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::round((width - table_w) * 0.5f));
+  if (ImGui::BeginTable("##support_ways", columns, ImGuiTableFlags_SizingStretchSame, ImVec2(table_w, 0))) {
     for (const Way& way : kWays) {
       ImGui::TableNextColumn();
       SocialButton(way.social, ImVec2(ImGui::GetContentRegionAvail().x, height), true);

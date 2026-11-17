@@ -61,6 +61,9 @@ REXCVAR_DEFINE_BOOL(mk9_plates_names, true, "MK9 Online",
                     "Online fights: each player's name and flag under their health bar, and in the character select");
 REXCVAR_DEFINE_BOOL(mk9_plates_avatars, true, "MK9 Online",
                     "Online fights: the players' profile pictures beside their names (mk9_plates_names)");
+REXCVAR_DEFINE_BOOL(mk9_plates_record, true, "MK9 Online",
+                    "Online fights: each player's online wins and losses and winning streak beside the name "
+                    "(mk9_plates_names)");
 REXCVAR_DEFINE_STRING(mk9_plates_test, "", "MK9 Online",
                       "Tests: the fights' name plates in any fight, as 'name,country,picture hash;name,country,hash'");
 REXCVAR_DEFINE_BOOL(mk9_online_show, false, "MK9 Online",
@@ -1005,9 +1008,19 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   // ends at 97 and the plate starts at 107, from the portrait's edge inward (x 215 and 1705), the picture on the outer
   // side, the flag and the name on a dark pill that reads over any stage. Its pieces are a few quads; the picture is a
   // texture made before the fight (avatars.h). Off with mk9_plates_names (F2 > Online).
+  // mk9-lauta (2026-11-17): an online record as the plates show it: "12V 5D", and " · racha 3" from two wins in a row
+  // ("" with none said)
+  static std::string RecordText(int won, int lost, int streak) {
+    if (won < 0 || lost < 0) return std::string();
+    std::string text = fmt::format(fmt::runtime(T("{}V {}D")), won, lost);
+    if (streak >= 2) text += fmt::format(fmt::runtime(T(" · racha {}")), streak);
+    return text;
+  }
+
   void DrawNamePlates(const room::State& room) {
     struct Plate {
       std::string name, country, picture;
+      std::string record;  // mk9-lauta (2026-11-17): the online record and streak ("" none)
     };
     Plate plates[2];
     bool select = false;
@@ -1022,23 +1035,37 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         const std::string part = test.substr(at, end - at);
         at = end + 1;
         const size_t c1 = part.find(','), c2 = c1 == std::string::npos ? c1 : part.find(',', c1 + 1);
+        const size_t c3 = c2 == std::string::npos ? c2 : part.find(',', c2 + 1);
         p.name = part.substr(0, c1);
         if (c1 != std::string::npos) p.country = part.substr(c1 + 1, c2 == std::string::npos ? c2 : c2 - c1 - 1);
-        if (c2 != std::string::npos) p.picture = part.substr(c2 + 1);
+        if (c2 != std::string::npos) p.picture = part.substr(c2 + 1, c3 == std::string::npos ? c3 : c3 - c2 - 1);
         if (p.picture == "me") p.picture = avatars::MineHash();  // this player's own, as it is now
+        // (mk9-lauta, 2026-11-17) a fourth field: the record, "won-lost-streak"
+        if (c3 != std::string::npos) {
+          int won = -1, lost = -1, streak = 0;
+          if (std::sscanf(part.c_str() + c3 + 1, "%d-%d-%d", &won, &lost, &streak) >= 2) {
+            p.record = RecordText(won, lost, streak);
+          }
+        }
       }
     } else {
       if (!room.in_session) return;
       const netplay::SessionInfo info = netplay::Info();
       if (!info.active) return;
+      // mk9-lauta (2026-11-17): three or four machines play the game's two against two, whose sides the players chose
+      // in its own team screen: no plates (whose they would be is not known here)
+      if (info.machines > 2) return;
       select = !info.fight_on && info.game_state == fight_state::kStateSelect;
       if (!info.fight_on && !select) return;
       const std::string mine = avatars::MineHash();
       if (room.phase == room::Phase::kWatching) {
-        plates[0] = {room.p1, room.p1_country, room.p1_avatar};
-        plates[1] = {room.p2, room.p2_country, room.p2_avatar};
+        plates[0] = {room.p1, room.p1_country, room.p1_avatar, {}};
+        plates[1] = {room.p2, room.p2_country, room.p2_avatar, {}};
       } else {
-        const Plate me{room.me, flags::Mine(), mine}, other{room.other, room.other_country, room.other_avatar};
+        const stats::Summary own = stats::Totals();
+        const Plate me{room.me, flags::Mine(), mine, RecordText(own.won, own.lost, own.streak)};
+        const Plate other{room.other, room.other_country, room.other_avatar,
+                          RecordText(room.other_won, room.other_lost, room.other_streak)};
         plates[0] = room.host ? me : other;
         plates[1] = room.host ? other : me;
       }
@@ -1050,6 +1077,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (!REXCVAR_GET(mk9_plates_names)) return;
     if (!REXCVAR_GET(mk9_plates_avatars)) {
       for (Plate& p : plates) p.picture.clear();
+    }
+    if (!REXCVAR_GET(mk9_plates_record)) {
+      for (Plate& p : plates) p.record.clear();
     }
     const float u1 = select ? 0.152f : 0.1120f, u2 = select ? 0.848f : 0.8880f, v = select ? 0.752f : 0.0990f;
     float frame_h = renut::gpu::overlay::FrameHeightInOutput();
@@ -1066,14 +1096,15 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     }
     ImDrawList* list = ImGui::GetBackgroundDrawList();
     const float h = std::round(frame_h * (select ? 0.042f : 0.039f));  // the picture's side: the plate's height
-    DrawPlate(list, plates[0].name, plates[0].country, plates[0].picture, lx, ly, h, false);
-    DrawPlate(list, plates[1].name, plates[1].country, plates[1].picture, rx, ry, h, true);
+    DrawPlate(list, plates[0].name, plates[0].country, plates[0].picture, plates[0].record, lx, ly, h, false);
+    DrawPlate(list, plates[1].name, plates[1].country, plates[1].picture, plates[1].record, rx, ry, h, true);
   }
 
   // One player's plate: the picture (none, or not decoded yet: the pill alone) at the outer side, then the flag and the
-  // name on a dark pill; from x rightward (right: leftward from x), h high from y. The width it took.
+  // name on a dark pill, and after the name (mk9-lauta, 2026-11-17) the online record, smaller; from x rightward
+  // (right: leftward from x), h high from y. The width it took.
   static float DrawPlate(ImDrawList* list, const std::string& name, const std::string& country,
-                         const std::string& picture, float x, float y, float h, bool right) {
+                         const std::string& picture, const std::string& record, float x, float y, float h, bool right) {
     if (name.empty() || !list) return 0.0f;
     ImFont* font = renut::gpu::overlay::StrongFont();
     if (!font) font = ImGui::GetFont();
@@ -1084,7 +1115,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const ImU32 gold = IM_COL32(255, 196, 64, 215);
     const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, name.c_str());
     const bool has_flag = flags::Known(country);
-    const float pill_w = pad * 2.0f + extent.x + (has_flag ? flag_w + inner : 0.0f);
+    const float record_size = std::round(size * 0.80f);
+    const ImVec2 record_extent =
+        record.empty() ? ImVec2(0, 0) : font->CalcTextSizeA(record_size, FLT_MAX, 0.0f, record.c_str());
+    const float record_w = record.empty() ? 0.0f : std::round(inner * 1.6f) + record_extent.x;
+    const float pill_w = pad * 2.0f + extent.x + record_w + (has_flag ? flag_w + inner : 0.0f);
     float px = x, used = pill_w;
     if (!right) {
       if (!picture.empty() && avatars::Draw(list, picture, ImVec2(x, y), h, std::round(h * 0.22f), gold, line * 1.5f)) {
@@ -1111,7 +1146,14 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const float d = std::max(1.0f, std::round(size / 14.0f));
     list->AddText(font, size, ImVec2(cx + d, ty + d), IM_COL32(0, 0, 0, 200), name.c_str());
     list->AddText(font, size, ImVec2(cx, ty), IM_COL32(255, 238, 205, 255), name.c_str());
-    if (has_flag && right) flags::DrawAt(list, country, ImVec2(cx + extent.x + inner, fy), flag_h);
+    float after = cx + extent.x;
+    if (!record.empty()) {
+      const float rx = std::round(after + inner * 1.6f), ry = std::round(py + (pill_h - record_extent.y) * 0.5f);
+      list->AddText(font, record_size, ImVec2(rx + d, ry + d), IM_COL32(0, 0, 0, 180), record.c_str());
+      list->AddText(font, record_size, ImVec2(rx, ry), IM_COL32(230, 190, 110, 235), record.c_str());
+      after = rx + record_extent.x;
+    }
+    if (has_flag && right) flags::DrawAt(list, country, ImVec2(after + inner, fy), flag_h);
     return used;
   }
 
@@ -1309,7 +1351,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       const float strip_w = std::min(ImGui::GetContentRegionAvail().x, 420.0f * scale);
       list->AddRectFilledMultiColor(at, ImVec2(at.x + strip_w, at.y + plate_h + 12.0f * scale), IM_COL32(70, 54, 60, 255),
                                     IM_COL32(40, 46, 66, 255), IM_COL32(26, 30, 44, 255), IM_COL32(52, 38, 44, 255));
-      DrawPlate(list, me, flags::Mine(), mine, at.x + 10.0f * scale, at.y + 6.0f * scale, plate_h, false);
+      const stats::Summary own = stats::Totals();
+      DrawPlate(list, me, flags::Mine(), mine,
+                REXCVAR_GET(mk9_plates_record) ? RecordText(own.won, own.lost, own.streak) : std::string(),
+                at.x + 10.0f * scale, at.y + 6.0f * scale, plate_h, false);
       ImGui::Dummy(ImVec2(strip_w, plate_h + 12.0f * scale));
     }
     ImGui::PushStyleColor(ImGuiCol_Text, kGrey);

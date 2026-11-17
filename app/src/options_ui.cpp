@@ -211,6 +211,10 @@ const std::vector<Option>& OnlineOptions() {
       {"mk9_plates_avatars", "Fotos de perfil en la pelea",
        {{"true", "Mostrar"}, {"false", "Ocultar"}},
        "La foto de cada jugador al lado de su nombre. Se cargan antes de la pelea: no cuestan nada mientras se juega."},
+      // mk9-lauta (2026-11-17)
+      {"mk9_plates_record", "Récord y racha en la pelea",
+       {{"true", "Mostrar"}, {"false", "Ocultar"}},
+       "Al lado del nombre de cada jugador, sus victorias y derrotas online y, si viene ganando, cuántas seguidas."},
       {"mk9_avatars_others", "Fotos de los otros jugadores",
        {{"true", "Mostrar"}, {"false", "No mostrar ninguna"}},
        "Las fotos de perfil de los demás, en la sala, en la pelea y en los perfiles. Las de los jugadores que "

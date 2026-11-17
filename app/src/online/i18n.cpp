@@ -294,6 +294,9 @@ const std::unordered_map<std::string_view, Text>& Table() {
       // the profile (stats.h)
       {"Perfil", {"Profile", "Perfil"}},
       {"(%d V - %d D)", {"(%d W - %d L)", "(%d V - %d D)"}},
+      // mk9-lauta (2026-11-17): the fights' plates
+      {"{}V {}D", {"{}W {}L", "{}V {}D"}},
+      {" · racha {}", {" · streak {}", " · sequência {}"}},
       {"Todavía no jugaste partidas online.", {"You have not played online matches yet.", "Você ainda não jogou partidas online."}},
       {"Partidas: %d - Ganadas: %d - Perdidas: %d", {"Matches: %d - Won: %d - Lost: %d", "Partidas: %d - Vitórias: %d - Derrotas: %d"}},
       {"(%.0f%% ganadas)", {"(%.0f%% won)", "(%.0f%% vitórias)"}},
@@ -482,6 +485,7 @@ const std::unordered_map<std::string_view, Text>& Table() {
        {"Join my Patreon", "Entrar no Patreon"}},
       {"Por Mercado Pago, desde Argentina (tocalo para copiar el alias)",
        {"Through Mercado Pago, from Argentina (click it to copy the alias)", "Pelo Mercado Pago, da Argentina (clique para copiar o alias)"}},
+      {"Desde cualquier país", {"From any country", "De qualquer país"}},
       {"Desde Latinoamérica y el resto del mundo",
        {"From Latin America and the rest of the world", "Da América Latina e do resto do mundo"}},
       {"Un aporte todos los meses",

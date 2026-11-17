@@ -85,6 +85,9 @@ Summary Totals() {
     if (m.result > 0) ++s.won;
     if (m.result < 0) ++s.lost;
     if (!m.mine.empty()) ++characters[m.mine];
+    // the winning streak: one more for a win, back to 0 for a loss, a match with no result (a tag match) as it was
+    if (m.result > 0) ++s.streak;
+    if (m.result < 0) s.streak = 0;
   }
   s.characters.assign(characters.begin(), characters.end());
   std::stable_sort(s.characters.begin(), s.characters.end(),

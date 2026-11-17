@@ -107,6 +107,7 @@ json AboutMe(json message) {
   message["cc"] = flags::Mine();
   message["won"] = s.won;
   message["lost"] = s.lost;
+  message["streak"] = s.streak;
   message["av"] = avatars::MineHash();
   message["mods"] = Mods();
   return message;
@@ -208,6 +209,7 @@ Member MeNow() {
   me.mods = Mods();
   me.won = st.won;
   me.lost = st.lost;
+  me.streak = st.streak;
   me.players = g.s.my_players;
   me.ready = g.s.my_ready;
   me.me = true;
@@ -230,6 +232,7 @@ void SyncOther() {
     g.s.other_country = o->country;
     g.s.other_won = o->won;
     g.s.other_lost = o->lost;
+    g.s.other_streak = o->streak;
     g.s.other_avatar = o->avatar;
     g.s.other_players = o->players;
     g.s.other_ready = o->ready;
@@ -288,6 +291,7 @@ json MembersMessage() {
                     {"cc", m.country},
                     {"won", m.won},
                     {"lost", m.lost},
+                    {"streak", m.streak},
                     {"av", m.avatar},
                     {"mods", m.mods},
                     {"pl", m.players},
@@ -459,6 +463,7 @@ void OnMessageLocked(const json& d) {
     if (d.contains("won") && g.s.phase == Phase::kTogether) {
       g.s.other_won = d.value("won", -1);
       g.s.other_lost = d.value("lost", -1);
+      g.s.other_streak = d.value("streak", 0);
     }
     if (d.contains("won") && g.s.phase == Phase::kTogether) TakeMods(d, g.s.other);
     if (d.contains("av") && g.s.phase == Phase::kTogether) {
@@ -477,6 +482,7 @@ void OnMessageLocked(const json& d) {
     if (cc.size() == 2) sender->country = cc;
     sender->won = d.value("won", -1);
     sender->lost = d.value("lost", -1);
+    sender->streak = d.value("streak", 0);
     const std::string mods = Text(d, "mods");
     if (mods != sender->mods) {
       sender->mods = mods;
@@ -576,6 +582,7 @@ void OnMessageLocked(const json& d) {
         known->country = d.value("cc", "");
         known->won = d.value("won", -1);
         known->lost = d.value("lost", -1);
+        known->streak = d.value("streak", 0);
         known->avatar = avatars::CleanHash(Text(d, "av"));
         known->mods = Text(d, "mods");
         g.heard_from[id] = Clock::now();
@@ -603,6 +610,7 @@ void OnMessageLocked(const json& d) {
         g.s.other_country = d.value("cc", "");
         g.s.other_won = d.value("won", -1);
         g.s.other_lost = d.value("lost", -1);
+        g.s.other_streak = d.value("streak", 0);
         g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
         g.s.phase = Phase::kTogether;
         TakeMods(d, name);
@@ -612,6 +620,7 @@ void OnMessageLocked(const json& d) {
         guest.country = g.s.other_country;
         guest.won = g.s.other_won;
         guest.lost = g.s.other_lost;
+        guest.streak = g.s.other_streak;
         guest.avatar = g.s.other_avatar;
         guest.mods = Text(d, "mods");
         guest.players = g.s.other_players;
@@ -716,6 +725,7 @@ void OnMessageLocked(const json& d) {
       g.s.other_country = d.value("cc", "");
       g.s.other_won = d.value("won", -1);
       g.s.other_lost = d.value("lost", -1);
+      g.s.other_streak = d.value("streak", 0);
       g.s.other_avatar = avatars::CleanHash(Text(d, "av"));
       g.s.phase = Phase::kTogether;
       g.s.status = Tf("En la sala de {}", g.s.other);
@@ -726,6 +736,7 @@ void OnMessageLocked(const json& d) {
         host.country = g.s.other_country;
         host.won = g.s.other_won;
         host.lost = g.s.other_lost;
+        host.streak = g.s.other_streak;
         host.avatar = g.s.other_avatar;
         host.mods = Text(d, "mods");
         g.s.members = {host, MeNow()};
@@ -750,6 +761,7 @@ void OnMessageLocked(const json& d) {
         m.country = Text(e, "cc");
         m.won = e.value("won", -1);
         m.lost = e.value("lost", -1);
+        m.streak = e.value("streak", 0);
         m.avatar = avatars::CleanHash(Text(e, "av"));
         m.mods = Text(e, "mods");
         m.players = e.value("pl", 1) == 2 ? 2 : 1;

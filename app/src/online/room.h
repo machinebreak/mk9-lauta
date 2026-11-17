@@ -47,6 +47,7 @@ struct Member {
   std::string id;  // its lobby id in the room (the host's: empty)
   std::string name, country, avatar, mods;
   int won = -1, lost = -1;
+  int streak = 0;  // mk9-lauta (2026-11-17): its winning streak
   int players = 1;
   bool ready = false;
   bool me = false;  // this game's
@@ -64,6 +65,7 @@ struct State {
   std::string me, other;      // the names
   std::string other_country;  // the other player's (two letters; "" not said): mk9-lauta, flags.h
   int other_won = -1, other_lost = -1;  // the other player's online record (stats.h; -1: not said)
+  int other_streak = 0;                 // mk9-lauta (2026-11-17): ... and its winning streak (0: none, or not said)
   std::string other_avatar;   // mk9-lauta (2026-11-11): the other player's picture's hash (avatars.h; "" none)
   // mk9-lauta (2026-11-11): the content the other's game has beyond the disc ("kratos"; "" none, or an older release):
   // the fight starts only when both have the same (mk9_kratos.h); content_differs says so for the screens
