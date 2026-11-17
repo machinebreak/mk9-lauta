@@ -139,15 +139,10 @@ MK9 by Lauta is free, has no ads, and I make it in my spare time. If you enjoy i
 server running (the rooms, quick match and the connections between players) and the updates coming.
 
 <p align="center">
-<a href="#support-me"><img src="https://img.shields.io/badge/Mercado%20Pago-alias%20lautatwt-00B1EA?style=for-the-badge&logo=mercadopago&logoColor=white" alt="Mercado Pago: alias lautatwt"></a>
 <a href="https://ko-fi.com/lautatwt"><img src="https://img.shields.io/badge/Ko--fi-Donate-FF6433?style=for-the-badge&logo=kofi&logoColor=white" alt="Donate on Ko-fi"></a>
-<a href="https://www.patreon.com/lautatwt"><img src="https://img.shields.io/badge/Patreon-Join-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Join my Patreon"></a>
 </p>
 
-- **Mercado Pago**: from Argentina, in pesos: send a transfer to the alias **`lautatwt`** (from Mercado Pago or
-  any Argentine bank or wallet).
-- **[Ko-fi](https://ko-fi.com/lautatwt)**: from the rest of Latin America and the world.
-- **[Patreon](https://www.patreon.com/lautatwt)**: if you want to chip in every month.
+- **[Ko-fi](https://ko-fi.com/lautatwt)**: from any country.
 
 Donations are voluntary and unlock nothing: the game is and will stay free for everyone. In the game, all of this is in
 **F2 > Apóyame** (or the main menu's **Support** button).

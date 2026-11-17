@@ -230,15 +230,10 @@ servidor del online activo (las salas, la partida rápida y las conexiones entre
 actualizaciones.
 
 <p align="center">
-<a href="#apóyame"><img src="https://img.shields.io/badge/Mercado%20Pago-alias%20lautatwt-00B1EA?style=for-the-badge&logo=mercadopago&logoColor=white" alt="Mercado Pago: alias lautatwt"></a>
 <a href="https://ko-fi.com/lautatwt"><img src="https://img.shields.io/badge/Ko--fi-Donar-FF6433?style=for-the-badge&logo=kofi&logoColor=white" alt="Donar en Ko-fi"></a>
-<a href="https://www.patreon.com/lautatwt"><img src="https://img.shields.io/badge/Patreon-Sumarme-FF424D?style=for-the-badge&logo=patreon&logoColor=white" alt="Sumarme al Patreon"></a>
 </p>
 
-- **Mercado Pago**: desde Argentina, en pesos: transferí al alias **`lautatwt`** (desde Mercado Pago o desde
-  cualquier banco o billetera).
-- **[Ko-fi](https://ko-fi.com/lautatwt)**: desde el resto de Latinoamérica y del mundo.
-- **[Patreon](https://www.patreon.com/lautatwt)**: si querés aportar todos los meses.
+- **[Ko-fi](https://ko-fi.com/lautatwt)**: desde cualquier país.
 
 Las donaciones son voluntarias y no desbloquean nada: el juego es y va a seguir siendo gratis para todos. En el juego
 está todo esto en **F2 > Apóyame** (o con el botón **Apoyar** del menú principal).

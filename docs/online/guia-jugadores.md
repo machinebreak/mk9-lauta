@@ -194,9 +194,8 @@ al volver a abrir el juego.
   retraso.
 - **Acerca de**: tu versión, buscar una versión nueva, abrir la carpeta de logs y reportar un problema.
 - **Apóyame**: cómo apoyar el proyecto. Con una donación ayudás a mantener el servidor del online activo y las
-  actualizaciones constantes: **Mercado Pago** desde Argentina (en pesos, al alias `lautatwt`: tocá el botón y se
-  copia), **Ko-fi** desde el resto de Latinoamérica y del
-  mundo, y **Patreon** si querés aportar todos los meses. Si no podés donar, también ayudás siguiendo a Lauta en sus
+  actualizaciones constantes: por **Ko-fi**, desde cualquier país. Si no podés donar, también ayudás siguiendo a
+  Lauta en sus
   redes. El botón **Apoyar** del menú principal abre esta misma pestaña. Donar es voluntario y no desbloquea nada.
 
 ## Kratos
