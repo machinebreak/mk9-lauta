@@ -131,6 +131,8 @@ En Steam Deck: en el modo escritorio, **Steam > Agregar un juego que no es de St
    apreten RB hasta **4 JUGADORES**: cada uno elige su equipo y su luchador.
 5. ¿Cuatro, cada uno en su PC? Creen una **sala de 2 contra 2** (o toquen **Partida rápida 2 contra 2**): cuando estén
    todos listos el host toca **Empezar la pelea**, y en el juego es igual, RB hasta **4 JUGADORES**.
+6. ¿De tres a cuatro con ganas de turnarse? **Rey de la colina**: pelean dos y los demás miran en vivo; el que gana se
+   queda y el que pierde va al final de la fila.
 
 Los dos tienen que tener la misma versión, y el juego se actualiza solo. La guía completa, con los controles y todas
 las opciones, está en [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` del zip.

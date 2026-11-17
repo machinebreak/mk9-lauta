@@ -118,17 +118,19 @@ On the Steam Deck: in desktop mode, **Steam > Add a Non-Steam Game** and pick th
 ## Playing online
 
 1. Press **F1** and choose your name.
-2. Use **Partida rápida** (quick match), create a room (public, or private with a code to share with a friend) or join
-   one with its code.
-3. When both players press **Estoy listo** (ready), the game restarts already connected. One player picks **VERSUS**
-   (one vs one, two vs two or test your luck), the other joins with START, and each picks a fighter.
-4. Four of you, two at each PC? Before "Estoy listo" tick **Somos dos en esta PC**, and in the main menu press RB
-   until **4 JUGADORES**: each one picks a team and a fighter.
-5. Four of you, each at their own PC? Create a **2 vs 2 room** (or use **Partida rápida 2 contra 2**): when everyone is
-   ready the host presses **Empezar la pelea**, and in the game it is the same, RB until **4 JUGADORES**.
+2. Use **Quick match**, create a room (public, or private with a code to share with a friend) or join one with its
+   code.
+3. When both players press **I'm ready**, the game restarts already connected. One player picks **VERSUS** (one vs
+   one, two vs two or test your luck), the other joins with START, and each picks a fighter.
+4. Four of you, two at each PC? Before "I'm ready" tick **Two of us at this PC**, and in the main menu press RB until
+   **4 PLAYERS**: each one picks a team and a fighter.
+5. Four of you, each at their own PC? Create a **2 vs 2 room** (or use **Quick match 2 vs 2**): when everyone is ready
+   the host presses **Start the fight**, and in the game it is the same, RB until **4 PLAYERS**.
+6. Three or four taking turns? Create a **King of the Hill** room: two fight and the others watch live; the winner
+   stays and the loser goes to the end of the line.
 
 Both players need the same version; the game updates itself. Online matches always start with the default buttons
-(so both PCs play exactly the same); choose your own for online fights in **F2 > Controles > Botones en el online**.
+(so both PCs play exactly the same); choose your own for online fights in **F2 > Controls > Online buttons**.
 The full players' guide (in Spanish) is in [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the
 zip's `LEEME.txt`.
 

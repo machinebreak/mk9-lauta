@@ -68,6 +68,17 @@ cuatro máquinas. Sin cambios en el servidor: el relay ya deja que cualquiera le
 Prueba: `tools/online/room4_test.ps1` (cuatro juegos por un lobby local: `mk9_online_test=host4` y `quick4`,
 `mk9_online_test_start`).
 
+### Rey de la colina (2026-11-17)
+
+La sala de cuatro con `koth` (`CreateRoom(open, 4, true)`): de tres a cuatro personas, una por PC. Su título empieza
+con `KOTH · ` (`kKothTitle`; la lista lo muestra como "Rey de la colina · " en el idioma de cada uno) y ninguna partida
+rápida entra (se elige de la lista o con el código). El `welcome`, los `members` y el `start` dicen `koth`; sólo toma
+un `hi` con el protocolo 13 (`kKothProto`; esta versión manda 13, que las salas de cuatro también aceptan). Con tres o
+cuatro máquinas, el `start` lleva `koth: true` y cada juego se abre con `--mk9_net_koth=true` (la sesión en
+`netplay-design.md`); con dos es un uno contra uno de siempre. En la sesión, la lista de la sala dice quién pelea, la
+fila y el rey (`SessionInfo`: `koth_seat`, `koth_line`, `koth_king`, `machine_ids`); las placas de la pelea son las de
+los dos que pelean, y el récord cuenta sólo las peleas que jugó cada uno (el rival, el del otro asiento de esa pelea).
+
 ## Fotos de perfil y perfiles (2026-11-11)
 
 Sin servidores nuevos ni nada guardado en el lobby: el lobby sólo reenvía, como los mensajes de una sala.

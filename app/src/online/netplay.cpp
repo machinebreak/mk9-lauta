@@ -168,6 +168,9 @@ REXCVAR_DEFINE_STRING(mk9_net_peers, "", "MK9 Online",
                       "A room's session of three or four machines: every machine's lobby id in the room's order, "
                       "comma-separated (the host's first, empty)");
 REXCVAR_DEFINE_STRING(mk9_net_id, "", "MK9 Online", "mk9_net_peers: this guest's own lobby id in the room");
+REXCVAR_DEFINE_BOOL(mk9_net_koth, false, "MK9 Online",
+                    "A session of three or four machines as King of the Hill: two machines fight (players 1 and 2), "
+                    "the others watch; the winner stays, the loser goes to the end of the line");
 REXCVAR_DEFINE_INT32(mk9_net_mesh, 0, "MK9 Online",
                      "Tests: a session of mk9_net_machines machines over UDP, machine i's datagrams to machine j going "
                      "from port mk9_net_mesh + 8 i + j to port mk9_net_mesh + 8 j + i of mk9_net_mesh_host (0 = off)");
@@ -377,6 +380,26 @@ struct Session {
   int machines = 2;
   int players[kMaxMachines] = {1, 1, 1, 1};
   std::array<Peer, kMaxMachines> peers;  // by machine; this one's own unused
+  // mk9-lauta (2026-11-17): King of the Hill (mk9_net_koth; a spectator: its recording's 'K'). The machines in the
+  // fight's two seats (players 1 and 2: SeatOf), the ones waiting in line, the side that lost the match just decided
+  // (-1: none), the king (the last winner, -1 none yet) and its wins in a row. Changed by the game thread only, at a
+  // lockstep frame's start (the same frame on every machine)
+  bool koth = false;
+  int koth_seat[2] = {0, 1};
+  int koth_line[kMaxMachines] = {};
+  int koth_waiting = 0;
+  int koth_loser = -1;
+  int koth_king = -1, koth_streak = 0;
+  int koth_match_seat[2] = {-1, -1};  // the seats of the match decided last (its result's sides)
+  uint32_t koth_epoch = 0;            // ... and the frame of that epoch from whose start the seats change
+  int64_t koth_at = -1;
+  struct KothChange {
+    uint32_t epoch = 0, frame = 0;
+    int seat[2] = {0, 1};
+    int king = -1, streak = 0;
+  };
+  std::vector<KothChange> watch_koth;  // a spectator's: the recorded ones, in order
+  size_t watch_koth_next = 0;
   std::string room;  // a lobby room's session (else a direct UDP one)
   int player = 0;  // this machine's number: 0 = player 1 (the host), 1 = player 2, ...
   int lockstep_delay = 2, rollback_delay = 1;
@@ -527,6 +550,8 @@ struct Seat {
 };
 Seat SeatOf(uint32_t user) {
   if (user >= 4) return {};
+  // mk9-lauta (2026-11-17): King of the Hill: the two seats' machines fight, the others' pads reach no player
+  if (g.koth) return user < 2 ? Seat{g.koth_seat[user], false} : Seat{};
   if (g.machines == 2) {
     if (user < 2) return {int(user), false};
     return PlayersOf(int(user) - 2) == 2 ? Seat{int(user) - 2, true} : Seat{};
@@ -541,6 +566,92 @@ Seat SeatOf(uint32_t user) {
   return {};
 }
 
+// mk9-lauta (2026-11-17): King of the Hill. A machine's side in the fight (0: player 1, 1: player 2), -1 waiting.
+int KothSide(int machine) {
+  if (!g.koth) return machine;
+  return g.koth_seat[0] == machine ? 0 : g.koth_seat[1] == machine ? 1 : -1;
+}
+
+// The first fight: the host against the first guest, the others in line in the room's order.
+void KothReset() {
+  g.koth_seat[0] = 0;
+  g.koth_seat[1] = 1;
+  g.koth_waiting = 0;
+  for (int m = 2; m < g.machines; ++m) g.koth_line[g.koth_waiting++] = m;
+  g.koth_loser = -1;
+  g.koth_king = -1;
+  g.koth_streak = 0;
+}
+
+void RecordKoth(uint32_t epoch, uint32_t frame);
+
+// The match is decided (the fight's mode over, every frame up to it final: the same on every machine): its loser's
+// side, by the fighters' health; a draw changes nothing. The seats change a second after the fight's mode ended, at
+// that frame's start on every machine (lockstep by then; no machine runs that far ahead of the final frames: at most
+// kMaxPrediction). The game's CONTINUE? after a match is the loser's: the one who takes its place gets it (a REMATCH
+// with that fighter, or SELECT A NEW FIGHTER).
+constexpr int64_t kKothChangeAfter = 60;
+
+void KothDecided(uint8_t* base) {
+  g.koth_epoch = g.epoch;
+  g.koth_at = g.mode_change_at + kKothChangeAfter;
+  if (g.koth_at <= g.frame) {
+    REXLOG_WARN("[koth] frame {} is already past the seats' change ({}): at the next frame instead", g.frame, g.koth_at);
+  }
+  g.koth_match_seat[0] = g.koth_seat[0];
+  g.koth_match_seat[1] = g.koth_seat[1];
+  const float h0 = fight_state::Health(base, 0), h1 = fight_state::Health(base, 1);
+  g.koth_loser = h0 > h1 ? 1 : h1 > h0 ? 0 : -1;
+  REXLOG_INFO("[koth] the match is decided ({:.3f} vs {:.3f}): {}", h0, h1,
+              g.koth_loser < 0 ? "a draw, the same two again"
+                               : fmt::format("player {} (machine {}) won", 2 - g.koth_loser,
+                                             g.koth_seat[1 - g.koth_loser] + 1));
+}
+
+// A second after a decided match (a lockstep frame's start: the same frame on every machine; or the next epoch's first
+// frame, a barrier before it): the loser to the end of the line, the first in line to its side; the winner stays.
+// Recorded ('K') for spectators.
+void KothRotate() {
+  const int side = g.koth_loser;
+  g.koth_loser = -1;
+  const int winner = g.koth_seat[1 - side], loser = g.koth_seat[side];
+  g.koth_streak = winner == g.koth_king ? g.koth_streak + 1 : 1;
+  g.koth_king = winner;
+  if (g.koth_waiting > 0) {
+    g.koth_seat[side] = g.koth_line[0];
+    for (int i = 1; i < g.koth_waiting; ++i) g.koth_line[i - 1] = g.koth_line[i];
+    g.koth_line[g.koth_waiting - 1] = loser;
+  }
+  REXLOG_INFO("[koth] frame {} of epoch {}: machine {} stays ({} in a row), machine {} to the line; now machine {} "
+              "against machine {}",
+              g.frame, g.epoch, winner + 1, g.koth_streak, loser + 1, g.koth_seat[0] + 1, g.koth_seat[1] + 1);
+  RecordKoth(g.epoch, uint32_t(g.frame));
+}
+
+// A spectator: the recorded changes due at this frame's start.
+void KothWatched() {
+  while (g.watch_koth_next < g.watch_koth.size()) {
+    const auto& c = g.watch_koth[g.watch_koth_next];
+    if (c.epoch > g.epoch || (c.epoch == g.epoch && int64_t(c.frame) > g.frame)) return;
+    g.koth_seat[0] = c.seat[0];
+    g.koth_seat[1] = c.seat[1];
+    g.koth_king = c.king;
+    g.koth_streak = c.streak;
+    // the line: the machines in no seat, as the players had them (their order follows the seats' changes)
+    int waiting = 0;
+    for (int i = 0; i < g.koth_waiting; ++i) {
+      if (g.koth_line[i] != c.seat[0] && g.koth_line[i] != c.seat[1]) g.koth_line[waiting++] = g.koth_line[i];
+    }
+    for (int m = 0; m < g.machines; ++m) {
+      bool in = m == c.seat[0] || m == c.seat[1];
+      for (int i = 0; i < waiting; ++i) in = in || g.koth_line[i] == m;
+      if (!in) g.koth_line[waiting++] = m;
+    }
+    g.koth_waiting = waiting;
+    ++g.watch_koth_next;
+  }
+}
+
 // mk9_net_record: the session's final frames, to a file in logs. Records (little-endian):
 //   header   "MK9NET1\0", u32 version (1; from protocol 10 on, + the protocol x 256: a spectator of another release
 //            leaves), u8 player, u32 seed, u8 rollback, u8 lockstep delay, u8 rollback delay
@@ -549,6 +660,9 @@ Seat SeatOf(uint32_t user) {
 //   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
 //   'N'      (mk9-lauta, 2026-11-17: a session of more than two machines, right after the header) u8 machines, then
 //            u8 players at each machine in order
+//   'K'      (mk9-lauta, 2026-11-17: King of the Hill, right after 'N' and at each change) u32 epoch, u32 frame
+//            (the frame from whose start it holds), u8 player 1's machine, u8 player 2's, u8 the king's (255: none yet),
+//            u8 its wins in a row
 //   'H'      (with 'N', in place of 'F' and 'G') u32 frame, each machine's input in order (18 bytes, 30 with two
 //            players), u64 sync hash
 // mk9-lauta (2026-11-11): the replays are off by default (F2 > Online). The game thread never touches the disk: a
@@ -688,6 +802,19 @@ void RecordOpen() {
     RecordValue<uint8_t>(uint8_t(g.machines));
     for (int m = 0; m < g.machines; ++m) RecordValue<uint8_t>(uint8_t(PlayersOf(m)));
   }
+  RecordHandOver();
+  if (g.koth) RecordKoth(0, 0);  // King of the Hill: the first seats
+}
+
+void RecordKoth(uint32_t epoch, uint32_t frame) {
+  if (!g_rec.open && !g_rec.feeding) return;
+  RecordValue<uint8_t>('K');
+  RecordValue<uint32_t>(epoch);
+  RecordValue<uint32_t>(frame);
+  RecordValue<uint8_t>(uint8_t(g.koth_seat[0]));
+  RecordValue<uint8_t>(uint8_t(g.koth_seat[1]));
+  RecordValue<uint8_t>(uint8_t(g.koth_king < 0 ? 255 : g.koth_king));
+  RecordValue<uint8_t>(uint8_t(std::min(g.koth_streak, 255)));
   RecordHandOver();
 }
 
@@ -1594,6 +1721,9 @@ bool ConfigureRoom(const std::string& room, const std::string& role) {
     }
     g.machines = int(ids.size());
     g.player = int(mine - ids.begin());
+    // mk9-lauta (2026-11-17): a room of King of the Hill: two fight, the others watch, the winner stays
+    g.koth = REXCVAR_GET(mk9_net_koth);
+    if (g.koth) KothReset();
     if (g.host) {
       lobby::Host(room, title, listed, true);
     } else {
@@ -1645,6 +1775,8 @@ bool ConfigureMesh(int base) {
   g.machines = std::clamp(REXCVAR_GET(mk9_net_machines), 2, kMaxMachines);
   g.player = std::clamp(REXCVAR_GET(mk9_net_machine), 0, g.machines - 1);
   g.host = g.player == 0;
+  g.koth = REXCVAR_GET(mk9_net_koth) && g.machines > 2;
+  if (g.koth) KothReset();
   const std::string where = REXCVAR_GET(mk9_net_mesh_host);
   for (int m = 0; m < g.machines; ++m) {
     if (m == g.player) continue;
@@ -2480,7 +2612,9 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("[net] the fight's mode ended at frame {}: lockstep from frame {} ({} rollbacks, {} frames run again)",
                 g.mode_change_at, g.frame, g.rollbacks, g.resimulated);
     // mk9-lauta (2026-11-10): the match is decided, the same on both machines: its result for the players' records
-    fight_state::Report(base, g.player);
+    // (King of the Hill: this machine's side in that fight, -1 if it watched; and the loser goes to the line)
+    fight_state::Report(base, KothSide(g.player));
+    if (g.koth) KothDecided(base);
     RecordModeEnd(g.mode_change_at);
     g.rollback = false;
     g.mode_change_at = -1;
@@ -2689,6 +2823,25 @@ void WatchParse() {
       }
       std::memcpy(&frames[frame].hash, at, 8);
       g.watch_read += length;
+    } else if (tag == 'K') {
+      // mk9-lauta (2026-11-17): King of the Hill's seats from a frame on
+      uint8_t r[13];
+      if (!read(g.watch_read, r, sizeof(r))) return;
+      Session::KothChange c;
+      std::memcpy(&c.epoch, r + 1, 4);
+      std::memcpy(&c.frame, r + 5, 4);
+      c.seat[0] = r[9];
+      c.seat[1] = r[10];
+      c.king = r[11] == 255 ? -1 : r[11];
+      c.streak = r[12];
+      if (c.seat[0] >= g.watch_machines || c.seat[1] >= g.watch_machines) return broken("seats", r[9]);
+      if (!g.koth) {
+        g.koth = true;
+        g.machines = g.watch_machines;
+        KothReset();
+      }
+      g.watch_koth.push_back(c);
+      g.watch_read += sizeof(r);
     } else if (tag == 'M') {
       uint8_t r[5];
       if (!read(g.watch_read, r, sizeof(r))) return;
@@ -2951,7 +3104,8 @@ int GameState() { return g_state_any.load(std::memory_order_relaxed); }
 
 int LocalPlayer() {
   if (!g.configured) Configure();
-  return HasLinks() && !g.watching ? g.player : -1;
+  // (King of the Hill: this machine's side in the fight now, -1 while it waits in line)
+  return HasLinks() && !g.watching ? KothSide(g.player) : -1;
 }
 
 bool Active() {
@@ -3007,6 +3161,10 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     REXLOG_INFO("[net] the game's state {} at frame {} of epoch {}", state, g.frame, g.epoch);
     g.game_state.store(state, std::memory_order_relaxed);
   }
+  // mk9-lauta (2026-11-17): King of the Hill: the seats change at their frame's start, the same on every machine (a
+  // spectator follows the recording's 'K')
+  if (g.koth && !g.watching && g.koth_loser >= 0 && (g.epoch > g.koth_epoch || g.frame >= g.koth_at)) KothRotate();
+  if (g.koth && g.watching) KothWatched();
   WatchFrames();
   g_frame_started_us = NowUs();
   if (g.watching) {
@@ -3197,6 +3355,20 @@ SessionInfo Info() {
   }
   info.player = g.player;
   info.machines = g.machines;
+  // mk9-lauta (2026-11-17): King of the Hill's seats and line, and the machines' lobby ids (the room's members)
+  info.koth = g.koth;
+  if (g.koth) {
+    info.koth_seat[0] = g.koth_seat[0];
+    info.koth_seat[1] = g.koth_seat[1];
+    info.koth_line.assign(g.koth_line, g.koth_line + g.koth_waiting);
+    info.koth_king = g.koth_king;
+    info.koth_streak = g.koth_streak;
+    info.koth_match_seat[0] = g.koth_match_seat[0];
+    info.koth_match_seat[1] = g.koth_match_seat[1];
+  }
+  for (int m = 0; m < g.machines; ++m) {
+    info.machine_ids.push_back(m == g.player ? std::string(g.host ? "" : REXCVAR_GET(mk9_net_id)) : g.peers[m].id);
+  }
   info.rtt_ms = RoundTripAverage();
   info.delay = g.delay;
   info.rollback = g.rollback;

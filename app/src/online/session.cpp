@@ -111,7 +111,7 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
         a.rfind(MK9_ARG("--mk9_online_test="), 0) == 0 || a.find(MK9_ARG("online_session")) != Arg::npos ||
         a.rfind(MK9_ARG("--mk9_net_replay"), 0) == 0 || a.rfind(MK9_ARG("--mk9_lobby_by_address"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_peers"), 0) == 0 ||
-        a.rfind(MK9_ARG("--mk9_net_id"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_net_id"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_koth"), 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; }) ||
         std::any_of(dropping.begin(), dropping.end(), [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; })) {
@@ -164,7 +164,7 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
 }  // namespace
 
 void Launch(const std::string& room, bool host, const std::string& name, const std::string& title, bool listed,
-            int players, const std::vector<std::string>& machines, const std::string& id) {
+            int players, const std::vector<std::string>& machines, const std::string& id, bool koth) {
   // a profile made anew: every game starts from the same save (the role's own, so games on one PC do not share it;
   // mk9-lauta 2026-11-17: a guest of a room of more than two, its place's)
   std::string folder = host ? "online_session_host" : "online_session_guest";
@@ -189,6 +189,7 @@ void Launch(const std::string& room, bool host, const std::string& name, const s
     for (size_t i = 0; i < machines.size(); ++i) list += (i ? "," : "") + machines[i];
     options.push_back(MK9_ARG("--mk9_net_peers=") + Wide(list));
     if (!host) options.push_back(MK9_ARG("--mk9_net_id=") + Wide(id));
+    if (koth) options.push_back(MK9_ARG("--mk9_net_koth=true"));  // King of the Hill (netplay.cpp)
   }
   if (host && listed) {
     options.push_back(MK9_ARG("--mk9_net_room_listed=true"));

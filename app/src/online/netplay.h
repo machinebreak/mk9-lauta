@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct PPCContext;
 
@@ -128,6 +129,15 @@ struct SessionInfo {
   int local_players = 1, peer_players = 1;
   // mk9-lauta (2026-11-17): the session's machines (2-4; the connection's numbers are the farthest one's)
   int machines = 2;
+  // mk9-lauta (2026-11-17): King of the Hill (mk9_net_koth): the machines fighting (players 1 and 2), the ones in line
+  // in order, the king (the last match's winner, -1: none yet) and its wins in a row; each machine's lobby id in the
+  // room ("" the host's; the room's members by it)
+  bool koth = false;
+  int koth_seat[2] = {-1, -1};
+  std::vector<int> koth_line;
+  int koth_king = -1, koth_streak = 0;
+  int koth_match_seat[2] = {-1, -1};  // the seats of the match decided last (its result's sides)
+  std::vector<std::string> machine_ids;
 };
 SessionInfo Info();
 // This player leaves the session (any thread): at its next frame boundary, or while it waits for the other player,

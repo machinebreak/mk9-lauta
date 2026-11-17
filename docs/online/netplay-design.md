@@ -1070,6 +1070,19 @@ sala de cuatro está en `lobby.md`. Pruebas: `tools/online/mesh_test.ps1` (de 2 
 `mk9_net_mesh`; `gen_mesh_scripts.py` arma los guiones de los cuatro desde los de 1.1.0) y
 `tools/online/room4_test.ps1` (la sala de cuatro por un lobby local, con ICE entre cada par).
 
+**Rey de la colina** (`mk9_net_koth`, una sesión de tres o cuatro máquinas). Dos asientos (`koth_seat`: los usuarios 0
+y 1 de XInput, jugador 1 y 2) y una fila con las demás: `SeatOf` les da el mando a esas dos, y las entradas de las
+que esperan no llegan a ningún jugador (igual las mandan: la malla y el lockstep son los de siempre, y miran la misma
+pelea en vivo). La primera pelea es la máquina 0 (el host) contra la 1. Cuando la pelea se decide (`Report`, con
+todos los cuadros hasta el fin del modo finales: lo mismo en todas), el que tiene menos vida pierde; un segundo
+después del fin del modo (`mode_change_at + 60`, ya en lockstep, y ninguna máquina va más de `kMaxPrediction`
+adelante de los cuadros finales) cambian los asientos al empezar ese cuadro en todas: el que perdió va al final de la
+fila y el primero de la fila toma su lado; el ganador se queda (el rey, con sus victorias seguidas). El CONTINUAR?
+del juego es del que perdió: le toca al que entra (REVANCHA con ese luchador, o ELEGIR OTRO). La grabación lleva un
+registro `K` (época, cuadro desde el que vale, los dos asientos, el rey y su racha) al empezar y en cada cambio; el
+espectador y los replays cambian los asientos en ese cuadro. Prueba: `tools/online/gen_koth_scripts.py` y
+`mesh_test.ps1 -Machines 3 -Extra "--mk9_net_koth=true"`.
+
 Medido en esta PC (Radeon 760M, cuatro instancias a la vez):
 
 | Prueba | Red | Resultado |

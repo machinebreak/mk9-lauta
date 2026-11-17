@@ -459,11 +459,18 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::SetTooltip("%s", T("Entrás a una sala de 2 contra 2 que esté esperando (o abrís una): juegan cuatro, "
                                 "cada uno desde su PC."));
     }
-    ImGui::Checkbox(T("Sala de 2 contra 2 (cuatro personas)"), &four_room_);
+    if (ImGui::Checkbox(T("Sala de 2 contra 2 (cuatro personas)"), &four_room_) && four_room_) koth_room_ = false;
     ImGui::SameLine();
-    if (ImGui::Button(T("Crear sala pública"))) room::CreateRoom(true, four_room_ ? 4 : 2);
+    // mk9-lauta (2026-11-17): King of the Hill: three or four people, each at a PC; two fight and the others watch
+    if (ImGui::Checkbox(T("Rey de la colina (de 3 a 4 personas)"), &koth_room_) && koth_room_) four_room_ = false;
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s", T("Pelean dos y los demás miran la pelea en vivo. El que gana se queda; el que pierde va "
+                                "al final de la fila y entra el siguiente. Cada uno desde su PC."));
+    }
+    const int capacity = four_room_ || koth_room_ ? 4 : 2;
+    if (ImGui::Button(T("Crear sala pública"))) room::CreateRoom(true, capacity, koth_room_);
     ImGui::SameLine();
-    if (ImGui::Button(T("Crear sala privada"))) room::CreateRoom(false, four_room_ ? 4 : 2);
+    if (ImGui::Button(T("Crear sala privada"))) room::CreateRoom(false, capacity, koth_room_);
     ImGui::Text("%s", T("Unirse con código:"));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(120);
@@ -488,7 +495,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         if (session::IsBlocked(r.host)) continue;  // mk9-lauta: a silenced player's room is not offered
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::Text("%s", r.title.empty() ? r.code.c_str() : r.title.c_str());
+        // (mk9-lauta, 2026-11-17: a room of King of the Hill's mark in the player's language)
+        const bool koth = r.title.rfind(room::kKothTitle, 0) == 0;
+        const std::string title = koth ? std::string(T("Rey de la colina · ")) +
+                                             r.title.substr(std::string_view(room::kKothTitle).size())
+                                       : r.title;
+        ImGui::Text("%s", title.empty() ? r.code.c_str() : title.c_str());
         ImGui::TableNextColumn();
         FlagInline(r.country);
         ImGui::Text("%s", r.host.c_str());
@@ -583,8 +595,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     const std::string theirs =
         avatars::ShowOthers() && !session::IsBlocked(room.other) ? room.other_avatar : std::string();
     if (room.capacity == 4) {
-      // mk9-lauta (2026-11-17): a room of four: everyone in it in its order (the host first), and who is ready
-      ImGui::TextColored(kGrey, T("Sala de 2 contra 2: %d de 4 personas"), People(room));
+      // mk9-lauta (2026-11-17): a room of four: everyone in it in its order (the host first), and who is ready. A room
+      // of King of the Hill in its session: who fights, the king, and the line
+      const netplay::SessionInfo koth_info = room.koth && room.in_session ? netplay::Info() : netplay::SessionInfo{};
+      ImGui::TextColored(kGrey, T(room.koth ? "Rey de la colina: %d de 4 personas" : "Sala de 2 contra 2: %d de 4 personas"),
+                         People(room));
       for (size_t i = 0; i < room.members.size(); ++i) {
         const room::Member& m = room.members[i];
         const std::string hash =
@@ -595,7 +610,22 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::PushID(int(i));
         player(m.me ? room.me : m.name, m.me ? flags::Mine() : m.country, hash, role.c_str(), !m.me, false);
         ImGui::SameLine();
-        ImGui::TextColored(m.ready ? kGreen : kGrey, "%s", T(m.ready ? "listo" : "todavía no está listo"));
+        if (koth_info.koth) {
+          const int machine = MachineOf(koth_info, m.id);
+          const int side = machine < 0 ? -1 : machine == koth_info.koth_seat[0] ? 0 : machine == koth_info.koth_seat[1] ? 1 : -1;
+          std::string place;
+          if (side >= 0) {
+            place = Tf("pelea (jugador {})", side + 1);
+          } else {
+            const auto at = std::find(koth_info.koth_line.begin(), koth_info.koth_line.end(), machine);
+            place = at == koth_info.koth_line.end() ? std::string("-")
+                                                    : Tf("en la fila ({}°)", int(at - koth_info.koth_line.begin()) + 1);
+          }
+          if (machine >= 0 && machine == koth_info.koth_king) place += Tf(" · rey, {} seguidas", koth_info.koth_streak);
+          ImGui::TextColored(side >= 0 ? kGold : kGrey, "%s", place.c_str());
+        } else {
+          ImGui::TextColored(m.ready ? kGreen : kGrey, "%s", T(m.ready ? "listo" : "todavía no está listo"));
+        }
         ImGui::PopID();
       }
     } else if (room.host) {
@@ -614,11 +644,22 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::Text("%s", ConnectionText(info).c_str());
         ImGui::TextColored(kGrey, "%s", T(info.rollback ? "Pelea con rollback" : "Menús en lockstep"));
       }
-      ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
-                                 "pantalla de 2 jugadores. Después cada uno elige su luchador."));
+      if (info.koth) {
+        // mk9-lauta (2026-11-17): King of the Hill: who fights and who waits (the list above)
+        ImGui::TextWrapped("%s", T("Rey de la colina: el jugador 1 lleva los menús hasta VERSUS y el jugador 2 se suma "
+                                   "con START. Los que esperan miran la pelea en vivo. Cuando termina una pelea, el que "
+                                   "perdió va al final de la fila y el siguiente entra en su lugar: le toca el "
+                                   "CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador)."));
+        if (LocalSide(info) < 0) ImGui::TextColored(kGold, "%s", T("Mirás esta pelea: esperá tu turno en la fila."));
+      } else {
+        ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
+                                   "pantalla de 2 jugadores. Después cada uno elige su luchador."));
+      }
       // mk9-lauta (2026-11-13): the game's own versus for three or four (main menu, RB: 3 or 4 JUGADORES); the
       // session's game is another process: the room's my_players starts at 1 there, the session knows
-      if (const int people = info.local_players + info.peer_players; people == 4) {
+      if (const int people = info.local_players + info.peer_players; info.koth) {
+        // (King of the Hill: one against one, the others watch)
+      } else if (people == 4) {
         ImGui::TextWrapped("%s", T("Los cuatro: en el menú principal, RB hasta 4 JUGADORES > MODO VERSUS. En ELIGE TU "
                                    "EQUIPO cada uno mueve su mando a un lado y aprieta A; el relevo es con LB."));
       } else if (people == 3) {
@@ -630,9 +671,11 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     } else if (room.phase == room::Phase::kTogether) {
       // mk9-lauta (2026-11-13): two at this PC (two against two with four players: two at each PC)
       bool two = room.my_players == 2;
-      ImGui::BeginDisabled(room.my_ready);
-      if (ImGui::Checkbox(T("Somos dos en esta PC (dos contra dos de a cuatro)"), &two)) room::SetPlayers(two ? 2 : 1);
-      ImGui::EndDisabled();
+      if (!room.koth) {
+        ImGui::BeginDisabled(room.my_ready);
+        if (ImGui::Checkbox(T("Somos dos en esta PC (dos contra dos de a cuatro)"), &two)) room::SetPlayers(two ? 2 : 1);
+        ImGui::EndDisabled();
+      }
       if (two) {
         ImGui::TextColored(kGrey, "%s", T("El mando 1 es uno y el mando 2 (o el teclado como jugador 2, en F2 > "
                                           "Controles) es el otro. Si en la otra PC también son dos, juegan los "
@@ -649,8 +692,12 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
           ImGui::BeginDisabled(!room.can_start);
           if (ImGui::Button(T("Empezar la pelea"))) room::Start();
           ImGui::EndDisabled();
-          ImGui::TextColored(kGrey, "%s", T("Cuando estén todos listos, empezá la pelea: con cuatro juegan 2 contra 2, "
-                                            "con tres 2 contra 1. El juego arranca de nuevo ya conectado."));
+          ImGui::TextColored(kGrey, "%s",
+                             T(room.koth ? "Cuando estén todos listos, empezá: pelean el host y el primero que entró, y "
+                                           "los demás esperan en la fila mirando. El juego arranca de nuevo ya "
+                                           "conectado."
+                                         : "Cuando estén todos listos, empezá la pelea: con cuatro juegan 2 contra 2, "
+                                           "con tres 2 contra 1. El juego arranca de nuevo ya conectado."));
         } else {
           ImGui::TextColored(kGrey, "%s", T("Cuando estén todos listos, el host empieza la pelea y el juego arranca de "
                                             "nuevo ya conectado."));
@@ -793,6 +840,25 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     return room.other.empty() ? T("el rival") : room.other;
   }
 
+  // mk9-lauta (2026-11-17): King of the Hill. A session's machine by its member's lobby id (-1: none), the member of a
+  // machine, and this machine's side in the fight now (-1: it waits in line).
+  static int MachineOf(const netplay::SessionInfo& info, const std::string& id) {
+    for (size_t i = 0; i < info.machine_ids.size(); ++i) {
+      if (info.machine_ids[i] == id) return int(i);
+    }
+    return -1;
+  }
+  static const room::Member* MemberOfMachine(const room::State& room, const netplay::SessionInfo& info, int machine) {
+    if (machine < 0 || size_t(machine) >= info.machine_ids.size()) return nullptr;
+    for (const room::Member& m : room.members) {
+      if (m.id == info.machine_ids[size_t(machine)]) return &m;
+    }
+    return nullptr;
+  }
+  static int LocalSide(const netplay::SessionInfo& info) {
+    return info.player == info.koth_seat[0] ? 0 : info.player == info.koth_seat[1] ? 1 : -1;
+  }
+
   // The people in a room of four (each machine's players).
   static int People(const room::State& room) {
     int people = 0;
@@ -811,7 +877,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     for (const lobby::Room& r : lobby.rooms) {
       if (r.playing || session::IsBlocked(r.host)) continue;
       const bool four = r.title.rfind(room::kFourTitle, 0) == 0;
-      if (four != (people == 4)) continue;
+      if (four != (people == 4) || r.title.rfind(room::kKothTitle, 0) == 0) continue;  // (King of the Hill: by hand)
       double ms = flags::EstimatedRoundTripMs(flags::Mine(), r.country);
       if (ms <= 0) ms = 200;  // a country not said: as a far one
       if (!best || ms < best_ms - 15 || (std::abs(ms - best_ms) <= 15 && r.since < best->since)) {
@@ -895,10 +961,25 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::Begin("##session_badge", nullptr, flags)) {
       if (info.active) {
         if (mode == "full") {
-          ImGui::Text("vs");
-          ImGui::SameLine();
-          FlagInline(room.other_country);
-          ImGui::Text("%s", Other(room).c_str());
+          // (mk9-lauta, 2026-11-17: King of the Hill: the rival in the fight now, or this player's place in line)
+          std::string who = Other(room), country = room.other_country;
+          const int side = info.koth ? LocalSide(info) : 0;
+          if (info.koth && side >= 0) {
+            if (const room::Member* rival = MemberOfMachine(room, info, info.koth_seat[1 - side])) {
+              who = rival->name;
+              country = rival->country;
+            }
+          }
+          if (side >= 0) {
+            ImGui::Text("vs");
+            ImGui::SameLine();
+            FlagInline(country);
+            ImGui::Text("%s", who.c_str());
+          } else {
+            const auto at = std::find(info.koth_line.begin(), info.koth_line.end(), info.player);
+            ImGui::TextColored(kGold, "%s",
+                               Tf("Mirando · {}° en la fila", int(at - info.koth_line.begin()) + 1).c_str());
+          }
           ImGui::SameLine();
         }
         if (mode != "off") SignalBars(info);
@@ -1053,12 +1134,23 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       const netplay::SessionInfo info = netplay::Info();
       if (!info.active) return;
       // mk9-lauta (2026-11-17): three or four machines play the game's two against two, whose sides the players chose
-      // in its own team screen: no plates (whose they would be is not known here)
-      if (info.machines > 2) return;
+      // in its own team screen: no plates (whose they would be is not known here). King of the Hill: its two seats'
+      if (info.machines > 2 && !info.koth) return;
       select = !info.fight_on && info.game_state == fight_state::kStateSelect;
       if (!info.fight_on && !select) return;
       const std::string mine = avatars::MineHash();
-      if (room.phase == room::Phase::kWatching) {
+      if (info.koth) {
+        for (int side = 0; side < 2; ++side) {
+          const room::Member* m = MemberOfMachine(room, info, info.koth_seat[side]);
+          if (!m) continue;
+          if (m->me) {
+            const stats::Summary own = stats::Totals();
+            plates[side] = {room.me, flags::Mine(), mine, RecordText(own.won, own.lost, own.streak)};
+          } else {
+            plates[side] = {m->name, m->country, m->avatar, RecordText(m->won, m->lost, m->streak)};
+          }
+        }
+      } else if (room.phase == room::Phase::kWatching) {
         plates[0] = {room.p1, room.p1_country, room.p1_avatar, {}};
         plates[1] = {room.p2, room.p2_country, room.p2_avatar, {}};
       } else {
@@ -1222,12 +1314,21 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (!room.in_session) continue;
       // mk9-lauta (2026-11-17): a session of three or four machines is the game's two against two, whose sides the
       // players chose in its own team screen: no side of this machine's here (and a tag match counts no result)
-      const bool sides = netplay::Info().machines == 2 && (r.me == 0 || r.me == 1);
+      // (King of the Hill: a match this machine fought, its rival the other seat's member of that match)
+      const netplay::SessionInfo info = netplay::Info();
+      const bool sides = (info.machines == 2 || info.koth) && (r.me == 0 || r.me == 1);
       const int me = sides ? r.me : 0, them = 1 - me;
+      if (info.koth && !sides) continue;  // a match it watched
       stats::Match m;
       m.at = int64_t(std::time(nullptr));
       m.rival = Other(room);
       m.rival_country = room.other_country;
+      if (info.koth) {
+        if (const room::Member* rival = MemberOfMachine(room, info, info.koth_match_seat[them])) {
+          m.rival = rival->name;
+          m.rival_country = rival->country;
+        }
+      }
       m.mine = sides ? r.characters[me] : std::string();
       m.theirs = sides ? r.characters[them] : std::string();
       if (sides && !r.tag && r.health[me] >= 0 && r.health[them] >= 0 && r.health[me] != r.health[them]) {
@@ -1711,6 +1812,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   int64_t fight_since_ = 0;          // the session's fight began (seconds since 1970; Discord's timer)
   char name_buf_[24] = {}, code_buf_[12] = {}, room_buf_[220] = {}, global_buf_[220] = {};
   bool four_room_ = false;  // mk9-lauta (2026-11-17): the rooms made are of four (two against two)
+  bool koth_room_ = false;  // mk9-lauta (2026-11-17): ... or of King of the Hill
   size_t room_lines_ = 0, global_lines_ = 0, last_seen_lines_ = 0;
   Clock::time_point toast_until_{}, leave_deadline_{}, ended_at_{};
   const Clock::time_point started_ = Clock::now();

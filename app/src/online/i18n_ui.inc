@@ -601,3 +601,44 @@
       {"{} desbaneó a {}", {"{} unbanned {}", "{} desbaniu {}"}},
       {"{} silenció a {} por {} min", {"{} muted {} for {} min", "{} silenciou {} por {} min"}},
       {"Aviso de {}: {}", {"Notice from {}: {}", "Aviso de {}: {}"}},
+
+      // --- King of the Hill (room.cpp, online_ui.cpp)
+      {"Rey de la colina (de 3 a 4 personas)", {"King of the Hill (3 to 4 people)", "Rei da colina (de 3 a 4 pessoas)"}},
+      {"Pelean dos y los demás miran la pelea en vivo. El que gana se queda; el que pierde va al final de la fila y "
+       "entra el siguiente. Cada uno desde su PC.",
+       {"Two fight and the others watch the fight live. The winner stays; the loser goes to the end of the line and the "
+        "next one comes in. Each from their own PC.",
+        "Dois lutam e os outros assistem à luta ao vivo. Quem ganha fica; quem perde vai para o fim da fila e entra o "
+        "próximo. Cada um do seu PC."}},
+      {"Rey de la colina: %d de 4 personas", {"King of the Hill: %d of 4 people", "Rei da colina: %d de 4 pessoas"}},
+      {"pelea (jugador {})", {"fighting (player {})", "lutando (jogador {})"}},
+      {"en la fila ({}°)", {"in line (#{})", "na fila ({}º)"}},
+      {" · rey, {} seguidas", {" · king, {} in a row", " · rei, {} seguidas"}},
+      {"Rey de la colina: el jugador 1 lleva los menús hasta VERSUS y el jugador 2 se suma con START. Los que esperan "
+       "miran la pelea en vivo. Cuando termina una pelea, el que perdió va al final de la fila y el siguiente entra en "
+       "su lugar: le toca el CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador).",
+       {"King of the Hill: player 1 takes the menus to VERSUS and player 2 joins with START. Those waiting watch the "
+        "fight live. When a fight ends, the loser goes to the end of the line and the next one takes their place: the "
+        "CONTINUE? is theirs (REMATCH, or SELECT A NEW FIGHTER to pick their own).",
+        "Rei da colina: o jogador 1 leva os menus até VERSUS e o jogador 2 entra com START. Quem espera assiste à luta "
+        "ao vivo. Quando uma luta termina, quem perdeu vai para o fim da fila e o próximo entra no lugar dele: o "
+        "CONTINUAR? é dele (REVANCHE, ou ESCOLHER OUTRO para escolher seu lutador)."}},
+      {"Mirás esta pelea: esperá tu turno en la fila.",
+       {"You are watching this fight: wait for your turn in line.", "Você está assistindo a esta luta: espere sua vez na fila."}},
+      {"Cuando estén todos listos, empezá: pelean el host y el primero que entró, y los demás esperan en la fila "
+       "mirando. El juego arranca de nuevo ya conectado.",
+       {"When everyone is ready, start: the host and the first one who came in fight, and the others wait in line "
+        "watching. The game starts again already connected.",
+        "Quando todos estiverem prontos, comece: lutam o host e o primeiro que entrou, e os outros esperam na fila "
+        "assistindo. O jogo começa de novo já conectado."}},
+      {"Rey de la colina · ", {"King of the Hill · ", "Rei da colina · "}},
+      {"Esa sala de Rey de la colina ya está completa (o es de otra versión)",
+       {"That King of the Hill room is full (or of another version)",
+        "Essa sala de Rei da colina já está completa (ou é de outra versão)"}},
+      {"Sala pública de Rey de la colina: esperando jugadores (de 3 a 4)",
+       {"Public King of the Hill room: waiting for players (3 to 4)",
+        "Sala pública de Rei da colina: esperando jogadores (de 3 a 4)"}},
+      {"Sala privada de Rey de la colina: pasales el código (de 3 a 4 personas)",
+       {"Private King of the Hill room: give them the code (3 to 4 people)",
+        "Sala privada de Rei da colina: passe o código para eles (de 3 a 4 pessoas)"}},
+      {"Mirando · {}° en la fila", {"Watching · #{} in line", "Assistindo · {}º na fila"}},

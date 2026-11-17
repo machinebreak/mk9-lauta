@@ -75,6 +75,12 @@ en la pelea.
   dos de a dos: en la pelea hay los mismos cuatro luchadores, sólo cambia quién aprieta los botones. Si son tres (dos
   en una PC y uno en la otra), es igual con **3 JUGADORES**: el que queda solo en su equipo elige dos luchadores, como
   en el dos contra dos de a dos.
+- **Rey de la colina** (de tres a cuatro, cada uno en su PC): uno crea la sala con **"Rey de la colina (de 3 a 4
+  personas)"** marcado y los demás entran desde la lista o con el código. Cuando estén todos listos, el host toca
+  **"Empezar la pelea"**: pelean el host y el primero que entró, y los demás miran esa misma pelea en vivo desde su
+  PC. El que gana se queda; el que pierde va al final de la fila y entra el siguiente, que maneja el **CONTINUAR?**
+  del juego (REVANCHA con ese luchador, o ELEGIR OTRO para elegir el suyo). En F1 se ve quién pelea, la fila y cuántas
+  seguidas lleva el rey. Sólo cuentan para tu récord las peleas que jugaste.
 - **Dos contra dos con cuatro PCs** (cada uno en su casa): uno crea la sala con **"Sala de 2 contra 2 (cuatro
   personas)"** marcado (pública, o privada para pasarles el código a los otros tres), o todos tocan **"Partida rápida
   2 contra 2"**, que entra a una sala de 2 contra 2 que esté esperando o abre una. En la sala se ve quién está y quién

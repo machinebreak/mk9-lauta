@@ -18,6 +18,11 @@
 // the session is of that many machines (session.h). A guest's "hi" says the release's session protocol ("proto") and
 // what it looks for ("want": 2 a quick one against one, 4 a quick two against two, 0 anything): a room of four takes
 // only a release that plays it. Its title starts with "2v2 · " (kFourTitle): the quick matches tell it by that.
+//
+// mk9-lauta (2026-11-17): a room of King of the Hill (koth): a room of four's machinery with one person at each PC
+// (three or four). Its session is of every machine (mk9_net_koth): two fight, the others watch the same fight live;
+// the winner stays and the loser goes to the end of the line (netplay.cpp). Its title starts with "KOTH · "
+// (kKothTitle); only this release's session protocol (13) joins it ("koth" in the welcome, the members and the start).
 
 #pragma once
 
@@ -55,6 +60,8 @@ struct Member {
 
 // The title's mark of a room of four (the quick matches tell the rooms by it).
 inline constexpr const char* kFourTitle = "2v2 · ";
+// mk9-lauta (2026-11-17): ... and of a room of King of the Hill.
+inline constexpr const char* kKothTitle = "KOTH · ";
 
 struct State {
   Phase phase = Phase::kNone;
@@ -85,6 +92,7 @@ struct State {
   // the room's order, the host first and this player among them (the host's word; the "other" fields above are the
   // first other one's: in a room of two, the rival)
   int capacity = 2;
+  bool koth = false;  // mk9-lauta (2026-11-17): a room of King of the Hill (capacity 4, one person at each PC)
   std::vector<Member> members;
   bool can_start = false;  // the host of a room of four: everyone in it is ready (the start is its button)
   std::vector<Line> chat;
@@ -92,8 +100,9 @@ struct State {
   uint64_t version = 0;
 };
 
-// capacity (mk9-lauta, 2026-11-17): 2 one against one, 4 two against two.
-void CreateRoom(bool open, int capacity = 2);
+// capacity (mk9-lauta, 2026-11-17): 2 one against one, 4 two against two; koth: a room of King of the Hill (up to four
+// people, one at each PC).
+void CreateRoom(bool open, int capacity = 2, bool koth = false);
 // want (mk9-lauta, 2026-11-17): what a quick match joins it for (2 or 4; 0: anything, from the list or a code).
 void JoinRoom(const std::string& code, int want = 0);
 void QuickMatch();

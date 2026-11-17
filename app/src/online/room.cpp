@@ -28,7 +28,8 @@
 REXCVAR_DEFINE_STRING(mk9_online_test, "", "MK9 Online",
                       "Tests: 'host' opens a public room, 'quick' looks for one; each is ready once the rival is in; "
                       "'watch' watches the first room playing (its Watch button); 'host4' opens a public room of four, "
-                      "'quick4' joins a room of four (or opens one)");
+                      "'quick4' joins a room of four (or opens one); 'hostk' opens a public room of King of the Hill, "
+                      "'joink' joins the first one in the list");
 REXCVAR_DEFINE_INT32(mk9_online_test_players, 1, "MK9 Online",
                      "Tests: with mk9_online_test, the people at this PC the room says before it is ready (2: the "
                      "\"Somos dos en esta PC\" box)");
@@ -57,8 +58,11 @@ constexpr auto kGone = std::chrono::seconds(12);
 constexpr auto kJoinFor = std::chrono::seconds(10);
 constexpr size_t kMaxLines = 100;
 constexpr int kMaxMachines = 4;
-// mk9-lauta (2026-11-17): the session protocol of the releases that play rooms of four (netplay.cpp's 12)
+// mk9-lauta (2026-11-17): the session protocol of the releases that play rooms of four (netplay.cpp's 12), of the
+// ones that play King of the Hill (13), and this release's (said in its hello)
 constexpr int kFourProto = 12;
+constexpr int kKothProto = 13;
+constexpr int kProto = 13;
 
 struct Room {
   std::mutex mutex;
@@ -72,6 +76,7 @@ struct Room {
   std::vector<std::string> session_machines;  // the host in such a session: the guests it welcomes back
   std::unordered_map<std::string, Clock::time_point> heard_from;  // the host of a room of four: each guest's last word
   int want = 0;  // a guest: what it joined for (a quick one against one: 2; a quick two against two: 4)
+  bool start_koth = false;  // mk9-lauta (2026-11-17): the start's session is King of the Hill's (mk9_net_koth)
 };
 Room g;
 
@@ -297,7 +302,7 @@ json MembersMessage() {
                     {"pl", m.players},
                     {"ready", m.ready}});
   }
-  return {{"room", "members"}, {"cap", g.s.capacity}, {"list", std::move(list)}};
+  return {{"room", "members"}, {"cap", g.s.capacity}, {"koth", g.s.koth}, {"list", std::move(list)}};
 }
 
 // The host of a room of four: is it full now, and can its fight start (everyone in it ready, two machines or more).
@@ -338,26 +343,28 @@ void Reset() {
   g.guest_id.clear();
   g.start_pending = false;
   g.start_machines.clear();
+  g.start_koth = false;
   g.heard_from.clear();
   g.want = 0;
   g.s.chat = std::move(keep);
   Touch();
 }
 
-void HostLocked(bool open, int capacity, const std::string& status) {
+void HostLocked(bool open, int capacity, const std::string& status, bool koth = false) {
   Reset();
   g.s.phase = Phase::kHosting;
   g.s.code = NewCode();
   g.s.open = open;
   g.s.host = true;
   g.s.capacity = capacity == 4 ? 4 : 2;
+  g.s.koth = koth && Four();
   g.s.me = MyName();
-  g.s.title = (Four() ? std::string(kFourTitle) : std::string()) + Tf("Sala de {}", g.s.me);
+  g.s.title = std::string(g.s.koth ? kKothTitle : Four() ? kFourTitle : "") + Tf("Sala de {}", g.s.me);
   g.s.status = status;
   g.s.members = {MeNow()};
   lobby::Host(g.s.code, g.s.title, open, false);
   REXLOG_INFO("[room] hosting {} ({}, {})", g.s.code, open ? "open" : "private",
-              Four() ? "two against two, four people" : "one against one");
+              g.s.koth ? "King of the Hill, up to four people" : Four() ? "two against two, four people" : "one against one");
 }
 
 void JoinLocked(const std::string& code, int want) {
@@ -563,10 +570,11 @@ void OnMessageLocked(const json& d) {
           fits = std::find(g.session_machines.begin(), g.session_machines.end(), id) != g.session_machines.end();
         } else if (!fits) {
           fits = (g.s.phase == Phase::kHosting || g.s.phase == Phase::kTogether) && !FullNow() &&
-                 d.value("proto", 0) >= kFourProto && (want == 0 || want == 4);
+                 d.value("proto", 0) >= (g.s.koth ? kKothProto : kFourProto) &&
+                 (want == 0 || (want == 4 && !g.s.koth));
         }
         if (!fits) {
-          lobby::SigToGuest(g.s.code, id, {{"room", "full"}, {"cap", 4}});
+          lobby::SigToGuest(g.s.code, id, {{"room", "full"}, {"cap", 4}, {"koth", g.s.koth}});
           AnnounceFour();  // the lobby's quick match marked it playing when it gave it out
           return;
         }
@@ -589,7 +597,8 @@ void OnMessageLocked(const json& d) {
         if (known->mods != Mods()) TakeMods(d, name);
         g.s.phase = Phase::kTogether;
         g.s.status = Tf("{} de {} personas en la sala", People(), g.s.capacity);
-        lobby::SigToGuest(g.s.code, id, AboutMe({{"room", "welcome"}, {"name", g.s.me}, {"cap", 4}}));
+        lobby::SigToGuest(g.s.code, id,
+                          AboutMe({{"room", "welcome"}, {"name", g.s.me}, {"cap", 4}, {"koth", g.s.koth}}));
         if (!known->avatar.empty() && avatars::ShowOthers() && avatars::Wanted(known->avatar)) {
           lobby::SigToGuest(g.s.code, id, {{"room", "av?"}, {"h", known->avatar}});
         }
@@ -657,7 +666,7 @@ void OnMessageLocked(const json& d) {
         sender->ready = d.value("on", false);
         const int players = d.value("pl", 1) == 2 ? 2 : 1;
         // two at that PC only while the room has the room for it
-        sender->players = players == 2 && People() - sender->players + 2 <= g.s.capacity ? 2 : 1;
+        sender->players = !g.s.koth && players == 2 && People() - sender->players + 2 <= g.s.capacity ? 2 : 1;
         if (sender->ready) notify::Attention(true);
         g.s.status = Tf("{} de {} personas en la sala", People(), g.s.capacity);
         BroadcastMembers();
@@ -721,6 +730,8 @@ void OnMessageLocked(const json& d) {
     }
     if (kind == "welcome" && g.s.phase == Phase::kJoining) {
       g.s.capacity = d.value("cap", 2) == 4 ? 4 : 2;
+      g.s.koth = Four() && d.value("koth", false);
+      if (g.s.koth) g.s.my_players = 1;
       g.s.other = d.value("name", "");
       g.s.other_country = d.value("cc", "");
       g.s.other_won = d.value("won", -1);
@@ -751,6 +762,7 @@ void OnMessageLocked(const json& d) {
     if (kind == "members" && (g.s.phase == Phase::kTogether || g.s.phase == Phase::kStarting)) {
       // mk9-lauta (2026-11-17): a room of four's host says who is in it
       g.s.capacity = 4;
+      g.s.koth = d.value("koth", false);
       std::vector<Member> members;
       const json& list = d.contains("list") && d["list"].is_array() ? d["list"] : json::array();
       for (const json& e : list) {
@@ -786,9 +798,11 @@ void OnMessageLocked(const json& d) {
     }
     if (kind == "full" && g.s.phase == Phase::kJoining) {
       const int cap = d.value("cap", 2);
+      const bool koth = d.value("koth", false);
       Reset();
-      g.s.status = cap == 4 ? T("Esa sala de 2 contra 2 ya está completa (o es de otra versión)")
-                            : T("Esa sala ya tiene dos jugadores");
+      g.s.status = koth       ? T("Esa sala de Rey de la colina ya está completa (o es de otra versión)")
+                   : cap == 4 ? T("Esa sala de 2 contra 2 ya está completa (o es de otra versión)")
+                              : T("Esa sala ya tiene dos jugadores");
       lobby::Join("", "");
       return;
     }
@@ -799,7 +813,9 @@ void OnMessageLocked(const json& d) {
           if (id.is_string() && machines.size() < size_t(kMaxMachines)) machines.push_back(id.get<std::string>());
         }
       }
+      const bool koth = d.value("koth", false) && machines.size() > 2;
       LaunchSoon(300, std::move(machines));
+      g.start_koth = koth;
       return;
     }
   }
@@ -840,9 +856,14 @@ void OnMessageLocked(const json& d) {
 
 }  // namespace
 
-void CreateRoom(bool open, int capacity) {
+void CreateRoom(bool open, int capacity, bool koth) {
   std::lock_guard<std::mutex> lock(g.mutex);
-  if (capacity == 4) {
+  if (koth) {
+    HostLocked(open, 4,
+               T(open ? "Sala pública de Rey de la colina: esperando jugadores (de 3 a 4)"
+                      : "Sala privada de Rey de la colina: pasales el código (de 3 a 4 personas)"),
+               true);
+  } else if (capacity == 4) {
     HostLocked(open, 4,
                T(open ? "Sala pública de 2 contra 2: esperando jugadores"
                       : "Sala privada de 2 contra 2: pasales el código a los otros tres"));
@@ -878,12 +899,16 @@ void Start() {
     UpdateCanStart();
     if (!g.s.can_start) return;
     for (const Member& m : g.s.members) machines.push_back(m.me ? std::string() : m.id);
-    // (two machines: a session of two, as a room of two's)
-    const json start = machines.size() > 2 ? json{{"room", "start"}, {"machines", machines}} : json{{"room", "start"}};
+    // (two machines: a session of two, as a room of two's; King of the Hill with two is one against one)
+    const bool koth = g.s.koth && machines.size() > 2;
+    const json start = machines.size() > 2 ? json{{"room", "start"}, {"machines", machines}, {"koth", koth}}
+                                           : json{{"room", "start"}};
     SendOther(start);
-    REXLOG_INFO("[room] {} starts its fight with {} machines, {} people", g.s.code, machines.size(), People());
+    REXLOG_INFO("[room] {} starts its fight with {} machines, {} people{}", g.s.code, machines.size(), People(),
+                koth ? " (King of the Hill)" : "");
     g.s.can_start = false;
     LaunchSoon(1200, machines.size() > 2 ? machines : std::vector<std::string>{});  // the guests get the start first
+    g.start_koth = koth;
   }
 }
 
@@ -923,7 +948,7 @@ void SetReady(bool ready) {
 void SetPlayers(int players) {
   std::lock_guard<std::mutex> lock(g.mutex);
   if (g.s.phase != Phase::kTogether || g.s.in_session || g.s.my_ready) return;
-  g.s.my_players = players == 2 ? 2 : 1;
+  g.s.my_players = players == 2 && !g.s.koth ? 2 : 1;  // (King of the Hill: one at each PC)
   if (Four() && g.s.host) {
     // the host's own: only while the room has the room for it
     if (People() - (MeMember() ? MeMember()->players : 1) + g.s.my_players > g.s.capacity) g.s.my_players = 1;
@@ -989,6 +1014,7 @@ void EnterSession(const std::string& code, bool host, const std::string& me, con
   g.session_machines = machines;
   if (machines.size() > 2) {
     g.s.capacity = 4;
+    g.s.koth = rex::cvar::GetFlagByName("mk9_net_koth") == "true";  // (netplay.cpp's, from the room's start)
     g.s.members = {MeNow()};
   }
   g.joined_at = Clock::now();
@@ -1022,10 +1048,22 @@ static void TestStep() {
       CreateRoom(true, 4);
       return;
     }
+    if (test == "joink") {
+      // mk9-lauta (2026-11-17): the first room of King of the Hill waiting in the list
+      for (const lobby::Room& r : lobby.rooms) {
+        if (r.playing || r.title.rfind(kKothTitle, 0) != 0) continue;
+        started = true;
+        REXLOG_INFO("[room] mk9_online_test=joink: room {}", r.code);
+        JoinRoom(r.code, 0);
+        return;
+      }
+      return;
+    }
     started = true;
     REXLOG_INFO("[room] mk9_online_test={}", test);
     if (test == "host") CreateRoom(true);
     if (test == "host4") CreateRoom(true, 4);
+    if (test == "hostk") CreateRoom(true, 4, true);
     if (test == "quick") QuickMatch();
     return;
   }
@@ -1063,7 +1101,7 @@ void Pump() {
   }
   bool launch = false;
   std::string code, me, title, my_id;
-  bool host = false, listed = false;
+  bool host = false, listed = false, koth = false;
   int players = 1;
   std::vector<std::string> machines;
   {
@@ -1076,7 +1114,7 @@ void Pump() {
                                             {"name", g.s.me},
                                             {"id", g.guest_id},
                                             {"want", g.want},
-                                            {"proto", kFourProto}}));
+                                            {"proto", kProto}}));
       }
       if (!g.s.in_session && now - g.joined_at > kJoinFor) {
         const std::string code_was = g.s.code;
@@ -1126,11 +1164,12 @@ void Pump() {
       players = g.s.my_players;
       machines = g.start_machines;
       my_id = g.guest_id;
+      koth = g.start_koth;
     }
   }
   if (launch) {
     lobby::Stop();
-    session::Launch(code, host, me, title, listed, players, machines, my_id);
+    session::Launch(code, host, me, title, listed, players, machines, my_id, koth);
   }
   // mk9-lauta (2026-11-10): the session's host passes the match to whoever watches it (feed.h)
   {

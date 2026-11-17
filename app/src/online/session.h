@@ -15,9 +15,10 @@ namespace mk9::session {
 // stays in it while it plays, with its title (spectators find it there: feed.h). mk9-lauta (2026-11-17): a room of more
 // than two machines: every machine's lobby id in the room's order (the host's empty) and this one's (mk9_net_peers,
 // mk9_net_id); empty: a session of two.
+// mk9-lauta (2026-11-17): koth: a room of King of the Hill (three or four machines: two fight, the others watch).
 [[noreturn]] void Launch(const std::string& room, bool host, const std::string& name, const std::string& title,
                          bool listed, int players = 1, const std::vector<std::string>& machines = {},
-                         const std::string& id = "");
+                         const std::string& id = "", bool koth = false);
 // mk9-lauta (2026-11-10): starts the game again watching the room's session (a profile of its own made anew, as the
 // players') and ends this one.
 [[noreturn]] void Watch(const std::string& room, const std::string& name);
