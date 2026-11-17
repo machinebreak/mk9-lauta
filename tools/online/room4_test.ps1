@@ -10,13 +10,19 @@
 #
 # -Mode koth (2026-11-17): a room of King of the Hill instead (mk9_online_test=hostk, the others =joink); its scripts:
 # tools\online\gen_koth_scripts.py's out\f3\koth_p1.txt ...
+# -Logs (2026-11-17): each player's game writes the game's checks, the script functions it starts and (in the game
+# frames of -NativeFrames, "a-b") the script natives to out\f3\room_{checks,scripts,natives}_<n>.txt: through the
+# environment (REX_MK9_*), which the game started again for the session keeps (its command line drops test outputs).
+# tools\online\dev\cmp_checks.py compares two players' checks.
 param(
     [ValidateRange(2, 4)][int]$Players = 4,
     [ValidateSet('four', 'koth')][string]$Mode = 'four',
     [int]$Seconds = 260,
     [string]$Lobby = 'ws://127.0.0.1:8791/lobby?game=mk9pc',
     [string]$Scripts = 'out\f3\mesh4_p1.txt,out\f3\mesh4_p2.txt,out\f3\mesh4_p3.txt,out\f3\mesh4_p4.txt',
-    [string]$Extra = ''
+    [string]$Extra = '',
+    [switch]$Logs,
+    [string]$NativeFrames = ''
 )
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $dir = Join-Path $root 'out\pc'
@@ -39,9 +45,20 @@ function Args-For([int]$n) {
     return ($a -join ' ')
 }
 for ($n = 0; $n -lt $Players; ++$n) {
+    if ($Logs) {
+        $env:REX_MK9_CHECK_LOG = Join-Path $root "out\f3\room_checks_$n.txt"
+        $env:REX_MK9_SCRIPT_LOG = Join-Path $root "out\f3\room_scripts_$n.txt"
+        if ($NativeFrames) {
+            $env:REX_MK9_NATIVE_LOG = Join-Path $root "out\f3\room_natives_$n.txt"
+            $env:REX_MK9_NATIVE_LOG_FRAMES = $NativeFrames
+        }
+    }
     Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Minimized -ArgumentList (Args-For $n) | Out-Null
     # the host's room first in the list; then the others, a moment apart
     Start-Sleep -Seconds $(if ($n -eq 0) { 8 } else { 1 })
+}
+foreach ($name in 'REX_MK9_CHECK_LOG', 'REX_MK9_SCRIPT_LOG', 'REX_MK9_NATIVE_LOG', 'REX_MK9_NATIVE_LOG_FRAMES') {
+    Remove-Item "env:$name" -ErrorAction SilentlyContinue
 }
 Start-Sleep -Seconds $Seconds
 Stop-Games

@@ -208,6 +208,11 @@ REXCVAR_DEFINE_BOOL(mk9_net_settle_luck, true, "MK9 Online",
                     "Test Your Luck's modes: every lockstep frame's boundary at rest (quiesce.h: the render thread "
                     "flushed, the thread pools' work finished), so work in the background ends at the same frame on "
                     "both machines (the VS screen's fighter images before the slot machine's draws)");
+REXCVAR_DEFINE_BOOL(mk9_net_settle_loading, true, "MK9 Online",
+                    "A fight's load in any mode (GS_LOADING_FIGHT): every lockstep frame's boundary at rest, as in Test "
+                    "Your Luck's modes: the VS screen waits for the fighters' images a thread pool decodes at each "
+                    "machine's own pace, and one machine left that wait a frame apart from the others (two frames' "
+                    "checks apart in a room of three, 2026-11-17)");
 REXCVAR_DEFINE_BOOL(mk9_net_light_resim, true, "MK9 Online",
                     "A frame a rollback runs again with both players' inputs already known starts without a snapshot or "
                     "a rest (no rollback can come back to it): rollbacks cost about half (tests: false = every frame "
@@ -2329,6 +2334,13 @@ void SettleForLuck(PPCContext& ctx, uint8_t* base) {
     return;
   }
   if (rest == "full") {
+    quiesce::Settle(ctx, base);
+    quiesce::Release();
+    return;
+  }
+  // mk9-lauta (2026-11-17): a fight's load, in any mode (VERSUS's VS screen too, King of the Hill's): at rest
+  static const bool settle_loading = REXCVAR_GET(mk9_net_settle_loading);
+  if (settle_loading && g.game_state.load(std::memory_order_relaxed) == fight_state::kStateLoadingFight) {
     quiesce::Settle(ctx, base);
     quiesce::Release();
     return;

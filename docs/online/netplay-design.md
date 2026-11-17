@@ -1070,6 +1070,16 @@ sala de cuatro está en `lobby.md`. Pruebas: `tools/online/mesh_test.ps1` (de 2 
 `mk9_net_mesh`; `gen_mesh_scripts.py` arma los guiones de los cuatro desde los de 1.1.0) y
 `tools/online/room4_test.ps1` (la sala de cuatro por un lobby local, con ICE entre cada par).
 
+**La carga de la pelea en reposo, en cualquier modo** (`mk9_net_settle_loading`, 1.4.0). En una sala de tres por el
+lobby local, una de las tres máquinas tuvo el hash distinto en dos cuadros (4348 y 4351 de la época 0, 35 cuadros
+después de empezar la carga: la pantalla VS) y después volvió a coincidir: los chequeos de la carga son lo único que
+entra al hash ahí. Es lo de la pantalla VS de Desafío de suerte (arriba): espera las imágenes de los luchadores, que un
+pool de hilos decodifica al ritmo de cada máquina, y una sale de esa espera un cuadro aparte; en VERSUS no hay sorteo
+después, así que los juegos vuelven a coincidir solos. Ahora cada borde de lockstep mientras carga una pelea
+(`GS_LOADING_FIGHT`) queda en reposo como en Desafío de suerte (`quiesce::Settle`). Pasó una vez en nueve corridas;
+con el arreglo, cinco corridas más sin diferencias. El diagnóstico de los luchadores deja afuera el `+0x79A8` del
+objeto (un float de la carga, 0,1875 aparte entre máquinas con la pelea igual: su única falsa alarma).
+
 **Rey de la colina** (`mk9_net_koth`, una sesión de tres o cuatro máquinas). Dos asientos (`koth_seat`: los usuarios 0
 y 1 de XInput, jugador 1 y 2) y una fila con las demás: `SeatOf` les da el mando a esas dos, y las entradas de las
 que esperan no llegan a ningún jugador (igual las mandan: la malla y el lockstep son los de siempre, y miran la misma
