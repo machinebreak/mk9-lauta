@@ -23,8 +23,11 @@ void Append(const void* data, size_t size);
 constexpr int kMaxWatchers = 4;
 
 // A spectator's word (the room's "watch" message: the lobby's guest id it joined the room with, and the recording's
-// bytes it has; UI thread). false: a new one, and the room has kMaxWatchers already.
-bool Heard(const std::string& id, uint64_t have);
+// bytes it has; UI thread). false: a new one, and the room has kMaxWatchers already. mk9-lauta (2026-11-17): zip, the
+// spectator takes the recording deflated ("z" in its "watch"; 1.4.1 and later): its pieces go as "feed" {at, z, n}, the
+// raw bytes about four times its share (a session's records deflate to about a quarter: catching up four times
+// faster on the same upload).
+bool Heard(const std::string& id, uint64_t have, bool zip = false);
 int Watchers();
 // What each spectator lacks, a little at a time (the room's pump, UI thread); ended: the session is over (once).
 // budget: the recording's bytes a turn (60 ms), the spectators' together: kBudgetMenus (~34 KB/s); mk9-lauta
@@ -35,8 +38,10 @@ constexpr size_t kBudgetMenus = 2048, kBudgetFight = 1536, kBudgetFightSlow = 51
 void Pump(const std::string& room, bool ended, size_t budget = kBudgetMenus);
 
 // --- the spectator ---
-// What came: the bytes at offset `at` of the recording (UI thread), or its end.
+// What came: the bytes at offset `at` of the recording (UI thread), or its end. (mk9-lauta, 2026-11-17: or n bytes
+// deflated, ReceivedZip.)
 void Received(uint64_t at, const std::string& base64);
+void ReceivedZip(uint64_t at, const std::string& base64, uint64_t n);
 void ReceivedEnd();
 // What the game thread reads: false when those bytes have not come yet.
 bool Read(uint64_t at, void* out, size_t size);

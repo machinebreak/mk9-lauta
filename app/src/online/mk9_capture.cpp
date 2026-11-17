@@ -83,6 +83,9 @@ REXCVAR_DEFINE_STRING(mk9_input_record, "", "MK9 Online",
                       "Record every gamepad block the game reads (sub_82A1C550), frame by frame, to this file");
 REXCVAR_DEFINE_STRING(mk9_input_replay, "", "MK9 Online",
                       "Replay a mk9_input_record file: its blocks replace the controllers' frame by frame");
+REXCVAR_DEFINE_BOOL(mk9_skip_logos, false, "MK9",
+                    "The boot's logo movies (WB, NetherRealm: 16 s) skipped: START tapped for player 1 while one plays "
+                    "(F2 > Pantalla e idioma; a game started again from a session always skips them)");
 REXCVAR_DEFINE_STRING(mk9_check_log, "", "MK9 Online",
                       "Write the game's own per-frame sync checks (sub_82A1C5C0: tag and value) to this file, one line "
                       "per frame");
@@ -960,12 +963,31 @@ REX_HOOK_RAW(sub_82A1C5C0) {
   __imp__sub_82A1C5C0(ctx, base);
 }
 
+// mk9-lauta (2026-11-17, issue #10): mk9_skip_logos outside a session: while a boot logo movie plays (the session's
+// own way, netplay.cpp's kBusyMovie: GFullScreenMovie playing) in the first 25 s, player 1's pad taps START every 10
+// frames (X_INPUT_STATE: the packet number, then the gamepad, START 0x0010 in its buttons' low byte; the packet number
+// changed with it, so the game sees a new state).
+void SkipLogosBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user) {
+  static const bool skip = REXCVAR_GET(mk9_skip_logos);
+  if (!skip || user != 0 || tag != 0x00FF0002 || size != 16 || !data) return;
+  const uint64_t frame = mk9::online::CurrentFrame();
+  if (frame >= 1500 || frame % 10 != 0 || mk9::netplay::SessionGame()) return;
+  using mk9::online::GuestPointer;
+  using mk9::online::Load32;
+  const uint32_t movie = Load32(base, 0x834246A8);
+  if (!GuestPointer(movie) || Load32(base, movie + 20) == 0 || Load32(base, 0x834246B4) == 0) return;
+  uint8_t* out = base + data;
+  out[0] ^= 0x80;
+  out[5] |= 0x10;
+}
+
 // The capture interface's block entry: (tag, guest pointer, size, user). The session's inputs and the shared mode
 // seed go in first, then the capture tools see (and record) what the game will read.
 extern "C" REX_FUNC(__imp__sub_82A1C550);
 REX_HOOK_RAW(sub_82A1C550) {
   const uint32_t tag = ctx.r3.u32, data = ctx.r4.u32, size = ctx.r5.u32, user = ctx.r6.u32;
   mk9::netplay::OverrideBlock(base, tag, data, size, user, ctx.r1.u32);
+  SkipLogosBlock(base, tag, data, size, user);
   mk9::seed::OverrideModeSeed(base, tag, data, size);
   mk9::online::CaptureBlock(base, tag, data, size, user);
   __imp__sub_82A1C550(ctx, base);

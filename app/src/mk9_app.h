@@ -34,6 +34,7 @@
 #include "mk9_snapshot.h"
 #include "mk9_hang_watch.h"
 #include "mk9_file_check.h"
+#include "mk9_movie.h"
 #include "mk9_kratos.h"
 #include "mk9_old_nro.h"
 #include "mk9_plugins.h"
@@ -80,6 +81,9 @@ class Mk9App : public rex::ReXApp {
   }
 
   void OnPostInitLogging() override {
+#if MK9_PC
+    if (!mk9::platform::PortableNote().empty()) REXLOG_INFO("[paths] {}", mk9::platform::PortableNote());
+#endif
     // The runtime defaults to no GPU plugin: select ReXGlue's Xenos implementation (stage 3, emulated GPU), keeping
     // an explicit command-line or config-file choice.
     if (!rex::cvar::HasNonDefaultValue("gpu_plugin")) {
@@ -119,6 +123,12 @@ class Mk9App : public rex::ReXApp {
   // repository's assets/game_root. The disc names the executable Default.xex. An explicit path always wins.
   void OnConfigurePaths(rex::PathConfig& paths) override {
 #if MK9_PC
+    // mk9-lauta (2026-11-17, issue #12): portable mode (portable.txt next to the executable), unless a user data folder
+    // was given
+    if (rex::cvar::GetFlagByName("user_data_root").empty()) {
+      mk9::platform::ApplyPortable(paths.user_data_root, paths.cache_root,
+                                   !rex::cvar::GetFlagByName("cache_root").empty());
+    }
     // mk9-lauta (2026-11-09): the folder the installer kept in mk9.toml (read here: the SDK loads mk9.toml later)
     if (paths.game_data_root.empty()) {
       paths.game_data_root = mk9::installer::ConfiguredRoot(paths.config_path);
@@ -179,6 +189,9 @@ class Mk9App : public rex::ReXApp {
     // mk9-lauta: Kratos in these game files (mk9_kratos.h): his DLC folder for the content manager, the port's code
     // changes on; before the file check, which then takes the two files the port changes.
     mk9::kratos::AtStart(game_data_root());
+    // mk9-lauta (2026-11-17, issue #11): the cutscenes' names (Movies\*.wmv opened), for their .bik (mk9_movie.h);
+    // the Switch's file check below puts its own hook in its place, which tells the movies too
+    rex::SetFileOpenedHook(&mk9::movie::NoteOpened);
     // Switch (1.0.1): the game files against the release's list; a bad one is named on screen and the game ends here.
     mk9::file_check::AtStart(game_data_root());
     // The Thorhax intro video, while the game boots behind it (nothing has the window or the audio device yet).

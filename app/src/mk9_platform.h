@@ -50,4 +50,12 @@ inline std::tm LocalTime(std::time_t t) {
 // The program a player starts (Linux: the AppImage's file when the game runs from one, not its mounted inside).
 std::filesystem::path LaunchPath();
 
+// mk9-lauta (2026-11-17, issue #12): portable mode. With a portable.txt next to the executable (and no --user_data_root
+// given), the player's data (the profile's saves, the achievements, the shader cache) goes to a user_data folder
+// beside it instead of Documents\mk9 (Linux: ~/.local/share/mk9). The first time, what the usual folder holds is
+// copied there (not the cache). user_data_root / cache_root: the SDK's choice, changed in place. What it did, for the
+// log once logging is up: PortableNote().
+void ApplyPortable(std::filesystem::path& user_data_root, std::filesystem::path& cache_root, bool cache_given);
+const std::string& PortableNote();
+
 }  // namespace mk9::platform

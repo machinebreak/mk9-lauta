@@ -12,6 +12,7 @@
 // windowed_app_main_switch.cpp's ExitProcess does. mk9_file_check = false turns both off (modified game files).
 
 #include "mk9_file_check.h"
+#include "mk9_movie.h"
 
 #include <rex/cvar.h>
 
@@ -205,6 +206,7 @@ void NoteCrash();
 
 // D:\Asset\Core.xxx (or game:\...) -> Asset/Core.xxx; anything else (saves, UPDATE:, cache) is not a game file.
 void NoteOpened(std::string_view guest_path) {
+  mk9::movie::NoteOpened(guest_path);  // mk9-lauta (2026-11-17, issue #11): the cutscene that starts
   const size_t colon = guest_path.find(":\\");
   if (colon == std::string_view::npos) {
     return;
@@ -344,7 +346,7 @@ void AtStart(const std::filesystem::path& game_root) {
   if (!problems.empty()) {
     ShowAndExit(root, problems);
   }
-  rex::SetFileOpenedHook(&NoteOpened);
+  rex::SetFileOpenedHook(&NoteOpened);  // (mk9-lauta: it tells mk9_movie.cpp too, whose own hook it replaces)
   rex::SetGuestCrashHook(&NoteCrash);
 }
 

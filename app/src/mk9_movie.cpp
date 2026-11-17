@@ -23,23 +23,37 @@
 // Traced on PC (mk9_movie_trace) from the original's calls; the first frame of WBIntroLogo.wmv came out of both
 // decoders with the same Y and U bytes.
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include <fmt/format.h>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
+#include <rex/filesystem/entry.h>
+#include <rex/filesystem/vfs.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/memory/mapped_memory.h>
 #include <rex/ppc.h>
+#include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
+
+#include "mk9_movie.h"
+#include "online/netplay.h"
 
 extern "C" {
 #include "libavcodec/avcodec.h"
@@ -48,6 +62,15 @@ extern "C" {
 REXCVAR_DEFINE_BOOL(mk9_movie_ffmpeg, true, "MK9",
                     "Cutscenes: the WMV video decoded by the host's FFmpeg instead of the game's own decoder")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(mk9_skip_cutscenes, true, "MK9",
+                    "The cutscenes (Movies\\*.wmv: Story Mode's) skipped with START or A, the first time too (F2 > "
+                    "Pantalla e idioma); never in an online session");
+REXCVAR_DEFINE_BOOL(mk9_movie_hq, true, "MK9",
+                    "Cutscenes: a movie's picture from Movies\\<name>.bik when that file is there (the PC version's "
+                    "videos, e.g. the HQ videos mods' PS3 masters): Bink 1, scaled to the game's 1280x720");
+REXCVAR_DEFINE_STRING(mk9_movie_hq_dir, "", "MK9",
+                      "A folder with the cutscenes' .bik files, looked in before the game's Movies folder (empty: "
+                      "only the game's Movies folder)");
 REXCVAR_DEFINE_INT32(mk9_movie_trace, 0, "MK9",
                      "Log this many calls of the cutscene codec's interface (XMV's WMV decoder), each kind")
     .range(0, 100000);
@@ -92,6 +115,299 @@ struct Frame {
   int64_t time_ms = 0;
 };
 
+// ---------------------------------------------------------------------------------------------------------------------
+// mk9-lauta (2026-11-17, issue #11): a cutscene's picture from <name>.bik, the PC version's video of the same movie
+// (the game's Movies folder beside its .wmv, or mk9_movie_hq_dir): the "HQ videos" mods give the PC version the PS3
+// masters (1080p, 60 a second, far less compressed than the 360's 720p WMV). The movie still plays as the game's (its
+// WMV decoded as before: the player's timing and its sound), but each picture shown is the Bink's at the same time
+// from the movie's first picture, scaled to the WMV's size (the game's movie texture: 1280x720; bilinear). Bink 1 (the
+// PC version's; FFmpeg's decoder, built into the SDK's FFmpeg for this), not Bink 2. The file is mapped; each frame
+// begins with its sound (one packet per track: skipped), then the picture. The movie's name: the last Movies\*.wmv the
+// game opened (NoteOpened), a moment before the codec starts.
+//
+// The Bink container (FFmpeg's libavformat/bink.c, little-endian): "BIK" and the revision, the file's size - 8, the
+// frames, the largest frame, ?, width, height, fps numerator, denominator, the video flags (the decoder's 4 bytes of
+// extradata), the sound tracks (then for revision k 4 bytes more; per track 4 bytes of max size, then 2 + 2 of rate and
+// flags, then 4 of id); then each frame's offset (bit 0: a key frame; the first is one), the last ending at the file's
+// end.
+
+uint32_t Le32(const uint8_t* p) {
+  return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+}
+
+struct BinkVideo {
+  std::unique_ptr<rex::memory::MappedMemory> map;
+  const uint8_t* file = nullptr;
+  size_t size = 0;
+  std::string where;
+  uint32_t tag = 0, width = 0, height = 0, fps_num = 0, fps_den = 0, frames = 0, tracks = 0;
+  std::vector<uint32_t> pos;  // each frame's offset, then the file's end
+  std::vector<uint8_t> key;   // each frame: a key frame (decoding can start there)
+  AVCodecContext* av = nullptr;
+  AVFrame* frame = nullptr;
+  AVPacket* packet = nullptr;
+  int64_t decoded = -1;   // the frame whose picture `frame` holds
+  int64_t first_ms = -1;  // the movie's first picture's time: the Bink's frame 0
+  bool picture = false, full_range = false;
+  uint8_t to_studio[2][256] = {};  // full range (revision k) to the WMV's studio range: luma, chroma
+  uint64_t fills = 0, decodes = 0, failures = 0, us = 0, us_decoding = 0;
+
+  ~BinkVideo() {
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    avcodec_free_context(&av);
+  }
+};
+
+// The .bik of the movie `name` (empty: none, or not one this reads: `why`).
+std::unique_ptr<rex::memory::MappedMemory> FindBink(const std::string& name, std::string& where) {
+  const std::string dir = REXCVAR_GET(mk9_movie_hq_dir);
+  if (!dir.empty()) {
+    std::error_code ec;
+    const std::filesystem::path folder = rex::to_path(dir);
+    std::string lower = name + ".bik";
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {  // any case (Linux)
+      std::string file = rex::path_to_utf8(entry.path().filename());
+      std::transform(file.begin(), file.end(), file.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+      if (file != lower) continue;
+      if (auto map = rex::memory::MappedMemory::Open(entry.path(), rex::memory::MappedMemory::Mode::kRead)) {
+        where = rex::path_to_utf8(entry.path());
+        return map;
+      }
+    }
+  }
+  auto* fs = REX_KERNEL_FS();
+  const std::string guest = "game:\\Movies\\" + name + ".bik";
+  if (rex::filesystem::Entry* entry = fs ? fs->ResolvePath(guest) : nullptr) {
+    if (auto map = entry->OpenMapped(rex::memory::MappedMemory::Mode::kRead)) {
+      where = guest;
+      return map;
+    }
+  }
+  return nullptr;
+}
+
+std::unique_ptr<BinkVideo> OpenBink(std::unique_ptr<rex::memory::MappedMemory> map, std::string& why) {
+  auto b = std::make_unique<BinkVideo>();
+  b->file = static_cast<const uint8_t*>(map->data());
+  b->size = map->size();
+  b->map = std::move(map);
+  const uint8_t* p = b->file;
+  if (!p || b->size < 48) {
+    why = "too small";
+    return nullptr;
+  }
+  b->tag = Le32(p);
+  const uint32_t kind = b->tag & 0xFFFFFFu;
+  if (kind == (uint32_t('K') | uint32_t('B') << 8 | uint32_t('2') << 16)) {
+    why = "Bink 2 (only Bink 1 is read)";
+    return nullptr;
+  }
+  if (kind != (uint32_t('B') | uint32_t('I') << 8 | uint32_t('K') << 16)) {
+    why = "not a Bink file";
+    return nullptr;
+  }
+  const uint64_t file_size = uint64_t(Le32(p + 4)) + 8;
+  b->frames = Le32(p + 8);
+  b->width = Le32(p + 20);
+  b->height = Le32(p + 24);
+  b->fps_num = Le32(p + 28);
+  b->fps_den = Le32(p + 32);
+  b->tracks = Le32(p + 40);
+  const char revision = char(b->tag >> 24);
+  if (!b->frames || b->frames > 1000000 || !b->fps_num || !b->fps_den || !b->width || !b->height ||
+      b->width > 4096 || b->height > 4096 || b->tracks > 256) {
+    why = "a header out of range";
+    return nullptr;
+  }
+  if (file_size > b->size) {
+    why = fmt::format("cut short ({} of its {} bytes)", b->size, file_size);
+    return nullptr;
+  }
+  size_t at = 44 + (revision == 'k' ? 4 : 0) + size_t(b->tracks) * 12;
+  if (at + size_t(b->frames) * 4 > b->size) {
+    why = "cut short (its frame index)";
+    return nullptr;
+  }
+  b->pos.resize(size_t(b->frames) + 1);
+  b->key.resize(b->frames);
+  for (uint32_t i = 0; i < b->frames; ++i, at += 4) {
+    const uint32_t v = Le32(p + at);
+    b->pos[i] = v & ~1u;
+    b->key[i] = i == 0 || (v & 1u);
+  }
+  b->pos[b->frames] = uint32_t(file_size);
+  for (uint32_t i = 0; i < b->frames; ++i) {
+    if (b->pos[i + 1] <= b->pos[i] || b->pos[i] < at) {
+      why = fmt::format("a bad frame index (frame {})", i);
+      return nullptr;
+    }
+  }
+  const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_BINKVIDEO);
+  if (!codec) {
+    why = "this build has no Bink decoder";
+    return nullptr;
+  }
+  b->av = avcodec_alloc_context3(codec);
+  b->av->codec_tag = b->tag;  // the decoder takes the revision from its top byte
+  b->av->width = int(b->width);
+  b->av->height = int(b->height);
+  b->av->thread_count = 1;
+  b->av->extradata = static_cast<uint8_t*>(av_mallocz(4 + AV_INPUT_BUFFER_PADDING_SIZE));
+  std::memcpy(b->av->extradata, p + 36, 4);  // the video flags
+  b->av->extradata_size = 4;
+  if (avcodec_open2(b->av, codec, nullptr) < 0) {
+    why = "FFmpeg could not open it";
+    return nullptr;
+  }
+  b->frame = av_frame_alloc();
+  b->packet = av_packet_alloc();
+  b->full_range = revision == 'k';
+  for (int v = 0; v < 256; ++v) {
+    b->to_studio[0][v] = uint8_t(16 + (v * 219 + 127) / 255);
+    b->to_studio[1][v] = uint8_t(128 + ((v - 128) * 224 + (v >= 128 ? 127 : -127)) / 255);
+  }
+  return b;
+}
+
+// Frame i's picture into b.frame (its sound packets first: skipped). The decoder takes one frame after another.
+bool DecodeBink(BinkVideo& b, int64_t i) {
+  b.decoded = i;
+  const uint8_t* f = b.file + b.pos[size_t(i)];
+  size_t left = b.pos[size_t(i) + 1] - b.pos[size_t(i)];
+  for (uint32_t t = 0; t < b.tracks; ++t) {
+    if (left < 4) return false;
+    const uint32_t n = Le32(f);
+    if (n > left - 4) return false;
+    f += 4 + size_t(n);
+    left -= 4 + size_t(n);
+  }
+  if (!left || av_new_packet(b.packet, int(left)) < 0) return false;  // (padded, as FFmpeg's decoders read)
+  std::memcpy(b.packet->data, f, left);
+  b.packet->flags = b.key[size_t(i)] ? AV_PKT_FLAG_KEY : 0;
+  const auto started = std::chrono::steady_clock::now();
+  const int sent = avcodec_send_packet(b.av, b.packet);
+  av_packet_unref(b.packet);
+  b.decodes++;
+  b.picture = sent >= 0 && avcodec_receive_frame(b.av, b.frame) == 0;
+  b.us_decoding += uint64_t(
+      std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+  return b.picture;
+}
+
+// One plane, bilinear (or copied when the sizes match), through `lut` when given.
+void ScalePlane(const uint8_t* src, int stride, int sw, int sh, uint8_t* dst, int dw, int dh, const uint8_t* lut) {
+  if (sw == dw && sh == dh) {
+    for (int y = 0; y < dh; ++y) {
+      const uint8_t* s = src + size_t(y) * size_t(stride);
+      uint8_t* d = dst + size_t(y) * size_t(dw);
+      if (lut) {
+        for (int x = 0; x < dw; ++x) d[x] = lut[s[x]];
+      } else {
+        std::memcpy(d, s, size_t(dw));
+      }
+    }
+    return;
+  }
+  const size_t n = static_cast<size_t>(dw);
+  std::vector<int> x0(n), x1(n), fx(n);
+  for (int x = 0; x < dw; ++x) {
+    const double sx = std::max(0.0, (x + 0.5) * sw / dw - 0.5);
+    const int i = std::min(int(sx), sw - 1);
+    x0[size_t(x)] = i;
+    x1[size_t(x)] = std::min(i + 1, sw - 1);
+    fx[size_t(x)] = std::clamp(int((sx - i) * 256.0 + 0.5), 0, 256);
+  }
+  for (int y = 0; y < dh; ++y) {
+    const double sy = std::max(0.0, (y + 0.5) * sh / dh - 0.5);
+    const int i = std::min(int(sy), sh - 1);
+    const int fy = std::clamp(int((sy - i) * 256.0 + 0.5), 0, 256);
+    const uint8_t* r0 = src + size_t(i) * size_t(stride);
+    const uint8_t* r1 = src + size_t(std::min(i + 1, sh - 1)) * size_t(stride);
+    uint8_t* d = dst + size_t(y) * size_t(dw);
+    for (int x = 0; x < dw; ++x) {
+      const int a = fx[size_t(x)];
+      const int top = r0[x0[size_t(x)]] * (256 - a) + r0[x1[size_t(x)]] * a;
+      const int bottom = r1[x0[size_t(x)]] * (256 - a) + r1[x1[size_t(x)]] * a;
+      const int v = (top * (256 - fy) + bottom * fy + 32768) >> 16;
+      d[x] = lut ? lut[v] : uint8_t(v);
+    }
+  }
+}
+
+// The Bink's picture for the movie's time `time_ms` into `dst` (I420, w x h). False: none (the WMV's goes instead).
+bool FillFromBink(BinkVideo& b, int64_t time_ms, uint8_t* dst, uint32_t w, uint32_t h) {
+  const auto started = std::chrono::steady_clock::now();
+  if (b.first_ms < 0) b.first_ms = time_ms;
+  const int64_t den = int64_t(b.fps_den) * 1000;
+  int64_t target = (std::max<int64_t>(0, time_ms - b.first_ms) * int64_t(b.fps_num) + den / 2) / den;
+  target = std::min<int64_t>(target, int64_t(b.frames) - 1);
+  if (target != b.decoded) {
+    int64_t from = b.decoded + 1;
+    // back, or far ahead: from the key frame at or before it
+    constexpr int64_t kAheadAtMost = 90;
+    if (target < from || target - from > kAheadAtMost) {
+      int64_t k = target;
+      while (k > 0 && !b.key[size_t(k)]) --k;
+      if (target < from || k > from) {
+        avcodec_flush_buffers(b.av);
+        from = k;
+      }
+    }
+    for (int64_t i = from; i <= target; ++i) {
+      if (!DecodeBink(b, i)) b.failures++;
+    }
+  }
+  if (!b.picture) return false;
+  const AVFrame* f = b.frame;
+  const int sw = f->width, sh = f->height;
+  if (sw <= 0 || sh <= 0 || !f->data[0] || !f->data[1] || !f->data[2]) return false;
+  const uint8_t* luma = b.full_range ? b.to_studio[0] : nullptr;
+  const uint8_t* chroma = b.full_range ? b.to_studio[1] : nullptr;
+  const int dw = int(w), dh = int(h);
+  ScalePlane(f->data[0], f->linesize[0], sw, sh, dst, dw, dh, luma);
+  uint8_t* u = dst + size_t(w) * h;
+  uint8_t* v = u + size_t(w / 2) * (h / 2);
+  ScalePlane(f->data[1], f->linesize[1], (sw + 1) / 2, (sh + 1) / 2, u, dw / 2, dh / 2, chroma);
+  ScalePlane(f->data[2], f->linesize[2], (sw + 1) / 2, (sh + 1) / 2, v, dw / 2, dh / 2, chroma);
+  b.fills++;
+  b.us += uint64_t(
+      std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count());
+  return true;
+}
+
+// The movie the game opened last (NoteOpened) and when.
+std::mutex g_name_mutex;
+std::string g_movie_name;
+std::chrono::steady_clock::time_point g_movie_name_at{};
+
+// The Bink for a codec starting now (nullptr: none; logged once a movie). Never in an online session: its movies (the
+// boot logos) are skipped, and the player's timing stays the WMV's alone.
+std::unique_ptr<BinkVideo> BinkForThisMovie(uint32_t table) {
+  if (!REXCVAR_GET(mk9_movie_hq) || mk9::netplay::SessionGame()) return nullptr;
+  std::string name;
+  {
+    std::lock_guard<std::mutex> lock(g_name_mutex);
+    if (g_movie_name.empty() || std::chrono::steady_clock::now() - g_movie_name_at > std::chrono::seconds(30))
+      return nullptr;
+    name = g_movie_name;
+  }
+  std::string where;
+  auto map = FindBink(name, where);
+  if (!map) return nullptr;
+  std::string why;
+  auto b = OpenBink(std::move(map), why);
+  if (!b) {
+    REXLOG_WARN("[movie] {:08X}: {} not used: {}", table, where, why);
+    return nullptr;
+  }
+  b->where = where;
+  REXLOG_INFO("[movie] {:08X}: the picture from {} (Bink {}, {}x{}, {:.2f} a second, {} frames)", table, where,
+              char(b->tag >> 24), b->width, b->height, double(b->fps_num) / b->fps_den, b->frames);
+  return b;
+}
+
 struct Decoder {
   uint32_t player = 0, state = 0;  // the guest state block (the original's layout, for its message handler)
   AVCodecContext* av = nullptr;
@@ -109,6 +425,7 @@ struct Decoder {
   std::priority_queue<int64_t, std::vector<int64_t>, std::greater<int64_t>> times;
   int64_t anchor_ms = 0, since_anchor = 0;
   uint32_t fps = 30;
+  std::unique_ptr<BinkVideo> bink;  // mk9-lauta (2026-11-17, issue #11): the pictures from the PC version's .bik
 
   ~Decoder() {  // the guest state is released by Close
     av_packet_free(&packet);
@@ -196,10 +513,12 @@ void Collect(Decoder& d) {
     }
     f.yuv.resize(d.FrameBytes());
     uint8_t* dst = f.yuv.data();
-    for (int plane = 0; plane < 3; ++plane) {
-      const uint32_t w = plane ? d.width / 2 : d.width, h = plane ? d.height / 2 : d.height;
-      for (uint32_t y = 0; y < h; ++y, dst += w)
-        std::memcpy(dst, d.frame->data[plane] + size_t(y) * d.frame->linesize[plane], w);
+    if (!d.bink || !FillFromBink(*d.bink, f.time_ms, dst, d.width, d.height)) {
+      for (int plane = 0; plane < 3; ++plane) {
+        const uint32_t w = plane ? d.width / 2 : d.width, h = plane ? d.height / 2 : d.height;
+        for (uint32_t y = 0; y < h; ++y, dst += w)
+          std::memcpy(dst, d.frame->data[plane] + size_t(y) * d.frame->linesize[plane], w);
+      }
     }
     d.ready.push_back(std::move(f));
     d.frames_out++;
@@ -329,6 +648,7 @@ REX_HOOK_RAW(sub_82D255C0) {  // Init
   St32(base, table + 32, d->state);
   REXLOG_INFO("[movie] {:08X}: {} {}x{} ({} bytes of private data) decoded by FFmpeg", table, codec->name, width, height,
               extra_n);
+  d->bink = BinkForThisMovie(table);
   if (Trace(n))
     REXLOG_INFO("[movie] Init({:08X} media {:08X} cb {:08X} ctx {:08X} player {:08X}) state {:08X} handle {}", table,
                 media, callback, callback_ctx, player, d->state, Ld32(base, d->state + 4232));
@@ -441,6 +761,13 @@ REX_HOOK_RAW(sub_82D25280) {  // Close
     return;
   }
   REXLOG_INFO("[movie] {:08X}: closed after {} frames in, {} out", table, d->frames_in, d->frames_out);
+  if (d->bink) {
+    const BinkVideo& b = *d->bink;
+    REXLOG_INFO("[movie] {:08X}: {} pictures from the Bink ({} of its frames decoded, {} failed; {:.1f} ms a picture, "
+                "{:.2f} ms a frame decoded)",
+                table, b.fills, b.decodes, b.failures, b.fills ? double(b.us) / 1000.0 / double(b.fills) : 0.0,
+                b.decodes ? double(b.us_decoding) / 1000.0 / double(b.decodes) : 0.0);
+  }
   CallGuest(ctx, base, kPlayerUnregister, {d->player, Ld32(base, d->state + 4232)});
   St32(base, table + 32, d->state);
   CallGuest(ctx, base, kPlayerFree, {d->player, 25, table + 32});  // &p: table+32 holds the state's address
@@ -451,6 +778,77 @@ REX_HOOK_RAW(sub_82D25280) {  // Close
 
 // mk9-lauta (2026-11-10): a movie decoded here is playing (the dynamic resolution and the draw mode's auto leave its
 // windows alone: its frames come at its own 30 a second, sa2_renut_pacing.cpp).
+// mk9-lauta (2026-11-17, issue #12): a cutscene skipped with START or A, the first time too. The movie object
+// (GFullScreenMovie, 0x834246A8; its vtable 0x821605B0) has a tick (its [1], sub_829D02E0) that runs while its +20 is
+// set; with the flag at 0x834246B4 a movie plays, and the tick ends it (sub_829CF4A0(this), the same call when the
+// movie runs out) once its player says it is over, or when a controller presses the buttons of its +24 (a mask of the
+// game's pad bits) -- 0 for every movie the game played on PC (the boot logos and Story Mode's alike; how the game
+// lets a cutscene seen before be skipped was not looked into). Here, after the tick, START or A newly pressed on any of
+// the game's controllers (0x83426F70, 12 of 1540 bytes, sub_829D87D8: +8 its kind, connected with 0xC9; +12 the
+// buttons down, +24 the frame before's; A 0x20, START 0x100) ends the movie the way its own end does: Story Mode goes
+// on as after a cutscene watched to the end. Not in the movie's first second (a press from the screen before), and
+// never in an online session (its frames go alike on every machine). F2's option, read each time.
+namespace {
+
+constexpr uint32_t kMovieOn = 0x834246B4;      // a movie plays (the tick's flag)
+constexpr uint32_t kMovieEnd = 0x829CF4A0;     // (this): the movie's end
+constexpr uint32_t kPads = 0x83426F70, kPadSize = 1540, kPadCount = 12;
+constexpr uint32_t kPadConnected = 0xC9, kPadA = 0x20, kPadStart = 0x100;
+constexpr auto kSkipAfter = std::chrono::seconds(1);
+constexpr auto kSkipIdle = std::chrono::milliseconds(250);  // no tick this long: the next one is another movie's
+
+std::mutex g_skip_mutex;
+bool g_skip_playing = false;
+std::chrono::steady_clock::time_point g_skip_since{}, g_skip_tick{};
+
+}  // namespace
+
+extern "C" REX_FUNC(__imp__sub_829D02E0);
+REX_HOOK_RAW(sub_829D02E0) {  // the movie object's tick
+  const uint32_t self = ctx.r3.u32;
+  __imp__sub_829D02E0(ctx, base);
+  if (!REXCVAR_GET(mk9_skip_cutscenes) || mk9::netplay::SessionGame()) return;
+  const bool playing = Ld32(base, self + 20) != 0 && Ld32(base, kMovieOn) != 0;
+  std::lock_guard<std::mutex> lock(g_skip_mutex);
+  const auto now = std::chrono::steady_clock::now();
+  const bool idle = now - g_skip_tick > kSkipIdle;
+  g_skip_tick = now;
+  if (!playing) {
+    g_skip_playing = false;
+    return;
+  }
+  if (!g_skip_playing || idle) {
+    g_skip_playing = true;
+    g_skip_since = now;
+    return;
+  }
+  if (now - g_skip_since < kSkipAfter) return;
+  for (uint32_t i = 0; i < kPadCount; ++i) {
+    const uint32_t pad = kPads + i * kPadSize;
+    if ((Ld32(base, pad + 8) & kPadConnected) == 0) continue;
+    const uint32_t pressed = Ld32(base, pad + 12) & ~Ld32(base, pad + 24) & (kPadStart | kPadA);
+    if (!pressed) continue;
+    REXLOG_INFO("[movie] the cutscene skipped ({} on controller {})", pressed & kPadStart ? "START" : "A", i);
+    g_skip_playing = false;
+    CallGuest(ctx, base, kMovieEnd, {self});
+    return;
+  }
+}
+
 namespace mk9::movie {
+
+void NoteOpened(std::string_view guest_path) {
+  // ...\<name>.wmv (any case): only the cutscenes are WMV
+  if (guest_path.size() < 5) return;
+  std::string tail(guest_path.substr(guest_path.size() - 4));
+  std::transform(tail.begin(), tail.end(), tail.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  if (tail != ".wmv") return;
+  const size_t slash = guest_path.find_last_of("\\/");
+  const std::string_view name =
+      guest_path.substr(slash == std::string_view::npos ? 0 : slash + 1, std::string_view::npos);
+  std::lock_guard<std::mutex> lock(g_name_mutex);
+  g_movie_name.assign(name.substr(0, name.size() - 4));
+  g_movie_name_at = std::chrono::steady_clock::now();
+}
 bool Playing() { return g_playing.load(std::memory_order_relaxed) != 0; }
 }  // namespace mk9::movie

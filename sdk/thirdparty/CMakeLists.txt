@@ -710,6 +710,9 @@ add_library(libavcodec STATIC
     ${FFMPEG_DIR}/libavcodec/videodsp.c
     ${FFMPEG_DIR}/libavcodec/pixblockdsp.c
     ${FFMPEG_DIR}/libavcodec/startcode.c
+    # mk9-lauta (2026-11-17): Bink video (the PC versions' cutscenes, mk9_movie.cpp); it selects blockdsp and hpeldsp
+    ${FFMPEG_DIR}/libavcodec/bink.c
+    ${FFMPEG_DIR}/libavcodec/binkdsp.c
 )
 
 # Windows-specific source

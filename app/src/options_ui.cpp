@@ -186,6 +186,21 @@ const std::vector<Option>& DisplayOptions() {
        {{"true", "Mostrar"}, {"false", "Ocultar"}},
        "MK9 Online by Lauta y los botones de Discord, WhatsApp, Instagram, Kick, YouTube y X, abajo a la derecha del "
        "menú principal."},
+      // mk9-lauta (2026-11-17, issue #10): the boot logos (mk9_capture.cpp SkipLogosBlock)
+      {"mk9_skip_logos", "Logos al iniciar",
+       {{"false", "Mostrar"}, {"true", "Saltear"}},
+       "Los videos de WB y NetherRealm del arranque (16 s). Al volver de una sesión online se saltean siempre. Se "
+       "aplica al volver a abrir el juego.",
+       true},
+      // mk9-lauta (2026-11-17, issue #11): the cutscenes' pictures from the PC version's .bik (mk9_movie.cpp)
+      {"mk9_movie_hq", "Videos de las cinemáticas",
+       {{"true", "Los .bik si están (HD)"}, {"false", "Los del juego"}},
+       "Si copiaste en la carpeta Movies del juego los .bik de la versión de PC (por ejemplo el mod de videos HQ "
+       "sacados de PS3), las cinemáticas se ven con esos; el sonido sigue siendo el del juego."},
+      // mk9-lauta (2026-11-17, issue #12): the cutscenes skipped (mk9_movie.cpp)
+      {"mk9_skip_cutscenes", "Cinemáticas",
+       {{"true", "Se saltean con START o A"}, {"false", "Como el original"}},
+       "Las del Modo Historia: START o A las saltean, también la primera vez (el original no deja)."},
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},

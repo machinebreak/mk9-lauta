@@ -204,4 +204,41 @@ std::filesystem::path LaunchPath() {
 
 std::filesystem::path ExeDir() { return ExePath().parent_path(); }
 
+namespace {
+std::string g_portable_note;
+}
+
+void ApplyPortable(std::filesystem::path& user_data_root, std::filesystem::path& cache_root, bool cache_given) {
+  std::error_code ec;
+  const std::filesystem::path dir = ExeDir();
+  if (!std::filesystem::is_regular_file(dir / "portable.txt", ec)) return;
+  const std::filesystem::path portable = dir / "user_data";
+  const std::filesystem::path usual = user_data_root;
+  const bool first = !std::filesystem::exists(portable, ec);
+  std::filesystem::create_directories(portable, ec);
+  size_t copied = 0;
+  if (first && !usual.empty() && std::filesystem::is_directory(usual, ec)) {
+    // the progress so far goes along (a copy: the usual folder stays as it was); the cache is made again
+    for (const auto& entry : std::filesystem::directory_iterator(usual, ec)) {
+      if (entry.path().filename() == "cache") continue;
+      std::error_code each;
+      std::filesystem::copy(entry.path(), portable / entry.path().filename(),
+                            std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing,
+                            each);
+      if (!each) ++copied;
+    }
+  }
+  user_data_root = portable;
+  if (!cache_given) cache_root = portable / "cache";
+  const std::u8string where = portable.u8string();
+  std::string made;
+  if (first) {
+    made = copied ? " (made now, " + std::to_string(copied) + " item(s) copied from the usual folder)" : " (made now)";
+  }
+  g_portable_note = std::string("portable mode (portable.txt): the player's data in ") +
+                    std::string(reinterpret_cast<const char*>(where.data()), where.size()) + made;
+}
+
+const std::string& PortableNote() { return g_portable_note; }
+
 }  // namespace mk9::platform

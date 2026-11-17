@@ -56,7 +56,9 @@ picture, and live spectating of other players' matches.
 **The whole game.** Story mode, Ladder and Tag Ladder, two-player Versus on one PC, the Challenge Tower, Training, the
 Krypt and every Komplete Edition fighter. Kratos, the PlayStation 3 release's guest fighter, downloads by himself the
 first time you open the game. In Practice each attack shows its frame data (startup and advantage on hit or on block),
-and in any fight your inputs can show on screen.
+and in any fight your inputs can show on screen. Cutscenes can be skipped with START or A (the first time too), and if
+you copy the PC version's `.bik` videos (for example an HQ videos mod) into the game's Movies folder, they play
+instead.
 
 **Runs on your PC.** Direct3D 12, Vulkan or Direct3D 11 (for old GPUs and drivers), from 480p to 4K. The first start picks a quality preset from your graphics
 card ("Muy baja" to "Ultra"), and dynamic resolution lowers it a little when needed to keep 60 FPS. Integrated graphics
@@ -66,7 +68,8 @@ work too.
 work with vibration and their own button prompts. Everything can be remapped.
 
 **Updates by itself.** When a new version is out, the game says so at start and updates without touching your saves
-or settings.
+or settings. With a `portable.txt` file next to mk9.exe, saves and achievements stay in the game's folder (portable
+mode, as in Xenia).
 
 ## Installing
 

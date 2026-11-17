@@ -13,6 +13,7 @@
 
 #include "mk9_plugins.h"
 #include "online/i18n.h"
+#include "online/online_ui.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
 namespace mk9::overlay_input {
@@ -75,6 +76,7 @@ class ConfirmClose : public renut::gpu::overlay::Dialog {
       ImGui::SameLine();
       if (ImGui::Button(mk9::i18n::T("Cerrar el juego"))) {
         REXLOG_INFO("[overlay] the player closes the game");
+        mk9::online_ui::LeaveBeforeClose();  // in a room or a session: the others hear of it now (issue #10)
         mk9::plugins::Shutdown();  // the close hard-exits: the plugins' rex_mod_shutdown now (mk9_plugins.h)
         g_closing.store(true);
         renut::gpu::overlay::CloseNow();

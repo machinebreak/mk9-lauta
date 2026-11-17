@@ -205,6 +205,18 @@ if(WIN32 OR (UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH))
     target_include_directories(mk9 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/thirdparty/inja/third_party/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/plume")  # the online screens: Renut's overlay header
 endif()
+# miniz (thirdparty/miniz, MIT), without zlib's names: on Linux the Kratos port's .zip unpacked inside the program (Windows'
+# build: tar.exe); mk9-lauta (2026-11-17), every PC build: the spectators' feed deflated (online/feed.cpp). Hidden on
+# Linux (nothing shared with the SDK's libraries).
+if(WIN32 OR (UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH))
+    add_library(mk9_miniz STATIC thirdparty/miniz/miniz.c)
+    target_include_directories(mk9_miniz PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniz")
+    target_compile_definitions(mk9_miniz PUBLIC MINIZ_NO_ZLIB_COMPATIBLE_NAMES MINIZ_NO_ARCHIVE_WRITING_APIS)
+    if(NOT WIN32)
+        target_compile_options(mk9_miniz PRIVATE -fvisibility=hidden)
+    endif()
+    target_link_libraries(mk9 PRIVATE mk9_miniz)
+endif()
 if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX
         _CRT_SECURE_NO_WARNINGS)
@@ -232,14 +244,8 @@ elseif(UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH)
     target_include_directories(mk9_uecc PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/micro-ecc")
     target_compile_definitions(mk9_uecc PUBLIC uECC_SUPPORTS_secp160r1=0 uECC_SUPPORTS_secp192r1=0
         uECC_SUPPORTS_secp224r1=0 uECC_SUPPORTS_secp256k1=0)
-    # the Kratos port's .zip unpacked inside the program (Windows' build: tar.exe): miniz (thirdparty/miniz, MIT),
-    # reading only, without zlib's names and hidden (nothing shared with the SDK's libraries)
-    add_library(mk9_miniz STATIC thirdparty/miniz/miniz.c)
-    target_include_directories(mk9_miniz PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/miniz")
-    target_compile_definitions(mk9_miniz PUBLIC MINIZ_NO_ZLIB_COMPATIBLE_NAMES MINIZ_NO_ARCHIVE_WRITING_APIS
-        MINIZ_NO_DEFLATE_APIS)
-    target_compile_options(mk9_miniz PRIVATE -fvisibility=hidden)
-    target_link_libraries(mk9 PRIVATE mk9_juice mk9_uecc mk9_miniz ${CMAKE_DL_LIBS} Threads::Threads)
+    # (miniz: below, for every PC build)
+    target_link_libraries(mk9 PRIVATE mk9_juice mk9_uecc ${CMAKE_DL_LIBS} Threads::Threads)
 endif()
 # An emulator (Eden, Ryujinx) starts NROs without argv[0]: the SDK then takes the NRO's usual place on the SD for its
 # folder (sdk/src/core/filesystem_posix.cpp, from banjo-nx through sa2-nx). hbloader on the console always passes argv[0].

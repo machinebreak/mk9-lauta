@@ -152,6 +152,30 @@
         "MK9 Online by Lauta e os botões de Discord, WhatsApp, Instagram, Kick, YouTube e X, no canto inferior direito "
         "do menu principal."}},
       {"Idioma del juego", {"Game language", "Idioma do jogo"}},
+      {"Logos al iniciar", {"Startup logos", "Logos ao iniciar"}},
+      {"Cinemáticas", {"Cutscenes", "Cinemáticas"}},
+      {"Videos de las cinemáticas", {"Cutscene videos", "Vídeos das cinemáticas"}},
+      {"Los .bik si están (HD)", {"The .bik files if present (HD)", "Os .bik se existirem (HD)"}},
+      {"Los del juego", {"The game's own", "Os do jogo"}},
+      {"Si copiaste en la carpeta Movies del juego los .bik de la versión de PC (por ejemplo el mod de videos HQ "
+       "sacados de PS3), las cinemáticas se ven con esos; el sonido sigue siendo el del juego.",
+       {"If you copied the PC version's .bik files into the game's Movies folder (e.g. the HQ videos mod taken from "
+        "the PS3), the cutscenes show those; the sound is still the game's.",
+        "Se você copiou os .bik da versão de PC para a pasta Movies do jogo (por exemplo o mod de vídeos HQ tirados "
+        "do PS3), as cinemáticas usam esses; o som continua sendo o do jogo."}},
+      {"Se saltean con START o A", {"Skipped with START or A", "Pular com START ou A"}},
+      {"Como el original", {"As the original", "Como o original"}},
+      {"Las del Modo Historia: START o A las saltean, también la primera vez (el original no deja).",
+       {"Story Mode's: START or A skips them, the first time too (the original does not let you).",
+        "As do Modo História: START ou A as pulam, também da primeira vez (o original não deixa)."}},
+      {"Saltear", {"Skip", "Pular"}},
+      {"Los videos de WB y NetherRealm del arranque (16 s). Al volver de una sesión online se saltean siempre. Se "
+       "aplica al volver a abrir el juego.",
+       {"The WB and NetherRealm videos at startup (16 s). Coming back from an online session they are always "
+        "skipped. Applies when the game is opened again.",
+        "Os vídeos da WB e da NetherRealm na abertura (16 s). Ao voltar de uma sessão online são sempre pulados. "
+        "Vale ao abrir o jogo de novo."}},
+      {"Salir de la sesión ahora", {"Leave the session now", "Sair da sessão agora"}},
       {"Los textos del juego y de estas ventanas (estas cambian al momento; el juego, al volver a abrirlo). Si no "
        "elegís uno, es el idioma de tu PC. En español el Modo Historia está doblado.",
        {"The texts of the game and of these windows (these change at once; the game, when it is opened again). Unless "

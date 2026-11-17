@@ -916,7 +916,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::SetNextWindowBgAlpha(0.85f);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoInputs;
+                                   ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("##peer_silent", nullptr, flags)) {
       ImGui::PushFont(renut::gpu::overlay::TitleFont(), 28.0f);
       ImGui::TextColored(kGold, T("Sin noticias de %s"), Other(room).c_str());
@@ -924,6 +924,9 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       const int left = std::max(0, int(info.timeout_s - info.silent_s + 0.5));
       ImGui::Text(T("Si no vuelve, la sesión termina en %d s."), left);
       ImGui::TextColored(kGrey, "%s", T("Puede ser su conexión o la tuya: el juego sigue en cuanto llegue."));
+      // mk9-lauta (2026-11-17, issue #10): no need to wait for the end: out now (the room's goodbye goes through the
+      // lobby, and the game starts again even while this one waits for the others' inputs)
+      if (ImGui::Button(T("Salir de la sesión ahora"))) LeaveSession();
     }
     ImGui::End();
   }
@@ -1712,8 +1715,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
 
   // The session is over: why, and back to the lobby (by itself after a few seconds).
   void DrawSessionEnd(const room::State& room, const netplay::SessionInfo& info) {
-    if (ended_at_ == Clock::time_point{}) ended_at_ = Clock::now();
-    constexpr int kBackAfterS = 10;
+    const bool first = ended_at_ == Clock::time_point{};
+    if (first) ended_at_ = Clock::now();
+    // (mk9-lauta, 2026-11-17, issue #10: 6 s, and the button in the controller's focus, A goes back at once)
+    constexpr int kBackAfterS = 6;
     const int left = kBackAfterS - int(std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - ended_at_).count());
     if (left <= 0) {
       LeaveSession();
@@ -1760,6 +1765,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     ImGui::SetNextWindowBgAlpha(0.85f);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove;
+    if (first) ImGui::SetNextWindowFocus();
     if (ImGui::Begin("##session_end", nullptr, flags)) {
       ImGui::PushFont(renut::gpu::overlay::TitleFont(), 36.0f);
       ImGui::TextColored(kGold, "%s", T("Fin de la sesión"));
@@ -1771,6 +1777,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       ImGui::TextColored(kGrey, T("Volvés al lobby en %d s."), left);
       ImGui::Spacing();
       if (ImGui::Button(T("Volver al lobby ahora"), ImVec2(260, 0))) LeaveSession();
+      ImGui::SetItemDefaultFocus();
       if (!info.desync_report.empty()) {
         ImGui::SameLine();
         if (ImGui::Button(T("Abrir el reporte del desync"), ImVec2(260, 0))) updater::Open(info.desync_report);
@@ -1833,6 +1840,16 @@ void Install() {
 
 void UseName(const std::string& name) {
   if (g_window) g_window->UseName(name);
+}
+
+void LeaveBeforeClose() {
+  const room::State room = room::Snapshot();
+  if (room.phase == room::Phase::kNone) return;
+  REXLOG_INFO("[online] the game closes in room {}{}: the goodbye goes out first", room.code,
+              room.in_session ? " (a session)" : "");
+  room::Leave();
+  if (room.in_session) netplay::Leave();
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));  // the lobby's thread sends it
 }
 
 }  // namespace mk9::online_ui

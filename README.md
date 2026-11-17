@@ -55,7 +55,9 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 **El juego completo.** El modo Historia (doblado al español), Torneo y Torneo por equipos, Versus de a dos en la misma
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
 versión de PlayStation 3, se descarga solo la primera vez que abrís el juego. En Práctica, cada golpe muestra su frame
-data (arranque y ventaja al golpear o al bloquear), y en cualquier pelea podés ver tus entradas en pantalla.
+data (arranque y ventaja al golpear o al bloquear), y en cualquier pelea podés ver tus entradas en pantalla. Las
+cinemáticas se saltean con START o A (también la primera vez), y si copiás los videos `.bik` de la versión de PC (por
+ejemplo un mod de videos HQ) en la carpeta Movies del juego, se ven con esos.
 
 **Anda en tu PC.** DirectX 12, Vulkan o DirectX 11 (para placas y drivers viejos), de 480p a 4K. La primera vez elige la calidad según tu placa de video (de "Muy
 baja" a "Ultra"), y la resolución dinámica la baja un poco cuando hace falta para no perder los 60 FPS. También
@@ -65,7 +67,8 @@ funciona con gráficos integrados.
 con vibración y sus propios botones en pantalla. Todo se puede reasignar.
 
 **Se actualiza solo.** Cuando sale una versión nueva, el juego te avisa al abrirse y se actualiza sin tocar tus
-partidas guardadas ni tus opciones.
+partidas guardadas ni tus opciones. Con un archivo `portable.txt` al lado de mk9.exe, las partidas y los logros quedan
+en la carpeta del juego (modo portable, como en Xenia).
 
 <p align="center">
   <img src="docs/assets/menu.jpg" alt="Menú principal con el logo de MK9 by Lauta y los botones de las redes" width="49%">

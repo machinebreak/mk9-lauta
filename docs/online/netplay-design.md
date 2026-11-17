@@ -580,6 +580,18 @@ jugadores acordaron, una vez que su FMOD también los tiene.
   uno, 3 para cuatro), máximo 4 por sala; el que deja de pedir se quita a los 20 s, y una pieza perdida (un enlace al
   lobby que se cayó) se reenvía desde lo que el espectador dice tener. La grabación que llega se lee en orden o se
   corta (un número fuera de orden dimensionaría los vectores).
+- **Comprimida** (1.4.1, issue #10 "a veces tarda muchísimo en sincronizar"): el espectador que la acepta lo dice en
+  su "watch" (`"z": 1`) y el host le manda piezas deflate (miniz, ya en el juego para el .zip de Kratos) de hasta 32 KB
+  de grabación: `feed` `{at, n, z}` (`n` los bytes de la grabación, `z` en base64). La grabación se comprime unas 4
+  veces (4,1-4,3 medido), así que con la misma parte del ancho de banda llegan unas cuatro veces más cuadros: cada
+  espectador junta su parte por turno como crédito (hasta 8 turnos) y una pieza sale cuando hay crédito y gasta lo que
+  ocupó comprimida. Una pieza que no se achica va como antes (`data`). Compatible para los dos lados: un host 1.4.0
+  no conoce "z" y manda sin comprimir; a un espectador 1.4.0 (sin "z") se le manda sin comprimir. Si una pieza no se
+  descomprime, el próximo "watch" la pide de nuevo desde lo que el espectador tiene. Con el lobby local
+  (`two_watchers.ps1`, el tarde entra a los 90 s) el espectador tardío alcanzó el vivo en 37 s contra 39-42 s antes,
+  sin cuadros distintos: ahí la red local no era el límite, sino correr la partida (~190 cuadros por segundo en los
+  menús, ~420 en las peleas) y las cargas, que van al ritmo de los jugadores. Lo comprimido se nota cuando la subida
+  del host es la que limita (varios espectadores, conexiones lentas).
 - **Probado** en una PC con el lobby local: en vivo desde el primer cuadro, entrando 50 s tarde (3538 cuadros
   alcanzados en 18 s) y entrando por el botón Mirar de la lista; con peleas reales de 277 y 566 rollbacks (40 ms + 10
   de variación emulados), cero cuadros con hash distinto al de los jugadores.

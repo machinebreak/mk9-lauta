@@ -49,3 +49,7 @@
 #define CONFIG_FDCTDSP 1
 #undef CONFIG_WMV2DSP
 #define CONFIG_WMV2DSP 1
+/* mk9-lauta (2026-11-17): the Bink video decoder (bink_decoder_select = "blockdsp hpeldsp", both on above): a game's
+ * cutscene shown from the PC version's .bik (mk9-lauta's mk9_movie.cpp). */
+#undef CONFIG_BINK_DECODER
+#define CONFIG_BINK_DECODER 1

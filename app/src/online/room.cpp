@@ -511,7 +511,8 @@ void OnMessageLocked(const json& d) {
       const std::string id = d.value("id", "");
       if (id.empty() || !g.s.in_session) return;
       // a player this one silenced does not watch either (session.h, IsBlocked)
-      if (session::IsBlocked(d.value("name", "")) || !feed::Heard(id, d.value("have", uint64_t(0)))) {
+      if (session::IsBlocked(d.value("name", "")) ||
+          !feed::Heard(id, d.value("have", uint64_t(0)), d.value("z", 0) == 1)) {
         lobby::SigToGuest(g.s.code, id, {{"room", "watch_full"}});
         return;
       }
@@ -711,7 +712,12 @@ void OnMessageLocked(const json& d) {
           }
         }
       } else if (kind == "feed") {
-        feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
+        // (mk9-lauta, 2026-11-17: a deflated piece, "z" with its raw size "n")
+        if (d.contains("z")) {
+          feed::ReceivedZip(d.value("at", uint64_t(0)), d.value("z", ""), d.value("n", uint64_t(0)));
+        } else {
+          feed::Received(d.value("at", uint64_t(0)), d.value("data", ""));
+        }
       } else if (kind == "av") {
         TakePicture(d, {g.s.p1_avatar, g.s.p2_avatar});
       } else if (kind == "feed_end") {
@@ -1130,7 +1136,8 @@ void Pump() {
                                     {"id", g.guest_id},
                                     {"name", g.s.me},
                                     {"have", feed::Size()},
-                                    {"mods", Mods()}});
+                                    {"mods", Mods()},
+                                    {"z", 1}});  // (mk9-lauta, 2026-11-17: it takes the recording deflated)
       }
     } else if (g.s.phase == Phase::kTogether) {
       if (now - g.said > kPingEvery) {

@@ -112,6 +112,7 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
         a.rfind(MK9_ARG("--mk9_net_replay"), 0) == 0 || a.rfind(MK9_ARG("--mk9_lobby_by_address"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_peers"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_net_id"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_koth"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_skip_logos"), 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; }) ||
         std::any_of(dropping.begin(), dropping.end(), [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; })) {
@@ -226,6 +227,7 @@ void Replay(const std::string& path) {
 void Back() {
   std::vector<Arg> options = OwnOptions();
   options.push_back(MK9_ARG("--mk9_online_show=true"));  // the lobby's screens open again
+  options.push_back(MK9_ARG("--mk9_skip_logos=true"));   // (issue #10) straight to the menus: no boot logos
   const std::string name = REXCVAR_GET(mk9_online_name);
   if (!name.empty()) options.push_back(MK9_ARG("--mk9_online_name=") + Wide(name));  // the same name (two tests on one PC)
   Start(options, "back from the room");

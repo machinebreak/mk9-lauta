@@ -131,7 +131,9 @@ vivo. Para salir: F1, "Dejar de mirar". Cada sala admite hasta 4 espectadores.
 
 Si la sesión ya lleva mucho tiempo, alcanzar el vivo tarda unos minutos (se juega todo desde el principio, más
 rápido): mientras tanto la imagen avanza a saltos y el cartel dice cuánta partida falta y cuánto tarda más o menos. La
-lista de salas muestra hace cuánto está abierta cada una.
+lista de salas muestra hace cuánto está abierta cada una. Desde la 1.4.1 la partida le llega al espectador comprimida
+(unas cuatro veces menos datos), así que con la conexión del anfitrión justa o varios espectadores se pone al día
+antes.
 
 ## Replays
 
@@ -145,8 +147,13 @@ sonido. Al terminar, "Volver al lobby". Un replay de otra versión de mk9-lauta 
 ## Salir
 
 - F1, pestaña **Sala**, "Terminar la sesión y volver al lobby".
-- Si tu rival se va o se corta la conexión, el juego te avisa y vuelve solo al lobby en 10 segundos.
-- Cerrar la ventana (la X o Alt+F4) pregunta antes: "Seguir jugando" o "Cerrar el juego".
+- Si tu rival se va o se corta la conexión, el juego te avisa y vuelve solo al lobby en 6 segundos; **"Volver al lobby
+  ahora"** (o A en el mando) vuelve al toque.
+- Si el otro deja de responder, el cartel **"Sin noticias de…"** tiene **"Salir de la sesión ahora"**: no hace falta
+  esperar a que la sesión termine sola.
+- Cerrar la ventana (la X o Alt+F4) pregunta antes: "Seguir jugando" o "Cerrar el juego". Si cerrás en una sala o en
+  una sesión, los demás se enteran al momento (no se quedan esperando).
+- Al volver al lobby el juego se abre de nuevo sin los logos de WB y NetherRealm.
 
 ## Controles
 
@@ -209,6 +216,10 @@ al volver a abrir el juego.
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K y sigue la escala de Windows, por ejemplo 150 % en una
   notebook). En un monitor ultrapanorámico (21:9) el juego se ve en 16:9 con barras a los costados, como en la consola.
+  Y las cinemáticas: **Logos al iniciar** (Saltear quita los videos de WB y NetherRealm del arranque; vale al volver a
+  abrir el juego), **Cinemáticas** (con "Se saltean con START o A", las del Modo Historia se pueden saltear también
+  la primera vez, cosa que el juego original no deja) y **Videos de las cinemáticas** (los .bik de la versión de PC si
+  los copiaste, ver abajo).
 - **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones. Abajo,
   **Botones en el online**: qué botón de tu mando hace cada golpe en tus peleas online. Cada partida online arranca
   con los botones de fábrica (así las dos PC juegan igual) aunque los hayas cambiado en OPCIONES > MANDO; lo que elijas
@@ -241,12 +252,28 @@ las dos Fatalities, Babality, los dos trajes y su sonido. No tenés que hacer na
 Para jugar online, los dos tienen que tener a Kratos (o ninguno de los dos): si a tu rival todavía no le terminó la
 descarga, la sala lo avisa y la pelea no arranca hasta que reinicie el juego. Lo mismo para mirar una partida.
 
+## Videos HQ de las cinemáticas
+
+Las cinemáticas de la Xbox 360 son videos 720p muy comprimidos. La versión de PC del juego (Komplete Edition) usa
+videos Bink (.bik) con los mismos nombres, y hay mods que traen los de PS3 en mejor calidad (por ejemplo "HQ videos"
+en Nexus Mods). Si copiás esos `.bik` en la carpeta **Movies** de los archivos del juego (`game_root\Movies`, al lado
+de los `.wmv`), las cinemáticas se ven con ellos: el juego los escala a 720p, que es el tamaño con el que dibuja los
+videos, y el sonido sigue siendo el del juego. Sólo sirven los Bink de la versión de PC (Bink 1); un `.bik` que no se
+puede leer se ignora y se ve el video original. Para volver a los originales sin borrar nada: **F2 > Pantalla e idioma
+> Videos de las cinemáticas > Los del juego**. mk9-lauta no trae ni descarga esos videos.
+
 ## Partidas guardadas
 
 No hace falta ningún perfil ni cuenta de Xbox: el juego guarda solo tu progreso (Historia, Torre de los retos, la
 Kripta, tus opciones), juegues con el teclado o con cualquier mando, y nunca te pide "iniciar sesión". Las partidas
-quedan en tu PC (en Windows, en Documentos\mk9). En las sesiones online no se guarda nada de la pelea: tu partida
-queda como estaba.
+quedan en tu PC (en Windows, en Documentos\mk9; en Linux, en ~/.local/share/mk9). En las sesiones online no se guarda
+nada de la pelea: tu partida queda como estaba.
+
+**Modo portable**: para tener todo en la carpeta del juego (por ejemplo en un pendrive), creá un archivo vacío
+`portable.txt` al lado de mk9.exe. Desde ahí el progreso, los logros y el caché de shaders van a la carpeta
+`user_data`, al lado del juego. La primera vez se copia ahí lo que ya tenías en Documentos\mk9 (el caché no: se
+vuelve a armar jugando). Si borrás `portable.txt` vuelve a usar Documentos\mk9; lo que jugaste en modo portable queda
+en `user_data` y no se copia de vuelta.
 
 ## Actualizaciones
 
