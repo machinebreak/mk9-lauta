@@ -386,7 +386,9 @@ namespace plume {
         SPIRV,
         METAL,
         // banjo-nx (2026-10-17): plume_deko3d's GLSL for uam (Deko3DShaderBlob), the Switch's deko3d back end.
-        DEKO3D
+        DEKO3D,
+        // mk9-lauta (2026-11-16): shader model 5.0 bytecode (FXC), plume_d3d11's.
+        DXBC
     };
 
     enum class RenderRaytracingPipelineLibrarySymbolType {

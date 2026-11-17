@@ -81,6 +81,8 @@ elseif(WIN32)
     list(APPEND PLUME_SOURCES
         plume_d3d12.cpp
         plume_d3d12.h
+        plume_d3d11.cpp
+        plume_d3d11.h
         ${CMAKE_CURRENT_SOURCE_DIR}/contrib/D3D12MemoryAllocator/src/D3D12MemAlloc.cpp
     )
 endif()
@@ -102,6 +104,8 @@ if(WIN32)
     target_include_directories(plume PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/contrib/D3D12MemoryAllocator/include
     )
+    # mk9-lauta (2026-11-16): the Direct3D 11 back end (plume_d3d11.cpp)
+    target_link_libraries(plume PUBLIC d3d11 dxgi)
 endif()
 
 if(PLUME_SDL_VULKAN_ENABLED)
