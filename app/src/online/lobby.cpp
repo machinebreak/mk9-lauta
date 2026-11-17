@@ -1,6 +1,7 @@
 // MK9 online: the lobby (lobby.h).
 
 #include "online/lobby.h"
+#include "online/i18n.h"
 #include "online/profiles.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +27,7 @@
 #include <mutex>
 #include <thread>
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -986,12 +988,14 @@ class Client {
   }
 
   // A line of the lobby's own, in the chat's words.
+  // (mk9-lauta, 2026-11-17: in the player's language, i18n.h)
   static std::string SystemText(const json& m) {
     const std::string kind = Str(m, "kind"), by = Str(m, "by"), name = Str(m, "name");
-    if (kind == "ban") return by + " baneó a " + name;
-    if (kind == "unban") return by + " desbaneó a " + name;
-    if (kind == "timeout") return by + " silenció a " + name + " por " + std::to_string(Int(m, "minutes")) + " min";
-    if (kind == "notice") return "Aviso de " + by + ": " + Str(m, "text");
+    const auto tf = [](const char* es, const auto&... args) { return fmt::format(fmt::runtime(i18n::T(es)), args...); };
+    if (kind == "ban") return tf("{} baneó a {}", by, name);
+    if (kind == "unban") return tf("{} desbaneó a {}", by, name);
+    if (kind == "timeout") return tf("{} silenció a {} por {} min", by, name, Int(m, "minutes"));
+    if (kind == "notice") return tf("Aviso de {}: {}", by, Str(m, "text"));
     return Str(m, "text");
   }
 

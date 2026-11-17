@@ -77,7 +77,9 @@ partidas guardadas ni tus opciones.
 2. **Descomprimilo** donde quieras, en un disco con unos 8 GB libres (mejor no adentro de "Archivos de programa").
 3. **Abrí `mk9.exe`** y elegí la imagen `.iso` de tu juego, o la carpeta donde ya lo tenés extraído. Se revisa que sea
    la versión correcta y se copian los archivos que usa el juego. Esto pasa una sola vez: después arranca directo.
-4. **A jugar.** **F1** abre el online y **F2** las opciones (con mando: **BACK + Y** y **BACK + START**).
+4. **A jugar.** **F1** abre el online y **F2** las opciones (con mando: **BACK + Y** y **BACK + START**). El juego
+   arranca en el idioma de tu PC (español, inglés, portugués, francés, alemán o italiano; cualquier otro, en inglés), y
+   también el instalador, F1 y F2 (en español, inglés o portugués). Se cambia en los primeros pasos o en F2.
 
 > [!NOTE]
 > Como el programa no tiene firma digital, Windows puede mostrar "Windows protegió tu PC": tocá **Más información** y

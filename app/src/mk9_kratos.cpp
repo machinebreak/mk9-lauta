@@ -238,6 +238,7 @@ REX_HOOK_RAW(sub_826B2710) {
 #include <fmt/format.h>
 
 #include "mk9_updater.h"
+#include "online/i18n.h"
 
 namespace mk9::kratos {
 namespace {
@@ -817,6 +818,14 @@ struct FetchWindow {
 };
 FetchWindow* g_window = nullptr;
 
+// A UTF-8 text (the window's, translated) as Windows' wide one.
+std::wstring WideText(const std::string& utf8) {
+  const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
+  std::wstring wide(size_t(n > 0 ? n : 0), L'\0');
+  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), n);
+  return wide;
+}
+
 LRESULT CALLBACK FetchWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
   FetchWindow& w = *g_window;
   switch (msg) {
@@ -827,8 +836,9 @@ LRESULT CALLBACK FetchWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
         return 0;
       }
       SendMessageW(w.bar, PBM_SETPOS, WPARAM(std::clamp(f.progress, 0.0f, 1.0f) * 1000.0f), 0);
-      const std::wstring text = std::to_wstring(int(f.progress * float(kZipSize) / 1000000.0f)) + L" de " +
-                                std::to_wstring(int((kZipSize + 500000) / 1000000)) + L" MB";
+      const std::wstring text =
+          WideText(fmt::format(fmt::runtime(i18n::T("{} de {} MB")), int(f.progress * float(kZipSize) / 1000000.0f),
+                                     int((kZipSize + 500000) / 1000000)));
       SetWindowTextW(w.status, text.c_str());
       return 0;
     }
@@ -885,17 +895,21 @@ void RunFetchWindow(FetchWindow& w) {
     SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(w.font), TRUE);
     return control;
   };
-  HWND heading = make(L"STATIC", L"Descargando a Kratos", 0, 24, 16, 512, 30, 0);
+  HWND heading = make(L"STATIC", WideText(i18n::T("Descargando a Kratos")).c_str(), 0, 24, 16, 512, 30, 0);
   SendMessageW(heading, WM_SETFONT, reinterpret_cast<WPARAM>(w.title_font), TRUE);
   make(L"STATIC",
-       L"Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo para "
-       L"jugar online con los que también lo tienen.",
+       WideText(i18n::T("Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca "
+                              "con él, listo para jugar online con los que también lo tienen."))
+           .c_str(),
        0, 24, 52, 512, 56, 0);
   w.bar = make(PROGRESS_CLASSW, L"", 0, 24, 118, 512, 20, 0);
   SendMessageW(w.bar, PBM_SETRANGE32, 0, 1000);
   w.status = make(L"STATIC", L"", SS_LEFT, 24, 146, 512, 22, 0);
-  make(L"STATIC", L"Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras.", 0, 24,
-       180, 512, 40, 0);
+  make(L"STATIC",
+       WideText(i18n::T("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo "
+                              "abras."))
+           .c_str(),
+       0, 24, 180, 512, 40, 0);
   ShowWindow(w.hwnd, SW_SHOW);
   SetForegroundWindow(w.hwnd);
   SetTimer(w.hwnd, kTimer, 150, nullptr);
@@ -924,16 +938,20 @@ void RunFetchWindow(FetchWindow& w) {
         if (!f.downloading) return false;
         const float s = look.scale;
         ImGui::PushFont(look.title, 28.0f * s);
-        ImGui::TextUnformatted("Descargando a Kratos");
+        ImGui::TextUnformatted(i18n::T("Descargando a Kratos"));
         ImGui::PopFont();
-        ImGui::TextWrapped(
-            "Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo para "
-            "jugar online con los que también lo tienen.");
+        ImGui::TextWrapped("%s", i18n::T("Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el "
+                                         "juego arranca con él, listo para jugar online con los que también lo "
+                                         "tienen."));
         ImGui::Spacing();
         ImGui::ProgressBar(std::clamp(f.progress, 0.0f, 1.0f), ImVec2(-1.0f, 20.0f * s), "");
-        ImGui::Text("%d de %d MB", int(f.progress * float(kZipSize) / 1000000.0f), int((kZipSize + 500000) / 1000000));
+        ImGui::TextUnformatted(fmt::format(fmt::runtime(i18n::T("{} de {} MB")),
+                                           int(f.progress * float(kZipSize) / 1000000.0f),
+                                           int((kZipSize + 500000) / 1000000))
+                                   .c_str());
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1.0f));
-        ImGui::TextWrapped("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras.");
+        ImGui::TextWrapped("%s", i18n::T("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima "
+                                         "vez que lo abras."));
         ImGui::PopStyleColor();
         return true;
       },

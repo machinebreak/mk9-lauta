@@ -7,6 +7,9 @@
 - Con el mando: **BACK + START** abre las opciones y **BACK + Y** (BACK + triángulo en PlayStation) las pantallas
   online. Adentro, el stick o la cruceta se mueven, **A** (cruz) elige, **LB / RB** cambian de pestaña, **LT / RT**
   suben y bajan de a una página en las listas largas (salas, chat, replays, opciones) y **B** (círculo) cierra. BACK es el botón chico de la izquierda (View en Xbox, Share o Create en PlayStation, - en Switch).
+- El juego arranca en el **idioma de tu PC** (el de Windows, o el `LANG` de Linux): español, inglés, portugués,
+  francés, alemán o italiano, y cualquier otro en inglés. El instalador, F1, F2 y los avisos van en español, inglés o
+  portugués (los otros tres idiomas del juego, en inglés). Si elegís otro en los primeros pasos o en F2, queda ese.
 - La primera vez que abrís el juego, cuatro pasos te dejan listo: el **idioma** del juego, tu **nombre de usuario**
   para el online (de 2 a 20 letras: el que ven los demás en las salas y en el chat), la **calidad de los gráficos**
   (ya viene elegida para tu PC) y una **prueba del mando** (se encienden los botones que apretás). Se pueden saltar, y
@@ -188,7 +191,8 @@ al volver a abrir el juego.
 - **Pantalla e idioma**: pantalla completa o ventana (también con **F11** o **Alt+Enter** en cualquier momento),
   **mostrar FPS** (arriba a la izquierda), la **API gráfica** (DirectX 12, Vulkan o DirectX 11: si el juego anda mal o se
   ve raro con una, probá otra; DirectX 11 es para placas o drivers viejos; se aplica al volver a abrir el juego) y el idioma del juego: español (con el Modo Historia
-  doblado), inglés, portugués, francés, alemán o italiano. El idioma se aplica al volver a abrir el juego. También:
+  doblado), inglés, portugués, francés, alemán o italiano. F1 y F2 cambian al momento; el juego, al volver a
+  abrirlo. Sin elegir uno, es el de tu PC. También:
   el **monitor** donde se abre (si tenés más de uno), el **tamaño de la ventana** y el **tamaño de los menús F1 y
   F2** (Automático los agranda en pantallas 1440p o 4K y sigue la escala de Windows, por ejemplo 150 % en una
   notebook). En un monitor ultrapanorámico (21:9) el juego se ve en 16:9 con barras a los costados, como en la consola.

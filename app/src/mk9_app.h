@@ -24,6 +24,7 @@
 #include "mk9_localization.h"
 #include "mk9_installer.h"
 #include "mk9_hardware.h"
+#include "online/i18n.h"
 #include "mk9_overlay_input.h"
 #include "mk9_platform.h"
 #include "mk9_crash_log.h"
@@ -87,6 +88,9 @@ class Mk9App : public rex::ReXApp {
     // Which renderer enhancements run (sa2-nx's switchable set), in one line; before any guest thread exists.
     sa2::enh::Resolve();
 #if MK9_PC
+    // mk9-lauta (2026-11-17): the game in this PC's language unless the player chose one (i18n.h), before the game
+    // reads it and before any window shows a text
+    mk9::i18n::ApplyAtStart();
     // mk9-lauta (2026-11-09): this PC's defaults: the first start's preset, the memory saving (mk9_hardware.h)
     mk9::hardware::ApplyDefaults();
 #endif

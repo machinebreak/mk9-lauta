@@ -3,11 +3,27 @@
 #include "online/i18n.h"
 
 #include <atomic>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #include <rex/cvar.h>
+#include <rex/logging.h>
+
+#include "mk9_platform.h"
 
 REXCVAR_DEFINE_STRING(mk9_online_language, "auto", "MK9 Online",
                       "The online screens' language: auto (the game's: English and Portuguese as they are, French, "
@@ -19,22 +35,118 @@ namespace {
 
 enum Lang { kEs, kEn, kPt };
 
-std::atomic<int> g_chosen{-1};  // SetLanguage's, once called
+std::atomic<int> g_chosen{-1};  // ApplyAtStart's, then SetLanguage's
+
+// The texts' language for the game's (the SDK's user_language: 5 Spanish, 9 Portuguese, 1 English, 3 4 6 the others,
+// whose texts here are in English).
+Lang ForGame(std::string_view game) { return game == "5" ? kEs : game == "9" ? kPt : kEn; }
+
+// mk9-lauta (2026-11-17): the game's language (XGetLanguage's code) for a language's ISO 639-1 code: the six the
+// game has (the European Komplete Edition: En, Fr, De, Es, It, Pt), any other in English.
+const char* GameCode(std::string_view iso) {
+  if (iso == "es") return "5";
+  if (iso == "pt") return "9";
+  if (iso == "fr") return "4";
+  if (iso == "de") return "3";
+  if (iso == "it") return "6";
+  return "1";
+}
+
+const char* GameName(std::string_view game) {
+  if (game == "5") return "Spanish";
+  if (game == "9") return "Portuguese";
+  if (game == "4") return "French";
+  if (game == "3") return "German";
+  if (game == "6") return "Italian";
+  if (game == "1") return "English";
+  return "another";
+}
+
+// The first letters of a locale's name, lower case ("es" of "es-AR", "es_AR.UTF-8"); empty for C and POSIX.
+std::string IsoOf(std::string_view locale) {
+  std::string iso;
+  for (const char c : locale) {
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) break;
+    iso += char(c | 0x20);
+  }
+  if (iso == "c" || iso == "posix" || iso.size() < 2 || iso.size() > 3) return {};
+  return iso;
+}
+
+// This PC's language as ISO 639-1 ("es", "en"...; empty: unknown): Windows' display language (the one its own menus
+// are in), Linux's LANGUAGE (its first), LC_ALL, LC_MESSAGES or LANG.
+std::string SystemIso() {
+  // tests: another PC's language (MK9_TEST_SYSTEM_LANGUAGE=en, pt_BR, ru...)
+  if (const char* test = std::getenv("MK9_TEST_SYSTEM_LANGUAGE"); test && *test) return IsoOf(test);
+#if defined(_WIN32)
+  const LANGID id = GetUserDefaultUILanguage();
+  wchar_t name[LOCALE_NAME_MAX_LENGTH] = {};
+  if (LCIDToLocaleName(MAKELCID(id, SORT_DEFAULT), name, LOCALE_NAME_MAX_LENGTH, 0) > 0) {
+    std::string ascii;
+    for (const wchar_t* c = name; *c && *c < 0x80; ++c) ascii += char(*c);
+    if (std::string iso = IsoOf(ascii); !iso.empty()) return iso;
+  }
+  switch (PRIMARYLANGID(id)) {
+    case LANG_SPANISH: return "es";
+    case LANG_ENGLISH: return "en";
+    case LANG_PORTUGUESE: return "pt";
+    case LANG_FRENCH: return "fr";
+    case LANG_GERMAN: return "de";
+    case LANG_ITALIAN: return "it";
+    default: return {};
+  }
+#else
+  for (const char* var : {"LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"}) {
+    const char* value = std::getenv(var);
+    if (!value || !*value) continue;
+    const std::string_view v(value);
+    if (std::string iso = IsoOf(v.substr(0, v.find(':'))); !iso.empty()) return iso;
+  }
+  return {};
+#endif
+}
+
+// A value without its spaces, quotes and comment ("5" of " \"5\"  # Spanish").
+std::string Bare(std::string value) {
+  if (const size_t hash = value.find('#'); hash != std::string::npos) value.resize(hash);
+  std::string out;
+  for (const char c : value) {
+    if (c != ' ' && c != '\t' && c != '"' && c != '\'' && c != '\r') out += c;
+  }
+  return out;
+}
+
+// The game's language the player chose: user_language on the command line, in REX_USER_LANGUAGE (the SDK's cvars
+// from the environment) or in mk9.toml (the first start's steps and F2 write it there). Empty: none, the PC's then.
+std::string PlayerGameLanguage() {
+  const std::vector<std::string> args = platform::OwnArguments();
+  for (size_t i = 0; i < args.size(); ++i) {
+    const std::string& a = args[i];
+    if (a.rfind("--user_language", 0) != 0) continue;
+    if (const size_t eq = a.find('='); eq != std::string::npos) return Bare(a.substr(eq + 1));
+    return i + 1 < args.size() ? Bare(args[i + 1]) : std::string("?");
+  }
+  if (const char* env = std::getenv("REX_USER_LANGUAGE"); env && *env) return Bare(env);
+  std::ifstream in(platform::ExeDir() / "mk9.toml");
+  for (std::string line; std::getline(in, line);) {
+    const size_t i = line.find_first_not_of(" \t");
+    if (i == std::string::npos || line.compare(i, 13, "user_language") != 0) continue;
+    const size_t j = line.find_first_not_of(" \t", i + 13);
+    if (j == std::string::npos || line[j] != '=') continue;
+    if (std::string value = Bare(line.substr(j + 1)); !value.empty()) return value;
+  }
+  return {};
+}
 
 Lang Current() {
   if (const int chosen = g_chosen.load(std::memory_order_relaxed); chosen >= 0) return Lang(chosen);
-  static const Lang lang = [] {
-    const std::string chosen = REXCVAR_GET(mk9_online_language);
-    if (chosen == "es") return kEs;
-    if (chosen == "en") return kEn;
-    if (chosen == "pt") return kPt;
-    // the game's language (the SDK's user_language: 5 Spanish, 9 Portuguese, 1 English, 3 4 6 the others)
-    const std::string game = rex::cvar::GetFlagByName("user_language");
-    if (game == "5") return kEs;
-    if (game == "9") return kPt;
-    return kEn;
+  // before the start's ApplyAtStart (the installer's window, before the SDK reads mk9.toml): the player's language,
+  // else this PC's
+  static const Lang early = [] {
+    const std::string chosen = PlayerGameLanguage();
+    return ForGame(chosen.empty() ? GameCode(SystemIso()) : chosen);
   }();
-  return lang;
+  return early;
 }
 
 struct Text {
@@ -116,7 +228,7 @@ const std::unordered_map<std::string_view, Text>& Table() {
        {"Two of us at this PC (two vs two with four players)", "Somos dois neste PC (dois contra dois com quatro)"}},
       {"El mando 1 es uno y el mando 2 (o el teclado como jugador 2, en F2 > Controles) es el otro. Si en la otra PC "
        "también son dos, juegan los cuatro en 4 JUGADORES > MODO VERSUS.",
-       {"Controller 1 is one player and controller 2 (or the keyboard as player 2, in F2 > Controles) is the other. If "
+       {"Controller 1 is one player and controller 2 (or the keyboard as player 2, in F2 > Controls) is the other. If "
         "there are two at the other PC too, the four play in 4 JUGADORES > MODO VERSUS.",
         "O controle 1 é um e o controle 2 (ou o teclado como jogador 2, em F2 > Controles) é o outro. Se no outro PC "
         "também são dois, os quatro jogam em 4 JUGADORES > MODO VERSUS."}},
@@ -398,7 +510,7 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"Jugador %d: %s",
        {"Player %d: %s", "Jogador %d: %s"}},
       {"Ningún mando conectado. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan. Sin mando jugás con el teclado: F2 > Controles muestra y cambia las teclas.",
-       {"No controller connected. Xbox, PlayStation and Switch Pro controllers work as soon as they are connected. Without one you play with the keyboard: F2 > Controles shows and changes the keys.", "Nenhum controle conectado. Os de Xbox, PlayStation e Switch Pro funcionam assim que conectados. Sem controle você joga com o teclado: F2 > Controles mostra e muda as teclas."}},
+       {"No controller connected. Xbox, PlayStation and Switch Pro controllers work as soon as they are connected. Without one you play with the keyboard: F2 > Controls shows and changes the keys.", "Nenhum controle conectado. Os de Xbox, PlayStation e Switch Pro funcionam assim que conectados. Sem controle você joga com o teclado: F2 > Controles mostra e muda as teclas."}},
       {"Apretá los botones: se encienden los que el juego recibe.",
        {"Press the buttons: the ones the game gets light up.", "Aperte os botões: acendem os que o jogo recebe."}},
       {"Qué golpe hace cada botón se cambia en el menú del juego: OPCIONES > MANDO.",
@@ -596,11 +708,38 @@ const std::unordered_map<std::string_view, Text>& Table() {
        {"Choosing a fighter", "Escolhendo lutador"}},
       {"En el menú principal",
        {"In the main menu", "No menu principal"}},
+  // mk9-lauta (2026-11-17): the other windows' texts (F2, the installer, the updater, Kratos, the game's messages)
+#include "online/i18n_ui.inc"
   };
   return table;
 }
 
 }  // namespace
+
+void ApplyAtStart() {
+  const std::string iso = SystemIso();
+  if (PlayerGameLanguage().empty()) {
+    const char* game = GameCode(iso);
+    rex::cvar::SetFlagByName("user_language", game);
+    REXLOG_INFO("[language] this PC's language: {} -> the game in {} (F2 > Pantalla e idioma, or the first start's "
+                "steps, change it)",
+                iso.empty() ? "unknown" : iso, GameName(game));
+  } else {
+    REXLOG_INFO("[language] the game in {}, as the player chose (this PC's language: {})",
+                GameName(rex::cvar::GetFlagByName("user_language")), iso.empty() ? "unknown" : iso);
+  }
+  const std::string online = REXCVAR_GET(mk9_online_language);
+  const Lang lang = online == "es"   ? kEs
+                    : online == "en" ? kEn
+                    : online == "pt" ? kPt
+                                     : ForGame(rex::cvar::GetFlagByName("user_language"));
+  g_chosen.store(lang, std::memory_order_relaxed);
+}
+
+void FollowGame(const char* user_language) {
+  if (REXCVAR_GET(mk9_online_language) != "auto") return;
+  g_chosen.store(ForGame(user_language ? user_language : ""), std::memory_order_relaxed);
+}
 
 void SetLanguage(const char* code) {
   if (REXCVAR_GET(mk9_online_language) != "auto") return;  // the player chose the online screens' own

@@ -71,9 +71,9 @@ const Link kLinks[kSocialCount] = {
      IM_COL32(255, 0, 51, 255)},
     {Social::kX, "X", "Seguirme en Twitter", "https://x.com/LautaTWT", IM_COL32(231, 231, 234, 255)},
     // mk9-lauta (2026-11-16): Apóyame. Mercado Pago's blue and Ko-fi's orange (Simple Icons), Patreon's coral (its black
-    // would not show on the dark windows), the heart in the logo's red. Mercado Pago (2026-11-17, Cafecito's place): the
-    // alias itself on the button, copied when it is pressed (an alias has no page to open).
-    {Social::kMercadoPago, "Mercado Pago", "Alias: lautatwt", "", IM_COL32(0, 177, 234, 255), "lautatwt"},
+    // would not show on the dark windows), the heart in the logo's red. Apóyame shows Ko-fi only (2026-11-17): Mercado
+    // Pago stays here for its icon, with no alias; Patreon's link is kept, not shown.
+    {Social::kMercadoPago, "Mercado Pago", "", "", IM_COL32(0, 177, 234, 255)},  // (2026-11-17: no alias, not shown)
     {Social::kKofi, "Ko-fi", "Donar en Ko-fi", "https://ko-fi.com/lautatwt", IM_COL32(255, 100, 51, 255)},
     {Social::kPatreon, "Patreon", "Sumarme al Patreon", "https://www.patreon.com/lautatwt", IM_COL32(255, 66, 77, 255)},
     {Social::kHeart, "Apóyame", "Apoyar", "", IM_COL32(229, 57, 80, 255)},

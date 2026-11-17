@@ -74,8 +74,9 @@ or settings.
 3. **Open `mk9.exe`** and pick your game's `.iso` image, or the folder you already extracted it to. The installer checks
    the release and copies the files the game uses. This happens once; later starts go straight in.
 4. **Play.** **F1** opens the online screens and **F2** the settings (with a controller: **BACK + Y** and
-   **BACK + START**). The first start asks for your language: the game's six, with the online screens in English,
-   Spanish or Portuguese.
+   **BACK + START**). The game starts in your PC's language (English, Spanish, Portuguese, French, German or
+   Italian; any other is English), and so do the installer, F1 and F2 (in English, Spanish or Portuguese). The first
+   start's steps and F2 change it.
 
 > [!NOTE]
 > The program has no digital signature, so Windows SmartScreen may say "Windows protected your PC": click **More info**

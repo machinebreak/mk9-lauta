@@ -42,6 +42,7 @@
 #include "mk9_overlay_input.h"
 #include "mk9_plugins.h"
 #include "mk9_updater.h"
+#include "online/i18n.h"
 #include "online/online_buttons.h"
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
@@ -67,6 +68,18 @@ REXCVAR_DEFINE_DOUBLE(mk9_options_test_cycle_s, 0.0, "MK9",
 
 namespace mk9::options_ui {
 namespace {
+
+// mk9-lauta (2026-11-17): F2 in the player's language (i18n.h: the texts here are the Spanish keys)
+using i18n::T;
+
+// A runtime format (fmt) of a translated text.
+template <typename... Args>
+std::string Tf(const char* es, Args&&... args) {
+  return fmt::format(fmt::runtime(T(es)), std::forward<Args>(args)...);
+}
+
+// A translated label with its Spanish id (ImGui keeps an item's state by its id: a language change keeps it).
+std::string Tid(const char* es) { return std::string(T(es)) + "###" + es; }
 
 struct Choice {
   const char* value;
@@ -176,7 +189,8 @@ const std::vector<Option>& DisplayOptions() {
       {"user_language", "Idioma del juego",
        {{"5", "Español"}, {"1", "English"}, {"9", "Português"}, {"4", "Français"}, {"3", "Deutsch"},
         {"6", "Italiano"}},
-       "Los textos del juego. En español el Modo Historia está doblado. Se aplica al volver a abrir el juego.",
+       "Los textos del juego y de estas ventanas (estas cambian al momento; el juego, al volver a abrirlo). Si no "
+       "elegís uno, es el idioma de tu PC. En español el Modo Historia está doblado.",
        true},
   };
   return options;
@@ -394,7 +408,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     const ImGuiIO& keys = ImGui::GetIO();
     if (ImGui::IsKeyPressed(ImGuiKey_F11, false) || (keys.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
       const bool full = rex::cvar::GetFlagByName("fullscreen") == "true";
-      Set({{"fullscreen", full ? "false" : "true"}}, full ? "Ventana" : "Pantalla completa");
+      Set({{"fullscreen", full ? "false" : "true"}}, T(full ? "Ventana" : "Pantalla completa"));
     }
     if (capturing_ >= 0) TakeKey();
     if (REXCVAR_GET(mk9_show_fps)) DrawFps();
@@ -409,7 +423,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
                             ImVec2(0.5f, 0.5f));
     // the title in the titles' font (F1), the rest in the text's
     ImGui::PushFont(renut::gpu::overlay::TitleFont(), 0.0f);
-    const bool open = ImGui::Begin("Opciones  (F2 para mostrar u ocultar)", &visible_, ImGuiWindowFlags_NoCollapse);
+    const bool open = ImGui::Begin((std::string(T("Opciones  (F2 para mostrar u ocultar)")) + "###mk9_options").c_str(),
+                                   &visible_, ImGuiWindowFlags_NoCollapse);
     ImGui::PopFont();
     if (!open) {
       ImGui::End();
@@ -430,21 +445,21 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       select_tab_ = true;
     }
     if (ImGui::BeginTabBar("options_tabs")) {
-      if (ImGui::BeginTabItem("Gráficos", nullptr, TabFlags("Gráficos"))) {
+      if (ImGui::BeginTabItem(Tid("Gráficos").c_str(), nullptr, TabFlags("Gráficos"))) {
         if (!select_tab_) tab_ = "Gráficos";
         DrawPresets();
         ImGui::Separator();
         for (const Option& o : GraphicsOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Controles", nullptr, TabFlags("Controles"))) {
+      if (ImGui::BeginTabItem(Tid("Controles").c_str(), nullptr, TabFlags("Controles"))) {
         if (!select_tab_) tab_ = "Controles";
         DrawControls();
         ImGui::EndTabItem();
       } else {
         StopCapture();
       }
-      if (ImGui::BeginTabItem("Pantalla e idioma", nullptr, TabFlags("Pantalla e idioma"))) {
+      if (ImGui::BeginTabItem(Tid("Pantalla e idioma").c_str(), nullptr, TabFlags("Pantalla e idioma"))) {
         if (!select_tab_) tab_ = "Pantalla e idioma";
         for (const Option& o : DisplayOptions()) DrawOption(o);
         if (const Option* gpu = GpuOption()) DrawOption(*gpu);
@@ -452,18 +467,18 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         DrawWindowSize();
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Online", nullptr, TabFlags("Online"))) {
+      if (ImGui::BeginTabItem(Tid("Online").c_str(), nullptr, TabFlags("Online"))) {
         if (!select_tab_) tab_ = "Online";
         for (const Option& o : OnlineOptions()) DrawOption(o);
         ImGui::EndTabItem();
       }
-      if (ImGui::BeginTabItem("Acerca de", nullptr, TabFlags("Acerca de"))) {
+      if (ImGui::BeginTabItem(Tid("Acerca de").c_str(), nullptr, TabFlags("Acerca de"))) {
         if (!select_tab_) tab_ = "Acerca de";
         DrawAbout();
         ImGui::EndTabItem();
       }
       // mk9-lauta (2026-11-16): the ways to support the project, and the networks for whoever cannot donate
-      if (ImGui::BeginTabItem("Apóyame", nullptr, TabFlags("Apóyame"))) {
+      if (ImGui::BeginTabItem(Tid("Apóyame").c_str(), nullptr, TabFlags("Apóyame"))) {
         if (!select_tab_) tab_ = "Apóyame";
         brand::SupportPanel(ImGui::GetContentRegionAvail().x, UiScale());
         ImGui::EndTabItem();
@@ -475,7 +490,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     ImGui::Separator();
     if (!note_.empty()) ImGui::TextColored(note_ok_ ? ImVec4(0.45f, 0.9f, 0.5f, 1) : ImVec4(1, 0.45f, 0.4f, 1), "%s",
                                            note_.c_str());
-    ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "Los cambios se aplican al momento y quedan guardados en mk9.toml.");
+    ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s",
+                       T("Los cambios se aplican al momento y quedan guardados en mk9.toml."));
     ImGui::End();
   }
 
@@ -533,7 +549,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (!rex::cvar::GetFlagInfo("monitor")) return;
     int count = 0;
     SDL_DisplayID* displays = SDL_GetDisplays(&count);
-    std::vector<std::pair<std::string, std::string>> choices = {{"0", "Automático (el principal)"}};
+    std::vector<std::pair<std::string, std::string>> choices = {{"0", T("Automático (el principal)")}};
     for (int i = 0; i < count && displays; ++i) {
       const char* name = SDL_GetDisplayName(displays[i]);
       const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(displays[i]);
@@ -544,22 +560,22 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     }
     if (displays) SDL_free(displays);
     if (count < 2) return;  // one monitor: nothing to choose
-    DrawChoices("monitor", "Monitor", choices,
-                "En qué monitor se abre el juego (en pantalla completa, ese). Se aplica al volver a abrir el juego.",
+    DrawChoices("monitor", T("Monitor"), choices,
+                T("En qué monitor se abre el juego (en pantalla completa, ese). Se aplica al volver a abrir el juego."),
                 {{"monitor", ""}});
   }
 
   // The window's size at start (the SDK's window_width / window_height, 0 = 1280x720); dragging its border works too.
   void DrawWindowSize() {
     if (!rex::cvar::GetFlagInfo("window_width")) return;
-    static const std::vector<std::pair<std::string, std::string>> sizes = {
-        {"0x0", "Automático (1280x720)"}, {"1280x720", "1280x720"}, {"1600x900", "1600x900"},
-        {"1920x1080", "1920x1080"},       {"2560x1440", "2560x1440"},
+    const std::vector<std::pair<std::string, std::string>> sizes = {
+        {"0x0", T("Automático (1280x720)")}, {"1280x720", "1280x720"}, {"1600x900", "1600x900"},
+        {"1920x1080", "1920x1080"},          {"2560x1440", "2560x1440"},
     };
     const std::string current = Current("window_width") + "x" + Current("window_height");
     ImGui::PushID("window_size");
     ImGui::AlignTextToFramePadding();
-    ImGui::Text("Tamaño de la ventana");
+    ImGui::Text("%s", T("Tamaño de la ventana"));
     ImGui::SameLine(250);
     ImGui::SetNextItemWidth(-1);
     const char* shown = current.c_str();
@@ -570,14 +586,14 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       for (const auto& [value, label] : sizes) {
         if (ImGui::Selectable(label.c_str(), value == current) && value != current) {
           const size_t x = value.find('x');
-          Set({{"window_width", value.substr(0, x)}, {"window_height", value.substr(x + 1)}}, "Tamaño de la ventana");
+          Set({{"window_width", value.substr(0, x)}, {"window_height", value.substr(x + 1)}}, T("Tamaño de la ventana"));
         }
       }
       ImGui::EndCombo();
     }
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1));
-    ImGui::TextWrapped("El tamaño con el que abre en ventana (también se puede arrastrar el borde). Se aplica al volver a "
-                       "abrir el juego.");
+    ImGui::TextWrapped("%s", T("El tamaño con el que abre en ventana (también se puede arrastrar el borde). Se aplica "
+                               "al volver a abrir el juego."));
     ImGui::PopStyleColor();
     ImGui::Spacing();
     ImGui::PopID();
@@ -621,7 +637,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
                          std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(version.c_str()).x) * 0.5f));
     ImGui::TextColored(ImVec4(1.0f, 0.80f, 0.30f, 1.0f), "%s", version.c_str());
     ImGui::PopFont();
-    const char* about = "Mortal Kombat Komplete Edition para PC, con online con rollback. Hecho por y para la comunidad.";
+    const char* about = T("Mortal Kombat Komplete Edition para PC, con online con rollback. Hecho por y para la comunidad.");
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
                          std::max(0.0f, (ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize(about).x) * 0.5f));
     ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", about);
@@ -630,45 +646,46 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       std::string list;
       for (const std::string& name : plugins) list += (list.empty() ? "" : ", ") + name;
       ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1),
-                         "Plugins de código cargados (mk9_plugins en mk9.toml): %s", list.c_str());
+                         T("Plugins de código cargados (mk9_plugins en mk9.toml): %s"), list.c_str());
     }
     ImGui::Separator();
     bool check = rex::cvar::GetFlagByName("mk9_update_check") != "false";
-    if (ImGui::Checkbox("Buscar una versión nueva al iniciar", &check)) {
-      Set({{"mk9_update_check", check ? "true" : "false"}}, check ? "Buscar versiones nuevas: sí" : "Buscar versiones nuevas: no");
+    if (ImGui::Checkbox(Tid("Buscar una versión nueva al iniciar").c_str(), &check)) {
+      Set({{"mk9_update_check", check ? "true" : "false"}},
+          T(check ? "Buscar versiones nuevas: sí" : "Buscar versiones nuevas: no"));
     }
     const bool busy = st.phase == updater::Phase::kChecking || st.phase == updater::Phase::kDownloading;
     if (busy) ImGui::BeginDisabled();
-    if (ImGui::Button("Buscar ahora")) updater::CheckNow();
+    if (ImGui::Button(Tid("Buscar ahora").c_str())) updater::CheckNow();
     if (busy) ImGui::EndDisabled();
     if (!st.message.empty()) {
       ImGui::SameLine();
       ImGui::TextUnformatted(st.message.c_str());
     }
     if (st.phase == updater::Phase::kAvailable) {
-      if (ImGui::Button("Actualizar ahora")) updater::Download();
+      if (ImGui::Button(Tid("Actualizar ahora").c_str())) updater::Download();
     } else if (st.phase == updater::Phase::kDownloading) {
       ImGui::ProgressBar(float(st.progress), ImVec2(-1, 0));
     } else if (st.phase == updater::Phase::kReady) {
-      if (ImGui::Button("Reiniciar ahora")) updater::InstallAndRestart();
+      if (ImGui::Button(Tid("Reiniciar ahora").c_str())) updater::InstallAndRestart();
     }
     ImGui::Separator();
-    ImGui::TextWrapped("Si algo falla, la carpeta logs tiene lo que pasó: mandá el último mk9_*.log (y el crash_*.dmp de "
-                       "la misma hora si el juego se cerró de golpe).");
-    if (ImGui::Button("Abrir la carpeta de logs")) updater::Open(updater::LogsFolder());
+    ImGui::TextWrapped("%s", T("Si algo falla, la carpeta logs tiene lo que pasó: mandá el último mk9_*.log (y el "
+                               "crash_*.dmp de la misma hora si el juego se cerró de golpe)."));
+    if (ImGui::Button(Tid("Abrir la carpeta de logs").c_str())) updater::Open(updater::LogsFolder());
     ImGui::SameLine();
-    if (ImGui::Button("Reportar un problema")) updater::Open("https://github.com/machinebreak/mk9-lauta/issues");
+    if (ImGui::Button(Tid("Reportar un problema").c_str())) updater::Open("https://github.com/machinebreak/mk9-lauta/issues");
     ImGui::SameLine();
-    if (ImGui::Button("Página del proyecto")) updater::Open("https://github.com/machinebreak/mk9-lauta");
+    if (ImGui::Button(Tid("Página del proyecto").c_str())) updater::Open("https://github.com/machinebreak/mk9-lauta");
     ImGui::Separator();
     ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
-    ImGui::Text("Comunidad y redes");
+    ImGui::Text("%s", T("Comunidad y redes"));
     ImGui::PopFont();
     brand::SocialButtons(ImGui::GetContentRegionAvail().x, 3, std::round(38.0f * scale));
     // mk9-lauta (2026-11-16): to the Apóyame tab (next frame: this one is inside the tab bar)
     ImGui::Spacing();
     if (brand::SocialButton(brand::Social::kHeart, ImVec2(ImGui::GetContentRegionAvail().x, std::round(38.0f * scale)),
-                            true, "Apoyar el proyecto")) {
+                            true, T("Apoyar el proyecto"))) {
       g_open_support.store(true);
     }
   }
@@ -684,7 +701,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
     if (ImGui::Begin("##fps", nullptr, flags)) {
       if (shown + 2 < game) {
-        ImGui::Text("%u FPS (juego a %u)", shown, game);
+        ImGui::Text(T("%u FPS (juego a %u)"), shown, game);
       } else {
         ImGui::Text("%u FPS", shown);
       }
@@ -704,41 +721,42 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
 
   void DrawPresets() {
     ImGui::AlignTextToFramePadding();
-    ImGui::Text("Calidad:");
+    ImGui::Text("%s", T("Calidad:"));
     for (const Preset& p : Presets()) {
       bool active = true;  // every option as the preset has it
       for (const auto& [key, value] : p.values) active &= Current(key) == value;
       ImGui::SameLine();
       if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.45f, 0.10f, 1.0f));
-      if (ImGui::Button(p.label)) Apply(p);
+      if (ImGui::Button(Tid(p.label).c_str())) Apply(p);
       if (active) ImGui::PopStyleColor();
-      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.help);
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", T(p.help));
     }
   }
 
   void DrawControls() {
     const ImVec4 grey(0.65f, 0.65f, 0.7f, 1);
     bool keyboard = rex::cvar::GetFlagByName("mnk_mode") == "true";
-    if (ImGui::Checkbox("Jugar con el teclado", &keyboard)) {
-      Set({{"mnk_mode", keyboard ? "true" : "false"}}, keyboard ? "Teclado activado" : "Teclado desactivado");
+    if (ImGui::Checkbox(Tid("Jugar con el teclado").c_str(), &keyboard)) {
+      Set({{"mnk_mode", keyboard ? "true" : "false"}}, T(keyboard ? "Teclado activado" : "Teclado desactivado"));
     }
     if (keyboard) {
       ImGui::SameLine(0, 30);
       ImGui::AlignTextToFramePadding();
-      ImGui::Text("El teclado maneja al");
+      ImGui::Text("%s", T("El teclado maneja al"));
       ImGui::SameLine();
       const std::string player = rex::cvar::GetFlagByName("mk9_keyboard_player");
       ImGui::SetNextItemWidth(150);
-      if (ImGui::BeginCombo("##keyboard_player", player == "2" ? "Jugador 2" : "Jugador 1")) {
-        if (ImGui::Selectable("Jugador 1", player != "2") && player == "2")
-          Set({{"mk9_keyboard_player", "1"}}, "El teclado maneja al Jugador 1");
-        if (ImGui::Selectable("Jugador 2", player == "2") && player != "2")
-          Set({{"mk9_keyboard_player", "2"}}, "El teclado maneja al Jugador 2");
+      if (ImGui::BeginCombo("##keyboard_player", T(player == "2" ? "Jugador 2" : "Jugador 1"))) {
+        if (ImGui::Selectable(Tid("Jugador 1").c_str(), player != "2") && player == "2")
+          Set({{"mk9_keyboard_player", "1"}}, T("El teclado maneja al Jugador 1"));
+        if (ImGui::Selectable(Tid("Jugador 2").c_str(), player == "2") && player != "2")
+          Set({{"mk9_keyboard_player", "2"}}, T("El teclado maneja al Jugador 2"));
         ImGui::EndCombo();
       }
       ImGui::PushStyleColor(ImGuiCol_Text, grey);
-      ImGui::TextWrapped("Jugador 2: para un Versus en esta PC con el teclado y un mando (el mando es el Jugador 1). "
-                         "Online manejás a tu luchador con el teclado y con cualquier mando conectado.");
+      ImGui::TextWrapped("%s", T("Jugador 2: para un Versus en esta PC con el teclado y un mando (el mando es el "
+                                 "Jugador 1). Online manejás a tu luchador con el teclado y con cualquier mando "
+                                 "conectado."));
       ImGui::PopStyleColor();
       ImGui::Spacing();
       DrawKeys();
@@ -746,31 +764,31 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     ImGui::Separator();
     DrawOption(kButtonIconsOption);
     bool rumble = rex::cvar::GetFlagByName("input_rumble") == "true";
-    if (ImGui::Checkbox("Vibración del mando", &rumble)) {
-      Set({{"input_rumble", rumble ? "true" : "false"}}, rumble ? "Vibración activada" : "Vibración desactivada");
+    if (ImGui::Checkbox(Tid("Vibración del mando").c_str(), &rumble)) {
+      Set({{"input_rumble", rumble ? "true" : "false"}}, T(rumble ? "Vibración activada" : "Vibración desactivada"));
     }
     // mk9-lauta (2026-11-11, H2): the inputs on screen (mk9_input_display.h)
     bool inputs = rex::cvar::GetFlagByName("mk9_input_display") == "true";
-    if (ImGui::Checkbox("Mostrar las entradas en la pelea (para practicar combos)", &inputs)) {
+    if (ImGui::Checkbox(Tid("Mostrar las entradas en la pelea (para practicar combos)").c_str(), &inputs)) {
       Set({{"mk9_input_display", inputs ? "true" : "false"}},
-          inputs ? "Entradas en pantalla activadas" : "Entradas en pantalla desactivadas");
+          T(inputs ? "Entradas en pantalla activadas" : "Entradas en pantalla desactivadas"));
     }
-    ImGui::Text("Mandos conectados:");
+    ImGui::Text("%s", T("Mandos conectados:"));
     bool any_pad = false;
     for (const controls::Device& d : controls::Devices()) {
       if (d.keyboard) continue;
       any_pad = true;
-      if (d.player > 0) ImGui::BulletText("Jugador %d: %s", d.player, d.name.c_str());
-      else ImGui::BulletText("%s (sin jugador: ya hay cuatro)", d.name.c_str());
+      if (d.player > 0) ImGui::BulletText(T("Jugador %d: %s"), d.player, d.name.c_str());
+      else ImGui::BulletText(T("%s (sin jugador: ya hay cuatro)"), d.name.c_str());
     }
     ImGui::PushStyleColor(ImGuiCol_Text, grey);
     if (!any_pad) {
-      ImGui::TextWrapped("Ninguno. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero que se "
-                         "conecta es el Jugador 1.");
+      ImGui::TextWrapped("%s", T("Ninguno. Los de Xbox, PlayStation y Switch Pro andan apenas se conectan; el primero "
+                                 "que se conecta es el Jugador 1."));
     }
-    ImGui::TextWrapped("Qué golpe hace cada botón del mando se cambia en el menú del juego: OPCIONES > MANDO (para "
-                       "las peleas online, acá abajo). El teclado lo sigue: cada tecla aprieta el botón del mando que "
-                       "dice la tabla.");
+    ImGui::TextWrapped("%s", T("Qué golpe hace cada botón del mando se cambia en el menú del juego: OPCIONES > MANDO "
+                               "(para las peleas online, acá abajo). El teclado lo sigue: cada tecla aprieta el botón del "
+                               "mando que dice la tabla."));
     ImGui::PopStyleColor();
     DrawOnlineButtons();
   }
@@ -781,34 +799,35 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     const ImVec4 grey(0.65f, 0.65f, 0.7f, 1);
     ImGui::Separator();
     ImGui::PushFont(renut::gpu::overlay::StrongFont(), 0.0f);
-    ImGui::Text("Botones en el online");
+    ImGui::Text("%s", T("Botones en el online"));
     ImGui::PopFont();
     ImGui::PushStyleColor(ImGuiCol_Text, grey);
-    ImGui::TextWrapped("En las peleas online el juego usa siempre los botones de fábrica (cada partida online arranca "
-                       "con un perfil nuevo para que las dos PC jueguen igual), aunque los hayas cambiado en "
-                       "OPCIONES > MANDO. Elegí acá qué botón hace cada golpe en tus peleas online: tu rival no se "
-                       "entera y no cambia nada para él.");
+    ImGui::TextWrapped("%s", T("En las peleas online el juego usa siempre los botones de fábrica (cada partida online "
+                               "arranca con un perfil nuevo para que las dos PC jueguen igual), aunque los hayas cambiado "
+                               "en OPCIONES > MANDO. Elegí acá qué botón hace cada golpe en tus peleas online: tu rival no "
+                               "se entera y no cambia nada para él."));
     ImGui::PopStyleColor();
     online_buttons::Layout layout = online_buttons::Current();
     bool changed = false;
     if (ImGui::BeginTable("online_buttons", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                                    ImGuiTableFlags_SizingStretchProp)) {
-      ImGui::TableSetupColumn("Golpe", ImGuiTableColumnFlags_WidthStretch, 2.0f);
-      ImGui::TableSetupColumn("Botón", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+      ImGui::TableSetupColumn(T("Golpe"), ImGuiTableColumnFlags_WidthStretch, 2.0f);
+      ImGui::TableSetupColumn(T("Botón"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
       ImGui::TableHeadersRow();
       for (int a = 0; a < online_buttons::kActionCount; ++a) {
         ImGui::PushID(a);
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(online_buttons::ActionLabel(a));
+        ImGui::TextUnformatted(T(online_buttons::ActionLabel(a)));
         ImGui::TableNextColumn();
         ImGui::SetNextItemWidth(-1);
         const online_buttons::Button current = layout[size_t(a)];
-        if (ImGui::BeginCombo("##button", online_buttons::ButtonLabel(current))) {
+        if (ImGui::BeginCombo("##button", T(online_buttons::ButtonLabel(current)))) {
           for (int b = 0; b < online_buttons::kButtonCount; ++b) {
             const auto button = online_buttons::Button(b);
-            if (ImGui::Selectable(online_buttons::ButtonLabel(button), button == current) && button != current) {
+            if (ImGui::Selectable(Tid(online_buttons::ButtonLabel(button)).c_str(), button == current) &&
+                button != current) {
               // the move that had it takes this one's, as OPCIONES > MANDO does (no button does two moves)
               for (auto& other : layout) {
                 if (other == button) other = current;
@@ -823,7 +842,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       }
       ImGui::EndTable();
     }
-    if (layout != online_buttons::kGameLayout && ImGui::Button("Volver a los botones de fábrica")) {
+    if (layout != online_buttons::kGameLayout && ImGui::Button(Tid("Volver a los botones de fábrica").c_str())) {
       layout = online_buttons::kGameLayout;
       changed = true;
     }
@@ -831,7 +850,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       online_buttons::SetCurrent(layout);
       const std::string text = online_buttons::Encode(layout);
       Set({{"mk9_net_buttons", text}},
-          text.empty() ? "Botones en el online: los de fábrica" : "Botones en el online: " + text);
+          text.empty() ? std::string(T("Botones en el online: los de fábrica"))
+                       : Tf("Botones en el online: {}", text));
     }
   }
 
@@ -839,9 +859,9 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     const auto& actions = controls::Actions();
     if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                          ImGuiTableFlags_SizingStretchProp)) {
-      ImGui::TableSetupColumn("Acción", ImGuiTableColumnFlags_WidthStretch, 2.3f);
-      ImGui::TableSetupColumn("Mando", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-      ImGui::TableSetupColumn("Teclas", ImGuiTableColumnFlags_WidthStretch, 1.8f);
+      ImGui::TableSetupColumn(T("Acción"), ImGuiTableColumnFlags_WidthStretch, 2.3f);
+      ImGui::TableSetupColumn(T("Mando"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableSetupColumn(T("Teclas"), ImGuiTableColumnFlags_WidthStretch, 1.8f);
       ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 110.0f);
       ImGui::TableHeadersRow();
       for (int i = 0; i < int(actions.size()); ++i) {
@@ -850,20 +870,20 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(a.label);
+        ImGui::TextUnformatted(T(a.label));
         ImGui::TableNextColumn();
-        ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", a.button);
+        ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", T(a.button));
         ImGui::TableNextColumn();
         if (capturing_ == i) {
-          ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1), "Apretá una tecla...");
+          ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1), "%s", T("Apretá una tecla..."));
         } else {
           const std::string keys = controls::KeysLabel(rex::cvar::GetFlagByName(a.cvar));
-          ImGui::TextUnformatted(keys.empty() ? "(ninguna)" : keys.c_str());
+          ImGui::TextUnformatted(keys.empty() ? T("(ninguna)") : keys.c_str());
         }
         ImGui::TableNextColumn();
         if (capturing_ == i) {
-          if (ImGui::Button("Cancelar", ImVec2(-1, 0))) StopCapture();
-        } else if (ImGui::Button("Cambiar", ImVec2(-1, 0))) {
+          if (ImGui::Button(Tid("Cancelar").c_str(), ImVec2(-1, 0))) StopCapture();
+        } else if (ImGui::Button(Tid("Cambiar").c_str(), ImVec2(-1, 0))) {
           capturing_ = i;
           controls::CaptureNextKey(true);
         }
@@ -871,11 +891,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       }
       ImGui::EndTable();
     }
-    if (ImGui::Button("Volver a las teclas de fábrica")) {
+    if (ImGui::Button(Tid("Volver a las teclas de fábrica").c_str())) {
       StopCapture();
       std::vector<std::pair<std::string, std::string>> values;
       for (const controls::Action& a : actions) values.emplace_back(a.cvar, BuiltInDefault(a.cvar));
-      Set(values, "Teclas de fábrica");
+      Set(values, T("Teclas de fábrica"));
     }
   }
 
@@ -889,7 +909,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     const std::string name = controls::KeyName(vk);
     if (name.empty()) {
       note_ok_ = false;
-      note_ = "Esa tecla no se puede usar: elegí otra";
+      note_ = T("Esa tecla no se puede usar: elegí otra");
       return;
     }
     std::vector<std::pair<std::string, std::string>> values{{action.cvar, name}};
@@ -900,11 +920,11 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       const std::string without = WithoutKey(bind, vk);
       if (without != bind) {
         values.emplace_back(other.cvar, without);
-        moved = other.label;
+        moved = T(other.label);
       }
     }
-    Set(values, std::string(action.label) + ": " + controls::KeysLabel(name) +
-                    (moved.empty() ? std::string() : " (se la saqué a " + moved + ")"));
+    Set(values, std::string(T(action.label)) + ": " + controls::KeysLabel(name) +
+                    (moved.empty() ? std::string() : Tf(" (se la saqué a {})", moved)));
   }
 
   void StopCapture() {
@@ -916,7 +936,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   void Apply(const Preset& p) {
     std::vector<std::pair<std::string, std::string>> values;
     for (const auto& [key, value] : p.values) values.emplace_back(key, value);
-    Set(values, std::string("Calidad ") + p.label);
+    Set(values, Tf("Calidad {}", T(p.label)));
   }
 
   // The value shown: one kept for the next start (an option read only then), else the one in use.
@@ -930,21 +950,23 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     const std::string current = Current(o.key);
     const char* shown = current.c_str();
     for (const Choice& c : o.choices) {
-      if (current == c.value) shown = c.label;
+      if (current == c.value) shown = T(c.label);
     }
     ImGui::PushID(o.key);
     ImGui::AlignTextToFramePadding();
-    ImGui::Text("%s", o.label);
+    ImGui::Text("%s", T(o.label));
     ImGui::SameLine(250);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::BeginCombo("##value", shown)) {
       for (const Choice& c : o.choices) {
-        if (ImGui::Selectable(c.label, current == c.value) && current != c.value) Set({{o.key, c.value}}, o.label);
+        if (ImGui::Selectable(Tid(c.label).c_str(), current == c.value) && current != c.value) {
+          Set({{o.key, c.value}}, T(o.label));
+        }
       }
       ImGui::EndCombo();
     }
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1));
-    ImGui::TextWrapped("%s", o.help);
+    ImGui::TextWrapped("%s", T(o.help));
     ImGui::PopStyleColor();
     ImGui::Spacing();
     ImGui::PopID();
@@ -963,11 +985,13 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       for (const Option& o : DisplayOptions()) later |= o.restart && key == o.key;
       later |= key == "renut_gpu_adapter";
       later |= key == kButtonIconsOption.key;
+      // mk9-lauta (2026-11-17): F1, F2 and the other windows change language at once (the game, at its next start)
+      if (key == "user_language") i18n::FollowGame(value.c_str());
     }
     note_ok_ = SaveToConfig(values);
-    note_ = !note_ok_ ? "No se pudo guardar en mk9.toml"
-            : later   ? what + ": guardado (se aplica al volver a abrir el juego)"
-                      : what + ": guardado";
+    note_ = !note_ok_ ? std::string(T("No se pudo guardar en mk9.toml"))
+            : later   ? Tf("{}: guardado (se aplica al volver a abrir el juego)", what)
+                      : Tf("{}: guardado", what);
     REXLOG_INFO("[options] {}{} ({})", what, later ? " (next start)" : "",
                 note_ok_ ? "saved to mk9.toml" : "could not save mk9.toml");
   }

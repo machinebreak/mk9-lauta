@@ -3,6 +3,7 @@
 #include "mk9_controls.h"
 
 #include "mk9_platform.h"
+#include "online/i18n.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -143,7 +144,7 @@ std::string KeyLabel(std::string_view name) {
       {"MMB", "Clic de la rueda"},
   };
   for (const auto& [key, label] : kNamed) {
-    if (name == key) return label;
+    if (name == key) return mk9::i18n::T(label);  // (mk9-lauta, 2026-11-17: in the player's language)
   }
   if (name.size() == 7 && name.substr(0, 6) == "Numpad") return "Num " + std::string(name.substr(6));
   // Letters, digits and the punctuation keys: the SDK names them by their place on an English keyboard (window_sdl.cpp

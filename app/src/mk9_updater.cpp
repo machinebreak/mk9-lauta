@@ -44,6 +44,7 @@ extern char** environ;
 #include <thread>
 #include <vector>
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "imgui.h"
@@ -51,6 +52,7 @@ extern char** environ;
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#include "online/i18n.h"
 #include "online/netplay.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
 
@@ -176,14 +178,14 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
   parts.lpszExtraInfo = extra;
   parts.dwExtraInfoLength = 2048;
   if (!WinHttpCrackUrl(wurl.c_str(), 0, 0, &parts)) {
-    *error = "dirección inválida";
+    *error = mk9::i18n::T("dirección inválida");
     return false;
   }
   const std::wstring agent = L"mk9-lauta/" + Wide(MK9_LAUTA_VERSION);
   HINTERNET session = WinHttpOpen(agent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
                                   WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) {
-    *error = "sin conexión";
+    *error = mk9::i18n::T("sin conexión");
     return false;
   }
   WinHttpSetTimeouts(session, 10000, 10000, 15000, 30000);
@@ -217,7 +219,7 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
             DWORD available = 0;
             if (!WinHttpQueryDataAvailable(request, &available)) {
               ok = false;
-              *error = "la descarga se cortó";
+              *error = mk9::i18n::T("la descarga se cortó");
               break;
             }
             if (!available) break;
@@ -225,7 +227,7 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
             if (!WinHttpReadData(request, buffer.data(), std::min<DWORD>(available, DWORD(buffer.size())), &read) ||
                 !read) {
               ok = false;
-              *error = "la descarga se cortó";
+              *error = mk9::i18n::T("la descarga se cortó");
               break;
             }
             if (!sink(buffer.data(), read)) {
@@ -236,7 +238,7 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
           }
         }
       } else {
-        *error = "sin conexión con GitHub";
+        *error = mk9::i18n::T("sin conexión con GitHub");
       }
       WinHttpCloseHandle(request);
     }
@@ -269,9 +271,9 @@ bool HttpGet(const std::string& url, const std::function<bool(const char*, size_
   } else if (r.status && r.status != 200 && !(from && r.status == 206)) {
     *error = "respuesta " + std::to_string(r.status);
   } else if (r.kind == "dns" || r.kind == "connect" || r.kind == "tls") {
-    *error = "sin conexión con GitHub";
+    *error = mk9::i18n::T("sin conexión con GitHub");
   } else {
-    *error = "la descarga se cortó";
+    *error = mk9::i18n::T("la descarga se cortó");
   }
   return false;
 }
@@ -461,7 +463,7 @@ std::string StagedVersion() {
 }
 
 void Check() {
-  SetStatus(Phase::kChecking, "Buscando una versión nueva...");
+  SetStatus(Phase::kChecking, mk9::i18n::T("Buscando una versión nueva..."));
   std::string body, error;
   const std::string api = !REXCVAR_GET(mk9_update_api).empty()
                               ? REXCVAR_GET(mk9_update_api)
@@ -469,12 +471,12 @@ void Check() {
   if (!HttpGet(api, [&](const char* d, size_t n) { body.append(d, n); return body.size() < (4u << 20); }, nullptr,
                &error)) {
     REXLOG_INFO("[update] the check failed: {}", error);
-    SetStatus(Phase::kFailed, "No se pudo buscar una versión nueva (" + error + ").");
+    SetStatus(Phase::kFailed, fmt::format(fmt::runtime(mk9::i18n::T("No se pudo buscar una versión nueva ({}).")), error));
     return;
   }
   const json release = json::parse(body, nullptr, false);
   if (!release.is_object() || !release.contains("tag_name")) {
-    SetStatus(Phase::kFailed, "GitHub no dio la última versión.");
+    SetStatus(Phase::kFailed, mk9::i18n::T("GitHub no dio la última versión."));
     return;
   }
   const std::string tag = release.value("tag_name", "");
@@ -508,13 +510,13 @@ void Check() {
   REXLOG_INFO("[update] newest release {} ({}), this program {}", latest, newer ? "newer" : "not newer",
               MK9_LAUTA_VERSION);
   if (!newer) {
-    SetStatus(Phase::kUpToDate, "Tenés la última versión.");
+    SetStatus(Phase::kUpToDate, mk9::i18n::T("Tenés la última versión."));
   } else if (StagedVersion() == latest) {
-    SetStatus(Phase::kReady, "La v" + latest + " ya está bajada: se instala al reiniciar.", 1);
+    SetStatus(Phase::kReady, fmt::format(fmt::runtime(mk9::i18n::T("La v{} ya está bajada: se instala al reiniciar.")), latest), 1);
   } else if (zip_url.empty() || sig_url.empty()) {
-    SetStatus(Phase::kAvailable, "Hay una versión nueva, pero sin el archivo firmado: bajala a mano.");
+    SetStatus(Phase::kAvailable, mk9::i18n::T("Hay una versión nueva, pero sin el archivo firmado: bajala a mano."));
   } else {
-    SetStatus(Phase::kAvailable, "Hay una versión nueva: v" + latest + ".");
+    SetStatus(Phase::kAvailable, fmt::format(fmt::runtime(mk9::i18n::T("Hay una versión nueva: v{}.")), latest));
     if (REXCVAR_GET(mk9_update_test_auto)) {
       std::lock_guard lock(g.mutex);
       g.auto_install = true;
@@ -544,7 +546,7 @@ void DownloadWorker() {
   std::string sig_text;
   if (!HttpGet(sig_url, [&](const char* d, size_t n) { sig_text.append(d, n); return sig_text.size() < 4096; },
                nullptr, &error)) {
-    SetStatus(Phase::kFailed, "No se pudo bajar la firma (" + error + ").");
+    SetStatus(Phase::kFailed, fmt::format(fmt::runtime(mk9::i18n::T("No se pudo bajar la firma ({}).")), error));
     return;
   }
   {
@@ -558,7 +560,7 @@ void DownloadWorker() {
                            const uint64_t all = total ? total : expected;
                            if (all) {
                              char text[96];
-                             std::snprintf(text, sizeof(text), "Bajando la v%s... %.0f MB de %.0f MB", latest.c_str(),
+                             std::snprintf(text, sizeof(text), mk9::i18n::T("Bajando la v%s... %.0f MB de %.0f MB"), latest.c_str(),
                                            got / 1048576.0, all / 1048576.0);
                              SetStatus(Phase::kDownloading, text, std::min(1.0, double(got) / double(all)));
                            }
@@ -568,29 +570,29 @@ void DownloadWorker() {
     out.close();
     if (!ok) {
       fs::remove(partial, ec);
-      SetStatus(Phase::kFailed, "No se pudo bajar la v" + latest + " (" + error + ").");
+      SetStatus(Phase::kFailed, fmt::format(fmt::runtime(mk9::i18n::T("No se pudo bajar la v{} ({}).")), latest, error));
       return;
     }
   }
-  SetStatus(Phase::kDownloading, "Verificando la firma...", 1);
+  SetStatus(Phase::kDownloading, mk9::i18n::T("Verificando la firma..."), 1);
   uint8_t digest[32] = {};
   if (!Sha256(partial, digest) || !SignatureValid(digest, FromHex(sig_text))) {
     fs::remove(partial, ec);
     REXLOG_ERROR("[update] {}: the signature does not match: not installed", zip_name);
-    SetStatus(Phase::kFailed, "La descarga no tiene una firma válida: no se instala.");
+    SetStatus(Phase::kFailed, mk9::i18n::T("La descarga no tiene una firma válida: no se instala."));
     return;
   }
   fs::remove(zip, ec);
   fs::rename(partial, zip, ec);
-  SetStatus(Phase::kDownloading, "Preparando los archivos...", 1);
+  SetStatus(Phase::kDownloading, mk9::i18n::T("Preparando los archivos..."), 1);
   if (!Unpack(zip, folder / L"staging")) {
-    SetStatus(Phase::kFailed, "No se pudo descomprimir la v" + latest + ".");
+    SetStatus(Phase::kFailed, fmt::format(fmt::runtime(mk9::i18n::T("No se pudo descomprimir la v{}.")), latest));
     return;
   }
   fs::remove(zip, ec);
   std::ofstream(folder / L"ready.txt") << latest << "\n";
   REXLOG_INFO("[update] v{} downloaded, signature checked, unpacked: installs at the restart", latest);
-  SetStatus(Phase::kReady, "La v" + latest + " está lista. Se instala al reiniciar.", 1);
+  SetStatus(Phase::kReady, fmt::format(fmt::runtime(mk9::i18n::T("La v{} está lista. Se instala al reiniciar.")), latest), 1);
   bool now = false;
   {
     std::lock_guard lock(g.mutex);
@@ -662,35 +664,35 @@ class Banner : public renut::gpu::overlay::Dialog {
     }
     ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1), "mk9-lauta v%s", s.latest.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("(tenés la v%s)", MK9_LAUTA_VERSION);
+    ImGui::TextDisabled(mk9::i18n::T("(tenés la v%s)"), MK9_LAUTA_VERSION);
     ImGui::TextUnformatted(s.message.c_str());
     if (s.phase == Phase::kDownloading) {
       ImGui::ProgressBar(float(s.progress), ImVec2(-1, 0));
     }
     if (s.phase == Phase::kAvailable && signed_zip) {
-      if (ImGui::Button("Actualizar ahora")) {
+      if (ImGui::Button(mk9::i18n::T("Actualizar ahora"))) {
         attempted_ = true;
         Download();
       }
       ImGui::SameLine();
     }
     if (s.phase == Phase::kReady) {
-      ImGui::TextDisabled("Tus partidas, opciones y archivos del juego no se tocan.");
-      if (ImGui::Button("Reiniciar ahora")) InstallAndRestart();
+      ImGui::TextDisabled("%s", mk9::i18n::T("Tus partidas, opciones y archivos del juego no se tocan."));
+      if (ImGui::Button(mk9::i18n::T("Reiniciar ahora"))) InstallAndRestart();
       ImGui::SameLine();
     }
     if (s.phase == Phase::kFailed && !s.page.empty()) {
-      if (ImGui::Button("Bajarla de GitHub")) Open(s.page);
+      if (ImGui::Button(mk9::i18n::T("Bajarla de GitHub"))) Open(s.page);
       ImGui::SameLine();
     }
     if (s.phase != Phase::kDownloading) {
-      if (ImGui::Button("Más tarde")) {
+      if (ImGui::Button(mk9::i18n::T("Más tarde"))) {
         std::lock_guard lock(g.mutex);
         g.dismissed = true;
       }
       ImGui::SameLine();
     }
-    if (!s.notes.empty() && ImGui::Button(notes_ ? "Ocultar novedades" : "Novedades")) notes_ = !notes_;
+    if (!s.notes.empty() && ImGui::Button(mk9::i18n::T(notes_ ? "Ocultar novedades" : "Novedades"))) notes_ = !notes_;
     if (notes_ && !s.notes.empty()) {
       ImGui::BeginChild("##notes", ImVec2(std::min(720.0f, io.DisplaySize.x - 48), 260), true);
       ImGui::PushTextWrapPos(0);
@@ -744,7 +746,7 @@ void Download() {
     std::lock_guard lock(g.mutex);
     if (g.zip_url.empty() || g.sig_url.empty()) return;
   }
-  SetStatus(Phase::kDownloading, "Empezando la descarga...", 0);
+  SetStatus(Phase::kDownloading, mk9::i18n::T("Empezando la descarga..."), 0);
   RunWorker(&DownloadWorker);
 }
 
@@ -791,7 +793,7 @@ void InstallAndRestart() {
   const fs::path staging = UpdateFolder() / L"staging";
   std::error_code ec;
   if (!fs::exists(staging, ec)) {
-    SetStatus(Phase::kFailed, "No está la actualización bajada.");
+    SetStatus(Phase::kFailed, mk9::i18n::T("No está la actualización bajada."));
     return;
   }
   // every file of the release, over the program's; the replaced ones as .old (a running program's file can be
@@ -836,13 +838,13 @@ void InstallAndRestart() {
       if (!it->second.empty()) fs::rename(it->second, it->first, ec);
     }
     REXLOG_ERROR("[update] installing failed: the program's files are back as they were");
-    SetStatus(Phase::kFailed, "No se pudo instalar (¿la carpeta del juego es de solo lectura?). Quedó como estaba.");
+    SetStatus(Phase::kFailed, mk9::i18n::T("No se pudo instalar (¿la carpeta del juego es de solo lectura?). Quedó como estaba."));
     return;
   }
   REXLOG_INFO("[update] {} files installed: starting the new version", moved.size());
   fs::remove_all(UpdateFolder(), ec);
   StartAgain();
-  SetStatus(Phase::kFailed, "La versión nueva quedó instalada: cerrá y abrí el juego.");
+  SetStatus(Phase::kFailed, mk9::i18n::T("La versión nueva quedó instalada: cerrá y abrí el juego."));
 }
 
 void Restart() {

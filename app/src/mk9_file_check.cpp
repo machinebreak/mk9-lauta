@@ -383,8 +383,11 @@ void TestAfterIntroStarted() {
 #include <rex/platform.h>
 #include <rex/system.h>
 
+#include <fmt/format.h>
+
 #include "mk9_builtin_config.h"
 #include "mk9_kratos.h"
+#include "online/i18n.h"
 
 namespace mk9::file_check {
 namespace {
@@ -483,31 +486,36 @@ void AtStart(const std::filesystem::path& game_root) {
     }
     const auto found = it->second.find(name);
     if (found == it->second.end()) {
-      problems.push_back(f.path + ": falta");
+      problems.push_back(fmt::format(fmt::runtime(mk9::i18n::T("{}: falta")), f.path));
     } else if (found->second != f.size && !mk9::kratos::PatchedSize(f.path, found->second)) {
       // (mk9-lauta: the two files the Kratos port changes may have its sizes, mk9_kratos.h)
-      problems.push_back(f.path + ": tiene " + Bytes(found->second) + " bytes y tendría que tener " + Bytes(f.size));
+      problems.push_back(fmt::format(fmt::runtime(mk9::i18n::T("{}: tiene {} bytes y tendría que tener {}")), f.path,
+                                     Bytes(found->second), Bytes(f.size)));
     }
   }
   REXLOG_INFO("[files] {} game files: sizes checked in {} folders, {} wrong", files.size(), folders.size(),
               problems.size());
   if (problems.empty()) return;
   for (const std::string& problem : problems) REXLOG_ERROR("[files] {}", problem);
-  std::string text = "El juego no puede arrancar: " +
-                     (problems.size() == 1 ? std::string("un archivo del juego falta o está incompleto")
-                                           : std::to_string(problems.size()) +
-                                                 " archivos del juego faltan o están incompletos") +
-                     " en " + game_root.string() + ":\n\n";
+  using mk9::i18n::T;
+  std::string text =
+      problems.size() == 1
+          ? fmt::format(fmt::runtime(T("El juego no puede arrancar: un archivo del juego falta o está incompleto en {}:")),
+                        game_root.string())
+          : fmt::format(fmt::runtime(T("El juego no puede arrancar: {} archivos del juego faltan o están incompletos "
+                                       "en {}:")),
+                        problems.size(), game_root.string());
+  text += "\n\n";
   for (size_t i = 0; i < problems.size() && i < 8; ++i) text += "- " + problems[i] + "\n";
   if (problems.size() > 8) {
-    text += "- y " + std::to_string(problems.size() - 8) + " más (están todos en la carpeta logs)\n";
+    text += fmt::format(fmt::runtime(T("- y {} más (están todos en la carpeta logs)")), problems.size() - 8) + "\n";
   }
 #if defined(_WIN32)
-  text += "\nVolvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado de "
-          "mk9.exe, entera.";
+  text += std::string("\n") + T("Volvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete "
+                                "Edition) al lado de mk9.exe, entera.");
 #else
-  text += "\nVolvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete Edition) al lado de "
-          "mk9, entera.";
+  text += std::string("\n") + T("Volvé a copiar la carpeta game_root de tu copia del juego (Xbox 360, Komplete "
+                                "Edition) al lado de mk9, entera.");
 #endif
   rex::ShowSimpleMessageBox(rex::SimpleMessageBoxType::Error, text);
   rex::FlushLogging();

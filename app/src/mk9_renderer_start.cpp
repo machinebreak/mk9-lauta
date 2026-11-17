@@ -26,6 +26,7 @@
 #include <rex/system.h>
 
 #include "imgui.h"
+#include "online/i18n.h"
 #include "options_ui.h"
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/overlay/overlay_ui.h"
@@ -130,7 +131,7 @@ class Notice : public renut::gpu::overlay::Dialog {
                                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
                                    ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("##renderer_start", nullptr, flags)) {
-      ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1), "API gráfica");
+      ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1), "%s", mk9::i18n::T("API gráfica"));
       ImGui::PushTextWrapPos(std::min(740.0f, io.DisplaySize.x - 40));
       ImGui::TextUnformatted(text.c_str());
       ImGui::PopTextWrapPos();
@@ -180,11 +181,13 @@ void BeforeDevice() {
     renut::gpu::ForceBackend(BackendOf(other));
     options_ui::SaveToConfig({{"renut_gpu_backend", other}});
     g_notice = chosen_failed
-                   ? fmt::format("El juego no pudo arrancar con {} en esta PC: volvió a {}, que sí anda. Si querés "
-                                 "probar de nuevo, está en F2 > Pantalla e idioma > API gráfica.",
+                   ? fmt::format(fmt::runtime(mk9::i18n::T(
+                                     "El juego no pudo arrancar con {} en esta PC: volvió a {}, que sí anda. Si querés "
+                                     "probar de nuevo, está en F2 > Pantalla e idioma > API gráfica.")),
                                  Name(current), Name(other))
-                   : fmt::format("El juego no llegó a mostrar imagen en los últimos {} arranques con {}: ahora usa {}. "
-                                 "Si querés volver, está en F2 > Pantalla e idioma > API gráfica.",
+                   : fmt::format(fmt::runtime(mk9::i18n::T(
+                                     "El juego no llegó a mostrar imagen en los últimos {} arranques con {}: ahora usa "
+                                     "{}. Si querés volver, está en F2 > Pantalla e idioma > API gráfica.")),
                                  failed, Name(current), Name(other));
     failed = 0;
     current = other;
@@ -219,9 +222,9 @@ void VulkanUnusable(const std::string& why, const char* api) {
   AddBad("vulkan");
   g_failed = 0;  // a start of another API: no failures of its own yet
   g_notice = fmt::format(
-      "El driver de tu placa de video no tiene lo que el juego necesita de Vulkan (Vulkan 1.2 con direcciones de "
-      "buffer): ahora usa {}. Si actualizás el driver, Vulkan se puede volver a elegir en F2 > Pantalla e idioma > API "
-      "gráfica.",
+      fmt::runtime(mk9::i18n::T("El driver de tu placa de video no tiene lo que el juego necesita de Vulkan (Vulkan "
+                                "1.2 con direcciones de buffer): ahora usa {}. Si actualizás el driver, Vulkan se puede "
+                                "volver a elegir en F2 > Pantalla e idioma > API gráfica.")),
       Name(api));
 }
 
@@ -257,9 +260,11 @@ void DeviceLost() {
                Name(api), other);
   rex::ShowSimpleMessageBox(
       rex::SimpleMessageBoxType::Error,
-      fmt::format("La placa de video dejó de responder (se perdió el dispositivo de {}): el juego ya no puede dibujar.\n\n"
-                  "Cerralo y volvé a abrirlo. Si vuelve a pasar, el próximo arranque prueba con {}. También ayuda "
-                  "actualizar el driver de la placa de video.\n\nEl detalle quedó en la carpeta logs.",
+      fmt::format(fmt::runtime(mk9::i18n::T(
+                      "La placa de video dejó de responder (se perdió el dispositivo de {}): el juego ya no puede "
+                      "dibujar.\n\nCerralo y volvé a abrirlo. Si vuelve a pasar, el próximo arranque prueba con {}. "
+                      "También ayuda actualizar el driver de la placa de video.\n\nEl detalle quedó en la carpeta "
+                      "logs.")),
                   Name(api), other)
 );
 #else
@@ -267,9 +272,9 @@ void DeviceLost() {
   REXLOG_ERROR("[renderer] the Vulkan device was lost: told the player");
   rex::ShowSimpleMessageBox(
       rex::SimpleMessageBoxType::Error,
-      "La placa de video dejó de responder (se perdió el dispositivo de Vulkan): el juego ya no puede dibujar.\n\n"
-      "Cerralo y volvé a abrirlo. Si vuelve a pasar, actualizá el driver de la placa de video (Mesa en AMD e Intel, "
-      "el de NVIDIA en NVIDIA).\n\nEl detalle quedó en la carpeta logs.");
+      mk9::i18n::T("La placa de video dejó de responder (se perdió el dispositivo de Vulkan): el juego ya no puede "
+                   "dibujar.\n\nCerralo y volvé a abrirlo. Si vuelve a pasar, actualizá el driver de la placa de video "
+                   "(Mesa en AMD e Intel, el de NVIDIA en NVIDIA).\n\nEl detalle quedó en la carpeta logs."));
 #endif
 }
 

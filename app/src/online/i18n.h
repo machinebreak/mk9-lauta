@@ -17,4 +17,14 @@ void SetLanguage(const char* code);
 // mk9-lauta (2026-11-13): the online screens' language now: "es", "en" or "pt".
 const char* Language();
 
+// mk9-lauta (2026-11-17): at the start, once the SDK read mk9.toml and before the game runs: without a language the
+// player chose (mk9.toml's user_language, the command line's, REX_USER_LANGUAGE), the game takes this PC's (Windows'
+// display language, Linux's LANG): Spanish, English, Portuguese, French, German and Italian as they are, any other in
+// English. The texts here follow the game's (or mk9_online_language).
+void ApplyAtStart();
+
+// mk9-lauta (2026-11-17): the game's language just chosen in F2 (user_language's code): these texts follow it at
+// once, unless mk9_online_language says another than auto.
+void FollowGame(const char* user_language);
+
 }  // namespace mk9::i18n
