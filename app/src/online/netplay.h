@@ -29,6 +29,7 @@ enum ReadyFlag : uint8_t {
   kReadyStreaming = 1 << 1,  // the engine's streaming done, waited on just before (native 8247bf38, sub_82A2EAB8)
   kReadyModeGate = 1 << 2,   // the Versus selection's gate to the fight mode (native 824a56d0, sub_82A311D8)
   kReadyTask = 1 << 3,       // mk9-lauta (2026-11-10): the engine's task at 0x8341EF1C done (native 8247b658)
+  kReadyMovie = 1 << 4,      // mk9-lauta (2026-11-18): a fight's load waits on a movie (native 82474738, protocol 13)
 };
 
 // A session is configured (mk9_net_host / mk9_net_join).

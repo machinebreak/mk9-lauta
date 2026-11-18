@@ -1092,6 +1092,24 @@ después, así que los juegos vuelven a coincidir solos. Ahora cada borde de loc
 con el arreglo, cinco corridas más sin diferencias. El diagnóstico de los luchadores deja afuera el `+0x79A8` del
 objeto (un float de la carga, 0,1875 aparte entre máquinas con la pelea igual: su única falsa alarma).
 
+**La espera de un video en la carga de la pelea, con la palabra de todas** (`ReadyFlag kReadyMovie`, protocolo 13,
+1.4.1). Dos sesiones de 2 contra 2 entre cuatro PCs reales (1.4.0) se separaron en la carga de la primera pelea: una
+de las cuatro tuvo otro hash unos 20 cuadros después de empezar la carga (la pantalla VS: cuadro 2595 con la carga en
+2576, y 2438 con la carga en 2417), la pelea se jugó igual y al terminar los juegos ya mostraban otra cosa. En una sola
+PC no pasaba (las cuatro instancias leen del mismo disco al mismo ritmo); con una de las cuatro de prueba en un solo
+núcleo y con lecturas lentas (`sa2_io_us_per_kb=200`, el guion `mesh_slow.ps1` del scratchpad: la afinidad del proceso
+de esa máquina) se separó siempre igual, 14 cuadros después de empezar la carga, y sólo esa. Las nativas de las dos
+(`mk9_native_log` con `mk9_script_trace`, comparadas sin los punteros del heap) dicen dónde: el guion de la carga espera
+en su línea 5914 a la nativa `82474738` (`sub_829CFD88` con el nombre de un video, "mk001_002_003" también en un VERSUS:
+la función virtual +60 del reproductor de videos en `0x834246AC` para su ruta, distinta de 0 mientras no está listo), y
+esa espera termina al ritmo del disco y la CPU de cada máquina: 7 cuadros en las rápidas, 70 en la lenta. El reposo de
+la carga (`quiesce::Settle`, 1.4.0) no la cubre: no es trabajo de un pool sino lo que el hilo de carga lleva leído.
+Ahora es una espera más de las que se ponen de acuerdo (`AgreeOnNativeResult`, como la escena, el streaming y la
+puerta del VERSUS): termina en el mismo cuadro en todas, cuando todas dijeron que está listo. Con la máquina lenta, 0
+cuadros distintos (en un núcleo: la carga entera; en dos núcleos y lecturas a 100 us/KB: carga, barrera y 13.622
+cuadros de pelea con 213 rollbacks); sin máquina lenta, 4 máquinas y 1 contra 1, 0. Una 1.4.0 nunca manda esa bandera
+y su compañera esperaría para siempre: por eso el protocolo 13, y la 1.4.1 no juega con la 1.4.0.
+
 **Rey de la colina** (`mk9_net_koth`, una sesión de tres o cuatro máquinas). Dos asientos (`koth_seat`: los usuarios 0
 y 1 de XInput, jugador 1 y 2) y una fila con las demás: `SeatOf` les da el mando a esas dos, y las entradas de las
 que esperan no llegan a ningún jugador (igual las mandan: la malla y el lockstep son los de siempre, y miran la misma

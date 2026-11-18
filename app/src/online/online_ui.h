@@ -21,4 +21,8 @@ void UseName(const std::string& name);
 // others' inputs) and waits a moment for it to go out. Nothing otherwise.
 void LeaveBeforeClose();
 
+// mk9-lauta (2026-11-18, issue #13): the online screens (F1) open, as F1 would open them (any thread: the main menu's
+// ONLINE (F1) chosen, mk9_localization.cpp).
+void Show();
+
 }  // namespace mk9::online_ui

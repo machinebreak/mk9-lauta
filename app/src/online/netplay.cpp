@@ -288,8 +288,9 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // Luck's fights have a barrier and rollback too (mk9_capture.cpp, native 82495b68), where 1.0.0 stays in lockstep,
 // and its lockstep frames settle (mk9_net_settle_luck: the slot machine draws the same modifiers on both). 12 from
 // 1.4.0 on: sessions of up to four machines (the HELLO says how many; a sound's callback waits for every machine's
-// word).
-constexpr uint8_t kVersion = 12;
+// word). 13 from 1.4.1 on: a fight's load waits on a movie with every machine's word (ReadyFlag kReadyMovie, which a
+// 1.4.0 machine never sends: its partner would wait forever).
+constexpr uint8_t kVersion = 13;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;

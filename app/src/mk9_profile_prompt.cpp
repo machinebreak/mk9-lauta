@@ -22,7 +22,11 @@
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
+
+#include "mk9_profile_prompt.h"
+#include "online/netplay.h"
 
 REXCVAR_DEFINE_BOOL(mk9_profile_prompt_auto, true, "MK9",
                     "A player with no gamer profile (every controller but the first, the online guest) continues "
@@ -77,3 +81,32 @@ REX_HOOK_RAW(sub_829D62E8) {
     REXLOG_INFO("[profile] user {} has no gamer profile: continues without saving (no sign-in question)", user);
   }
 }
+
+// mk9-lauta (2026-11-18, issue #14): saving the options (OPCIONES > AUDIO / VIDEO and the like) asked player one to
+// sign in or to continue without saving, or (where the SDK's popup does not show) left the menus waiting with the
+// dragon spinning in a corner. The save asks sub_824C0730(user): the first word of the player's profile record
+// (0x833D1C48 + slot * 4452, the player's MK9PSET as it was read, sub_82522138; slot: the controller's +4,
+// sub_829D88B0), and it was 0: the game had never read the profile's save. Its profile manager reads it when it hears
+// XN_SYS_SIGNINCHANGED, and the SDK sends that only to the game's first notification listener, at its creation
+// (KernelState::RegisterNotifyListener), not to the manager's. Here it goes out once, when the game first reaches its
+// main menu: the manager reads MK9PSET (the player's saved options and buttons apply, as on the console) and the
+// options save (MK9GSET) without a question. Not in an online session's game, whose profile stays as the session
+// needs it on every machine.
+REXCVAR_DEFINE_BOOL(mk9_profile_load_at_menu, true, "MK9",
+                    "The game reads player one's profile save once it reaches the main menu (the sign-in notification "
+                    "its profile manager waits for): saved options apply and the options save without a question")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+namespace mk9::profile {
+
+void OnFrame(uint8_t* base) {
+  static bool done = !REXCVAR_GET(mk9_profile_load_at_menu);
+  if (done || mk9::netplay::SessionGame() || mk9::netplay::GameState() != 3) return;  // GS_MAINMENU
+  done = true;
+  (void)base;
+  REXLOG_INFO("[profile] the main menu: player one's profile signed in for the game (XN_SYS_SIGNINCHANGED), its "
+              "saves read");
+  REX_KERNEL_STATE()->BroadcastNotification(0x0000000A, 1);
+}
+
+}  // namespace mk9::profile

@@ -3,6 +3,7 @@
 #include "mk9_localization.h"
 
 #include "mk9_platform.h"
+#include "online/online_ui.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -26,6 +27,8 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/hook.h>
+#include <rex/ppc.h>
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
@@ -252,3 +255,30 @@ void Install(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::pat
 }
 
 }  // namespace mk9::localization
+
+// mk9-lauta (2026-11-18, issue #13): choosing that entry (ONLINE (F1)) starts the game's XBLSignInPlayerOneJob (vtable
+// 0x82044B30): its message (the text above, "MKOnline" / "RequireSignIn_Message_Xbox"), then the system's sign-in to
+// Xbox LIVE (StepSignInPlayerOne) and StepWaitForSignInPlayerOneCompletion (sub_8250AD80), which asks for player one's
+// sign-in to LIVE (XamUserGetSigninInfo, sub_824F7538) and runs again every frame until there is one: never on PC. The
+// main menu's script waited on the job (its line 798, native 82478dc8: the job's +72 still 2) and took no input until
+// the game was closed. With the entry pointing to F1, that step takes at once its own way out (the one it takes when the
+// player leaves the system's sign-in: the job's +16 with 0), the menu goes on, and the online screens open.
+extern "C" REX_FUNC(__imp__sub_8250AD80);
+REX_HOOK_RAW(sub_8250AD80) {  // XBLSignInPlayerOneJob::StepWaitForSignInPlayerOneCompletion(this)
+  static const bool pc_texts = REXCVAR_GET(mk9_pc_texts);
+  if (!pc_texts) {
+    __imp__sub_8250AD80(ctx, base);
+    return;
+  }
+  auto load32 = [base](uint32_t a) {
+    const uint8_t* p = base + a;
+    return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | uint32_t(p[3]);
+  };
+  const uint32_t job = ctx.r3.u32;
+  const uint32_t step_result = load32(load32(job) + 16);  // the job's +16 (sub_824CB948 for this one)
+  REXLOG_INFO("[menu] the game's Xbox LIVE sign-in (ONLINE (F1) chosen): left at once, the online screens open");
+  ctx.r3.u64 = job;
+  ctx.r4.u64 = 0;
+  rex::runtime::ResolveIndirectFunction(step_result)(ctx, base);
+  mk9::online_ui::Show();
+}

@@ -3,7 +3,7 @@
 ## Antes de empezar
 
 - **F1** abre y cierra las pantallas online. **F2** abre las opciones. En el menú principal del juego, la opción
-  **ONLINE (F1)** te lo recuerda.
+  **ONLINE (F1)** te lo recuerda y, después del aviso, abre las pantallas online.
 - Con el mando: **BACK + START** abre las opciones y **BACK + Y** (BACK + triángulo en PlayStation) las pantallas
   online. Adentro, el stick o la cruceta se mueven, **A** (cruz) elige, **LB / RB** cambian de pestaña, **LT / RT**
   suben y bajan de a una página en las listas largas (salas, chat, replays, opciones) y **B** (círculo) cierra. BACK es el botón chico de la izquierda (View en Xbox, Share o Create en PlayStation, - en Switch).
@@ -266,8 +266,9 @@ puede leer se ignora y se ve el video original. Para volver a los originales sin
 
 No hace falta ningún perfil ni cuenta de Xbox: el juego guarda solo tu progreso (Historia, Torre de los retos, la
 Kripta, tus opciones), juegues con el teclado o con cualquier mando, y nunca te pide "iniciar sesión". Las partidas
-quedan en tu PC (en Windows, en Documentos\mk9; en Linux, en ~/.local/share/mk9). En las sesiones online no se guarda
-nada de la pelea: tu partida queda como estaba.
+quedan en tu PC (en Windows, en Documentos\mk9; en Linux, en ~/.local/share/mk9). Lo que cambies en OPCIONES (mando,
+audio, video) se guarda sin preguntar nada y vale cada vez que abrís el juego. En las sesiones online no se guarda nada
+de la pelea: tu partida queda como estaba.
 
 **Modo portable**: para tener todo en la carpeta del juego (por ejemplo en un pendrive), creá un archivo vacío
 `portable.txt` al lado de mk9.exe. Desde ahí el progreso, los logros y el caché de shaders van a la carpeta

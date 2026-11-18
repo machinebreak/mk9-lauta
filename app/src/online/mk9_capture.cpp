@@ -64,6 +64,7 @@
 #include "first_run_ui.h"
 #include "mk9_brand.h"
 #include "mk9_frame_data.h"
+#include "mk9_profile_prompt.h"
 #include "mk9_input_display.h"
 #include "online/online_ui.h"
 #include "options_ui.h"
@@ -697,6 +698,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::virtual_time::BoundaryStart(base);  // the frame before's logic is over (its clock reads, virtual_time.h)
   mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::frame_data::OnFrame(base);          // Practice: each attack's frames measured from it (mk9_frame_data.h)
+  mk9::profile::OnFrame(base);             // once at the main menu: the profile's saves loaded (mk9_profile_prompt.h)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::brand::Install();         // once: the main menu's corner (mk9_brand.h), under the windows
   mk9::first_run_ui::Install();  // once: the first start's steps (before the online window, which waits for them)
@@ -922,6 +924,18 @@ extern "C" REX_FUNC(__imp__sub_8247BF38);
 REX_HOOK_RAW(sub_8247BF38) {
   __imp__sub_8247BF38(ctx, base);
   mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyStreaming, true);
+}
+
+// mk9-lauta (2026-11-18): native 82474738, sub_829CFD88 on a movie's name: the movie player's (0x834246AC) virtual +60
+// for its path, nonzero while it is not ready. A fight's load waits on it (the loading script's line 5914, with
+// "mk001_002_003" in a VERSUS too) and it ends on each machine's own disk and CPU: in a two against two of four real
+// PCs one of them left that wait other frames than the rest, ~20 frames into the VS screen, and its game went apart
+// (1.4.0; reproduced with one of four test machines on a single CPU and slow reads: 70 frames there, 7 on the others).
+// In a session it ends at the same frame on every machine (netplay.h kReadyMovie).
+extern "C" REX_FUNC(__imp__sub_82474738);
+REX_HOOK_RAW(sub_82474738) {
+  __imp__sub_82474738(ctx, base);
+  mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyMovie, true);
 }
 
 // The MKO VM's native call: the native's address is in the bytecode after the instruction (mk9_native_log).

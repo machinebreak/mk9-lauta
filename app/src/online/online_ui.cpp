@@ -17,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cfloat>
 #include <chrono>
@@ -175,6 +176,8 @@ std::string ConnectionText(const netplay::SessionInfo& info) {
             info.loss_pct, T(info.relayed ? "por relay (TURN)" : "conexión directa"));
 }
 
+std::atomic<bool> g_show{false};  // mk9-lauta (2026-11-18, issue #13): Show() asked, the window's next draw opens it
+
 class OnlineWindow : public renut::gpu::overlay::Dialog {
  public:
   OnlineWindow() {
@@ -198,6 +201,10 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false) || overlay_input::ToggleOnlinePressed()) {
       visible_ = !visible_;
       focus_ = visible_;  // over the options if they are open too
+    }
+    if (g_show.exchange(false)) {  // (Show)
+      visible_ = true;
+      focus_ = true;
     }
     const room::State room = room::Snapshot();
     if (room.in_session) {
@@ -1841,6 +1848,8 @@ void Install() {
 void UseName(const std::string& name) {
   if (g_window) g_window->UseName(name);
 }
+
+void Show() { g_show.store(true); }
 
 void LeaveBeforeClose() {
   const room::State room = room::Snapshot();
