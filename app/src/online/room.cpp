@@ -59,10 +59,11 @@ constexpr auto kJoinFor = std::chrono::seconds(10);
 constexpr size_t kMaxLines = 100;
 constexpr int kMaxMachines = 4;
 // mk9-lauta (2026-11-17): the session protocol of the releases that play rooms of four (netplay.cpp's 12), of the
-// ones that play King of the Hill (13), and this release's (said in its hello)
+// ones that play King of the Hill (13), and this release's (said in its hello; 14 from 1.4.2 on). A machine of another
+// release that gets in plays no session with this one: the sessions' HELLO ends it, saying the other's release.
 constexpr int kFourProto = 12;
 constexpr int kKothProto = 13;
-constexpr int kProto = 13;
+constexpr int kProto = 14;
 
 struct Room {
   std::mutex mutex;

@@ -20,6 +20,8 @@ namespace mk9::overlay_input {
 namespace {
 
 constexpr uint16_t kStart = 0x0010, kBack = 0x0020, kY = 0x8000;
+constexpr uint16_t kLB = 0x0100, kRB = 0x0200, kX = 0x4000;  // mk9-lauta (2026-11-18): Practice's recording
+std::atomic<bool> g_practice_combos{false};
 
 rex::input::InputSystem* g_input = nullptr;
 thread_local bool t_bypass = false;      // this thread's read is the overlay's (OnFrame)
@@ -117,7 +119,8 @@ void OnFrame() {
                   uint64_t(uint16_t(int16_t(pad.thumb_ly))) << 48,
               std::memory_order_relaxed);
   g_have_pad.store(have, std::memory_order_relaxed);
-  g_combo_frame.store(have && (buttons & kBack) && (buttons & (kStart | kY)), std::memory_order_relaxed);
+  const uint16_t practice = g_practice_combos.load(std::memory_order_relaxed) ? uint16_t(kLB | kRB | kX) : 0;
+  g_combo_frame.store(have && (buttons & kBack) && (buttons & (kStart | kY | practice)), std::memory_order_relaxed);
 }
 
 bool AnyOpen() { return g_open.load(std::memory_order_relaxed) != 0; }
@@ -138,6 +141,20 @@ bool ToggleOptionsPressed() {
 bool ToggleOnlinePressed() {
   return ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false);
 }
+
+bool PracticeRecordPressed() {
+  return ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false);
+}
+
+bool PracticePlayPressed() {
+  return ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false);
+}
+
+bool PracticeLoopPressed() {
+  return ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, false);
+}
+
+void SetPracticeCombos(bool on) { g_practice_combos.store(on, std::memory_order_relaxed); }
 
 int TabStep() {
   if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) return -1;

@@ -28,6 +28,7 @@
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <tuple>
@@ -1657,7 +1658,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::TableNextColumn();
         ImGui::Text("%s", r.rival.empty() ? "-" : r.rival.c_str());
         ImGui::TableNextColumn();
-        if (ImGui::SmallButton(T("Ver"))) session::Replay(r.path);
+        if (r.watchable) {
+          if (ImGui::SmallButton(T("Ver"))) session::Replay(r.path);
+        } else {
+          // mk9-lauta (2026-11-18): another release's (its header's session protocol): it cannot be played back here
+          ImGui::TextColored(kGrey, "%s", T("Otra versión"));
+          if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", T("Este replay es de una versión anterior de mk9-lauta y ésta lo jugaría distinto: "
+                                      "no se puede ver. Los de la 1.4.0 en adelante, sí."));
+          }
+        }
         ImGui::PopID();
       }
       ImGui::EndTable();
@@ -1669,6 +1679,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
     std::string when;    // "dd/mm hh:mm"
     std::string rival;   // the rivals of the matches recorded in it, from the profile's records
     int64_t start = 0;   // seconds since 1970 (its name's date)
+    bool watchable = true;  // mk9-lauta (2026-11-18): its session protocol plays back here (netplay::CanWatchProtocol)
   };
   void ListReplays() {
     replays_listed_ = Clock::now();
@@ -1685,6 +1696,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       Replay r;
       const std::u8string u8 = entry.path().u8string();
       r.path.assign(reinterpret_cast<const char*>(u8.data()), u8.size());
+      {
+        // its header: "MK9NET1\0", then u32 1 + the session protocol x 256 (netplay.cpp RecordHeader)
+        std::ifstream in(entry.path(), std::ios::binary);
+        char head[12] = {};
+        if (in.read(head, sizeof(head)) && std::memcmp(head, "MK9NET1", 8) == 0) {
+          uint32_t version = 0;
+          std::memcpy(&version, head + 8, 4);
+          r.watchable = netplay::CanWatchProtocol(int(version >> 8));
+        }
+      }
       r.when = fmt::format("{:02d}/{:02d} {:02d}:{:02d}", d, mo, h, mi);
       std::tm t{};
       t.tm_year = y - 1900;

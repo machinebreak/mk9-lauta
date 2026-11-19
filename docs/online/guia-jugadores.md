@@ -142,7 +142,8 @@ en **F2 > Online > Grabar replays**, y vale desde la próxima sesión. No graba 
 jugadores (unos 3 KB por segundo, en la carpeta `logs`; las últimas 10 sesiones), así que no usa internet ni se nota
 en el juego. En **F1 > Replays** están por fecha, con el rival, y **Ver** vuelve a abrir el juego jugando esa sesión
 desde el principio: los menús pasan rápido (sin imagen ni sonido un momento) y las peleas se ven a su ritmo, con
-sonido. Al terminar, "Volver al lobby". Un replay de otra versión de mk9-lauta no se puede ver (el juego lo avisa).
+sonido. Al terminar, "Volver al lobby". Se ven los replays de la 1.4.0 en adelante; los más viejos aparecen en gris
+como "Otra versión" (esta versión los jugaría distinto).
 
 ## Salir
 
@@ -195,10 +196,25 @@ no toca, dice "No tocó" con su arranque y su total. Se mide en el momento, de l
 conecta con un cuadro activo tardío deja un cuadro más de ventaja. Si el rival ataca (grabación o IA), muestra lo suyo
 como "RIVAL". Para que el muñeco se cubra: pausa > **OPCIONES DE IA > MODO DE BLOCK > SIEMPRE** (aceptar con A).
 
+**Grabar al rival en Práctica** (viene activada; **F2 > Controles > Grabar al rival en Práctica**): el rival repite lo
+que grabes, para practicar defensas, castigos y escapes. Primero poné al rival en pausa > **OPCIONES DE IA > TIPO DE
+ENEMIGO: HUMANA**. Después:
+
+- **F5** (o **BACK + LB**, L1 en PlayStation) empieza a grabar: tu mando o el teclado manejan al rival y tu luchador
+  se queda quieto. **F5** otra vez (o START) termina. Graba hasta 60 segundos.
+- **F6** (**BACK + RB**, R1) hace que el rival repita la grabación; F6 otra vez o START lo frenan.
+- **F7** (**BACK + X**, cuadrado) la pone en bucle o la vuelve a una sola vez.
+
+Adelante y atrás se respetan: si grabaste con el rival a la derecha y ahora está a la izquierda, igual camina hacia
+vos. Abajo a la derecha, un cartel muestra qué está pasando. La grabación dura mientras el juego esté abierto y no
+existe en el online. La grabación propia del juego (pausa > GRABACIÓN/REPRODUCCIÓN) graba a tu luchador; esta, al
+rival. Gracias a **Irrit8**, que la pidió con una donación.
+
 Los botones que muestra el juego (en los menús y en la lista de movimientos) son los de tu mando: el juego mira el
-primer mando conectado al abrirse y muestra los botones de PlayStation (cruz, círculo, cuadrado, triángulo), de
-Switch o de Xbox; sin mando, muestra tus teclas. En **F2 > Controles > Íconos de los botones** se fija uno; se aplica
-al volver a abrir el juego.
+mando del jugador 1 (el primero que se conectó) y muestra los botones de PlayStation (cruz, círculo, cuadrado,
+triángulo), de Switch o de Xbox. Si al abrir el juego el mando todavía no está (por ejemplo uno Bluetooth que tarda en
+conectarse), lo sigue buscando durante el primer minuto; sin mando, muestra tus teclas. En **F2 > Controles > Íconos
+de los botones** se fija uno; se aplica al volver a abrir el juego.
 
 ## Opciones (F2)
 

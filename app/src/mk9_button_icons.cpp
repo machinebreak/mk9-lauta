@@ -2,6 +2,8 @@
 #include "mk9_button_icons.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -22,8 +24,8 @@ REXCVAR_DEFINE_STRING(mk9_button_icons, "switch", "MK9",
                       "position with input_xbox_layout: Xbox A shows as B, B as A, X as Y, Y as X, LB/RB as L/R, LT/RT "
                       "as ZL/ZR, START as +, BACK as -), \"xbox\" keeps the game's own icons; mk9-lauta (PC): "
                       "\"playstation\" (cross, circle, square, triangle, L1/R1/L2/R2), \"keyboard\" (the keys of "
-                      "F2 > Controles) and \"auto\" (the first controller's kind when the game starts, the keyboard "
-                      "without one). The menus take it when they are loaded: at the next start");
+                      "F2 > Controles) and \"auto\" (player one's controller's kind, the keyboard without one). The "
+                      "menus take it when they are loaded: at the next start");
 
 namespace mk9::button_icons {
 namespace {
@@ -463,21 +465,35 @@ void DrawCell(Canvas &c, const Atlas &atlas, const Cell &cell, bool by_position,
   }
 }
 
-// The style, decided once (the first atlas): "auto" by the first controller connected (SDL's kind of it), the
-// keyboard without one.
+// The style. "auto" (mk9-lauta, issue #16): player one's controller, the one the SDK's SDL driver numbered 0 (its
+// connection order, SDL_SetGamepadPlayerIndex: the first controller is player one's), else the first one SDL knows of;
+// the keyboard without one. 1.4.1 and before decided it once, at the first atlas, which could come before the driver
+// had registered the controllers: the keyboard's keys for good, a controller in hand. Now with no controller yet it
+// asks again at each atlas for the game's first minute (the menus' atlases then take the controller's), and keeps
+// the first answer that has one.
 Style ChosenStyle() {
-  static const Style style = [] {
-    const std::string value = REXCVAR_GET(mk9_button_icons);
-    if (value == "xbox") return Style::kXbox;
-    if (value == "playstation") return Style::kPlayStation;
-    if (value == "keyboard") return Style::kKeyboard;
-    if (value != "auto") return Style::kSwitch;
+  static std::atomic<int> latched{-1};
+  if (const int v = latched.load(std::memory_order_acquire); v >= 0) return Style(v);
+  const std::string value = REXCVAR_GET(mk9_button_icons);
+  Style found = Style::kSwitch;
+  bool final = true;
+  if (value == "xbox") found = Style::kXbox;
+  else if (value == "playstation") found = Style::kPlayStation;
+  else if (value == "keyboard") found = Style::kKeyboard;
+  else if (value == "auto") {
 #if MK9_PC
+    static const auto started = std::chrono::steady_clock::now();
+    SDL_Gamepad *pad = SDL_GetGamepadFromPlayerIndex(0);
+    SDL_JoystickID id = pad ? SDL_GetGamepadID(pad) : 0;
     int count = 0;
-    SDL_JoystickID *pads = SDL_GetGamepads(&count);
-    Style found = Style::kKeyboard;
-    if (pads && count > 0) {
-      switch (SDL_GetGamepadTypeForID(pads[0])) {
+    if (!id) {
+      SDL_JoystickID *pads = SDL_GetGamepads(&count);
+      if (pads && count > 0) id = pads[0];
+      if (pads) SDL_free(pads);
+    }
+    found = Style::kKeyboard;
+    if (id) {
+      switch (SDL_GetGamepadTypeForID(id)) {
         case SDL_GAMEPAD_TYPE_PS3:
         case SDL_GAMEPAD_TYPE_PS4:
         case SDL_GAMEPAD_TYPE_PS5: found = Style::kPlayStation; break;
@@ -487,18 +503,19 @@ Style ChosenStyle() {
         case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR: found = Style::kSwitch; break;
         default: found = Style::kXbox; break;
       }
+    } else {
+      final = std::chrono::steady_clock::now() - started > std::chrono::seconds(60);
     }
-    const char *name = pads && count > 0 ? SDL_GetGamepadNameForID(pads[0]) : nullptr;
-    if (pads) SDL_free(pads);
-    static const char *const kNames[] = {"Xbox", "Switch", "PlayStation", "keyboard"};
-    REXLOG_INFO("[icons] mk9_button_icons auto: {} ({})", kNames[int(found)],
-                count > 0 ? (name ? name : "a controller") : "no controller");
-    return found;
-#else
-    return Style::kSwitch;
+    if (final) {
+      const char *name = id ? SDL_GetGamepadNameForID(id) : nullptr;
+      static const char *const kNames[] = {"Xbox", "Switch", "PlayStation", "keyboard"};
+      REXLOG_INFO("[icons] mk9_button_icons auto: {} ({})", kNames[int(found)],
+                  id ? (name ? name : "a controller") : "no controller in the game's first minute");
+    }
 #endif
-  }();
-  return style;
+  }
+  if (final) latched.store(int(found), std::memory_order_release);
+  return found;
 }
 
 bool SwitchIconsOn() { return ChosenStyle() != Style::kXbox; }

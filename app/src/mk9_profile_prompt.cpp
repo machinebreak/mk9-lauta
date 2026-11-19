@@ -64,7 +64,12 @@ void St32(uint8_t* base, uint32_t a, uint32_t v) {
 extern "C" REX_FUNC(__imp__sub_829D62E8);
 REX_HOOK_RAW(sub_829D62E8) {
   const uint32_t user = ctx.r3.u32;
-  if (!REXCVAR_GET(mk9_profile_prompt_auto) || user == 0 || user > 3 || Ld32(base, kRecorder) != 0 ||
+  // mk9-lauta (2026-11-18, issue #17): in an online session's game (a player's, a spectator's, a replay's) user 0 too:
+  // its profile is not read there (OnFrame below), and a player saving the controller's settings mid-session asked
+  // every machine "sign in / continue without saving" in the SDK's popup, each answered at its own time (or never, on
+  // a spectator's game): the games went apart and the spectator's ended. Every game answers it alike there.
+  const bool session = mk9::netplay::SessionGame();
+  if (!REXCVAR_GET(mk9_profile_prompt_auto) || (user == 0 && !session) || user > 3 || Ld32(base, kRecorder) != 0 ||
       Ld32(base, kQuiet) != 0) {
     __imp__sub_829D62E8(ctx, base);
     return;

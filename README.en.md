@@ -56,7 +56,8 @@ picture, and live spectating of other players' matches.
 **The whole game.** Story mode, Ladder and Tag Ladder, two-player Versus on one PC, the Challenge Tower, Training, the
 Krypt and every Komplete Edition fighter. Kratos, the PlayStation 3 release's guest fighter, downloads by himself the
 first time you open the game. In Practice each attack shows its frame data (startup and advantage on hit or on block),
-and in any fight your inputs can show on screen. Cutscenes can be skipped with START or A (the first time too), and if
+and you can record the opponent with your controller and have it repeat what you did, once or in a loop (F5, F6 and
+F7). In any fight your inputs can show on screen. Cutscenes can be skipped with START or A (the first time too), and if
 you copy the PC version's `.bik` videos (for example an HQ videos mod) into the game's Movies folder, they play
 instead.
 
@@ -155,6 +156,8 @@ server running (the rooms, quick match and the connections between players) and 
 
 Donations are voluntary and unlock nothing: the game is and will stay free for everyone. In the game, all of this is in
 **F2 > Apóyame** (or the main menu's **Support** button).
+
+**Thank you, Irrit8!** Their donation brought the opponent's recording in Practice, now there for everyone.
 
 **Can't donate?** No problem: following me on all my networks and sharing the project helps a lot too:
 [YouTube](https://www.youtube.com/@LautaTWT?sub_confirmation=1) · [Instagram](https://www.instagram.com/lautatwt/) ·

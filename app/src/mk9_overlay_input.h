@@ -33,6 +33,13 @@ bool AnyOpen();
 // The combos, as the overlay's ImGui sees the controller (UI thread, inside a dialog's Draw).
 bool ToggleOptionsPressed();  // Back + Start
 bool ToggleOnlinePressed();   // Back + Y
+// mk9-lauta (2026-11-18): the opponent's recording in Practice (mk9_practice_record.h): Back + LB, Back + RB, Back + X.
+bool PracticeRecordPressed();
+bool PracticePlayPressed();
+bool PracticeLoopPressed();
+// A Practice fight's frame (game thread): those combos' frames are kept from the game too (RB and LB are its throw and
+// its tag).
+void SetPracticeCombos(bool on);
 // LB / RB in a window: -1, +1 or 0.
 int TabStep();
 // B with nothing active in a focused window: close it.

@@ -203,6 +203,20 @@ bool ReadFighter(uint8_t* base, int player, FighterFrame* out) {
   return true;
 }
 
+bool Position(uint8_t* base, int player, float out[3]) {
+  QuietFaults quiet;
+  uint32_t object = 0, actor = 0, words[3];
+  if (!Read32(base, kGameInfo + kObject + uint32_t(player) * kPlayerStride, &object) || object < 0x30000000u ||
+      object >= 0xA0000000u || !Read32(base, object + 8, &actor) || actor < 0x30000000u || actor >= 0xA0000000u) {
+    return false;
+  }
+  for (uint32_t i = 0; i < 3; ++i) {
+    if (!Read32(base, actor + 0xDC + 4 * i, &words[i])) return false;
+    std::memcpy(&out[i], &words[i], 4);
+  }
+  return true;
+}
+
 void Report(uint8_t* base, int me) {
   Result r;
   r.me = me;

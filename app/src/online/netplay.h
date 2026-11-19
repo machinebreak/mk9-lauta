@@ -37,6 +37,13 @@ bool Active();
 // mk9-lauta (2026-11-10): this game is a session's (a player's or a spectator's), from its first frame to its last,
 // whether the session has started, runs or ended.
 bool SessionGame();
+// mk9-lauta (2026-11-18): a recording of this session protocol plays back here (a replay, a spectator's feed): this
+// release's, and those from 1.4.0 on (12: its fights' loads waited on the movie with each machine's own answer, which
+// is what a game watching it gives too; 13, 1.4.1's: the same fights).
+bool CanWatchProtocol(int protocol);
+// The fight's load waits on its movie with every machine's word (kReadyMovie): a session of this protocol's, or a
+// recording of it; not a recording of 1.4.0's.
+bool MovieWaitAgreed();
 // This machine's player in a session (0 the host, 1 the guest); -1 with no session and for a spectator.
 int LocalPlayer();
 // mk9-lauta (2026-11-11): the game's state (fight_state.h State) at a recent frame, sessions or not (any thread); -1

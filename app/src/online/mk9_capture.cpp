@@ -64,6 +64,7 @@
 #include "first_run_ui.h"
 #include "mk9_brand.h"
 #include "mk9_frame_data.h"
+#include "mk9_practice_record.h"
 #include "mk9_profile_prompt.h"
 #include "mk9_input_display.h"
 #include "online/online_ui.h"
@@ -698,6 +699,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::virtual_time::BoundaryStart(base);  // the frame before's logic is over (its clock reads, virtual_time.h)
   mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::frame_data::OnFrame(base);          // Practice: each attack's frames measured from it (mk9_frame_data.h)
+  mk9::practice_record::OnFrame(base);     // Practice: the opponent's recording (mk9_practice_record.h)
   mk9::profile::OnFrame(base);             // once at the main menu: the profile's saves loaded (mk9_profile_prompt.h)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::brand::Install();         // once: the main menu's corner (mk9_brand.h), under the windows
@@ -706,6 +708,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::options_ui::Install();  // and the options (F2)
   mk9::input_display::Install();  // and the inputs on screen (mk9_input_display)
   mk9::frame_data::Install();     // and Practice's frame data (mk9_frame_data)
+  mk9::practice_record::Install();  // and its recording of the opponent (mk9_practice_record)
   mk9::updater::Install();     // and the updater's banner (a newer release on GitHub)
   mk9::renderer_start::Install();  // and the notice of a graphics API swapped at this start
   mk9::online::FrameBegin(base);
@@ -935,7 +938,8 @@ REX_HOOK_RAW(sub_8247BF38) {
 extern "C" REX_FUNC(__imp__sub_82474738);
 REX_HOOK_RAW(sub_82474738) {
   __imp__sub_82474738(ctx, base);
-  mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyMovie, true);
+  // (a recording of 1.4.0's, protocol 12, plays back with each machine's own answer, as its players had it)
+  if (mk9::netplay::MovieWaitAgreed()) mk9::online::AgreeOnNativeResult(base, mk9::netplay::kReadyMovie, true);
 }
 
 // The MKO VM's native call: the native's address is in the bytecode after the instruction (mk9_native_log).
@@ -1001,6 +1005,7 @@ extern "C" REX_FUNC(__imp__sub_82A1C550);
 REX_HOOK_RAW(sub_82A1C550) {
   const uint32_t tag = ctx.r3.u32, data = ctx.r4.u32, size = ctx.r5.u32, user = ctx.r6.u32;
   mk9::netplay::OverrideBlock(base, tag, data, size, user, ctx.r1.u32);
+  mk9::practice_record::OnPadBlock(base, tag, data, size, user, ctx.r1.u32);  // (never in a session's game)
   SkipLogosBlock(base, tag, data, size, user);
   mk9::seed::OverrideModeSeed(base, tag, data, size);
   mk9::online::CaptureBlock(base, tag, data, size, user);

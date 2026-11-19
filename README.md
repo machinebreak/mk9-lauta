@@ -55,7 +55,8 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 **El juego completo.** El modo Historia (doblado al español), Torneo y Torneo por equipos, Versus de a dos en la misma
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
 versión de PlayStation 3, se descarga solo la primera vez que abrís el juego. En Práctica, cada golpe muestra su frame
-data (arranque y ventaja al golpear o al bloquear), y en cualquier pelea podés ver tus entradas en pantalla. Las
+data (arranque y ventaja al golpear o al bloquear), y podés grabar al rival con tu mando para que después repita lo que
+hiciste, una vez o en bucle (F5, F6 y F7). En cualquier pelea podés ver tus entradas en pantalla. Las
 cinemáticas se saltean con START o A (también la primera vez), y si copiás los videos `.bik` de la versión de PC (por
 ejemplo un mod de videos HQ) en la carpeta Movies del juego, se ven con esos.
 
@@ -247,6 +248,8 @@ actualizaciones.
 
 Las donaciones son voluntarias y no desbloquean nada: el juego es y va a seguir siendo gratis para todos. En el juego
 está todo esto en **F2 > Apóyame** (o con el botón **Apoyar** del menú principal).
+
+**¡Gracias, Irrit8!** Su donación trajo la grabación del rival en Práctica, que ahora tiene todo el mundo.
 
 **¿No podés donar?** No pasa nada: también me ayudás un montón siguiéndome en todas mis redes y compartiendo el
 proyecto: [YouTube](https://www.youtube.com/@LautaTWT?sub_confirmation=1) · [Instagram](https://www.instagram.com/lautatwt/) ·

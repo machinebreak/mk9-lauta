@@ -289,8 +289,15 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // and its lockstep frames settle (mk9_net_settle_luck: the slot machine draws the same modifiers on both). 12 from
 // 1.4.0 on: sessions of up to four machines (the HELLO says how many; a sound's callback waits for every machine's
 // word). 13 from 1.4.1 on: a fight's load waits on a movie with every machine's word (ReadyFlag kReadyMovie, which a
-// 1.4.0 machine never sends: its partner would wait forever).
-constexpr uint8_t kVersion = 13;
+// 1.4.0 machine never sends: its partner would wait forever). 14 from 1.4.2 on: in a session every machine answers the
+// profile prompt of player 1's controller's settings saved mid-session (issue #17, mk9_profile_prompt.cpp), where a
+// 1.4.1 machine shows the SDK's popup and answers it at its own time; and a rollback's frames run again draw the HUD
+// (hidden_draw.cpp).
+constexpr uint8_t kVersion = 14;
+// The oldest session protocol whose recordings (replays, a spectator's feed) still play back here: 1.4.0's. 13 and 14
+// changed what the machines agree on, not the fights: MovieWaitAgreed keeps 1.4.0's loads. Raise it with a change in
+// how a session plays.
+constexpr int kOldestWatchable = 12;
 constexpr uint32_t kBuild = 1;
 enum : uint8_t { kHello = 1, kInput = 2, kPing = 3, kPong = 4, kBye = 5, kBarrier = 6 };
 constexpr int kMaxPerPacket = 64;
@@ -475,6 +482,7 @@ struct Session {
   uint64_t watch_read = 0;            // the recording's bytes parsed
   bool watch_header = false;
   bool watch_other_release = false;  // the recording is of another release's match (its header's protocol)
+  int watch_protocol = 0;            // mk9-lauta (2026-11-18): the recording's session protocol (its header)
   bool watch_peeking = false;         // mk9-lauta (2026-11-11): catching up, this frame is one shown (SpectatorFrame)
   uint64_t watch_peek_us = 0;         // ... the last one's time
   bool watch_hidden = false;          // catching up: frames hidden, unpaced and muted
@@ -2747,12 +2755,17 @@ void WatchParse() {
     // a match of another release (its protocol: 0 before 10) plays back otherwise and hashes otherwise
     uint32_t version;
     std::memcpy(&version, h + 8, 4);
-    if ((version >> 8) != Protocol()) {
+    if (!CanWatchProtocol(int(version >> 8))) {
       REXLOG_ERROR("[watch] the match is played with another release of mk9-lauta (session protocol {}, this one {})",
                    version >> 8, Protocol());
       g.watch_other_release = true;
       g.failed = true;
       return;
+    }
+    g.watch_protocol = int(version >> 8);
+    if (g.watch_protocol != Protocol()) {
+      REXLOG_INFO("[watch] a match of an earlier release (session protocol {}, this one {}): played as it had it",
+                  g.watch_protocol, Protocol());
     }
     std::memcpy(&g.seed, h + 13, 4);
     g.rollback_wanted = h[17] != 0;
@@ -3108,6 +3121,15 @@ bool HasLinks() {
 bool SessionGame() {
   if (!g.configured) Configure();
   return g.watching || HasLinks();
+}
+
+bool CanWatchProtocol(int protocol) {
+  return protocol == Protocol() || (protocol >= kOldestWatchable && protocol < Protocol());
+}
+
+bool MovieWaitAgreed() {
+  if (g.watching) return g.watch_protocol >= 13;
+  return Protocol() >= 13;
 }
 
 // mk9-lauta (2026-11-11): the game's state sessions or not (OnFrame; GameState: the main menu's corner, Discord).

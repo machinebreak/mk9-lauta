@@ -73,7 +73,7 @@ Prueba: `tools/online/room4_test.ps1` (cuatro juegos por un lobby local: `mk9_on
 La sala de cuatro con `koth` (`CreateRoom(open, 4, true)`): de tres a cuatro personas, una por PC. Su título empieza
 con `KOTH · ` (`kKothTitle`; la lista lo muestra como "Rey de la colina · " en el idioma de cada uno) y ninguna partida
 rápida entra (se elige de la lista o con el código). El `welcome`, los `members` y el `start` dicen `koth`; sólo toma
-un `hi` con el protocolo 13 (`kKothProto`; esta versión manda 13, que las salas de cuatro también aceptan). Con tres o
+un `hi` con el protocolo 13 o más (`kKothProto`; la 1.4.2 manda 14, que las salas de cuatro también aceptan). Con tres o
 cuatro máquinas, el `start` lleva `koth: true` y cada juego se abre con `--mk9_net_koth=true` (la sesión en
 `netplay-design.md`); con dos es un uno contra uno de siempre. En la sesión, la lista de la sala dice quién pelea, la
 fila y el rey (`SessionInfo`: `koth_seat`, `koth_line`, `koth_king`, `machine_ids`); las placas de la pelea son las de

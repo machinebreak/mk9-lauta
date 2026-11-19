@@ -37,8 +37,9 @@
 REXCVAR_DEFINE_BOOL(mk9_hidden_frames_draw, false, "MK9 Online",
                     "A rollback's frames run again (a player's, the SyncTest's) still draw their scene (UE3's render "
                     "thread walks it; Renut throws it away). false (the default since mk9-lauta 0.6.0, after a hunt with "
-                    "lag and Kratos' SyncTest: 0 frames apart, no broken frame): FViewport::Draw is skipped in them "
-                    "(PLAN-0.4 B2: 3.2 -> 2.2 ms a frame run again); a spectator's frames always draw");
+                    "lag and Kratos' SyncTest: 0 frames apart, no broken frame): their 3D scene is left out (PLAN-0.4 "
+                    "B2: 3.2 -> 2.2 ms a frame run again; 1.4.2: the rest of the viewport, the HUD, still drawn); a "
+                    "spectator's frames always draw");
 
 namespace {
 
@@ -54,12 +55,34 @@ bool Rerun() {
 
 }  // namespace
 
+// mk9-lauta (2026-11-18, 1.4.2): the health bar online. 0.6.0 left a rollback's frames run again without FViewport::Draw
+// at all, and with it went the HUD's draw (the viewport client's Draw: the scene, then the HUD), where the fight's HUD
+// moves its animations: the health bars' fill, the red of the damage taken draining. A rollback puts the HUD's memory
+// back to the frame it goes back to, like the rest, and the frames run again never moved it on: every rollback set the
+// bars' animations back by its frames (SyncTest 4400,8,6 in a fight against the CPU, the bars filling at its start: 7
+// frames on, 6 back, every 8). Online, after a hit, the bar went back up for a moment, flickered, or took longer to go
+// down. Now those frames draw the viewport again, the HUD included, and only the 3D scene is left out:
+// BeginRenderingViewFamily (sub_8284E880, the FDrawSceneCommand's maker, vtable 0x8211D330), the render thread's walk
+// that 0.6.0 saved.
+std::atomic<bool> g_scene_off{false};  // inside a rollback's frame's FViewport::Draw (game thread)
+
 extern "C" REX_FUNC(__imp__sub_828BBEC0);
 REX_HOOK_RAW(sub_828BBEC0) {
   if (!REXCVAR_GET(mk9_hidden_frames_draw) && Rerun()) {
     const uint64_t n = g_skipped.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (n == 1 || n % 3600 == 0) REXLOG_INFO("[draw] {} hidden frames left undrawn (mk9_hidden_frames_draw)", n);
+    if (n == 1 || n % 3600 == 0) {
+      REXLOG_INFO("[draw] {} hidden frames drawn without their 3D scene (the HUD's animations go on)", n);
+    }
+    g_scene_off.store(true, std::memory_order_relaxed);
+    __imp__sub_828BBEC0(ctx, base);
+    g_scene_off.store(false, std::memory_order_relaxed);
     return;
   }
   __imp__sub_828BBEC0(ctx, base);
+}
+
+extern "C" REX_FUNC(__imp__sub_8284E880);
+REX_HOOK_RAW(sub_8284E880) {  // BeginRenderingViewFamily(canvas, view family)
+  if (g_scene_off.load(std::memory_order_relaxed)) return;
+  __imp__sub_8284E880(ctx, base);
 }

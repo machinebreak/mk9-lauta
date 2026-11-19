@@ -247,3 +247,31 @@ bloquear, iguales). Todo en el objeto del luchador:
 
 En la pausa del juego nada se mueve (las dos animaciones quietas): esos cuadros no cuentan. El contador de cuadros de la
 partida (+108) sigue corriendo en la pausa.
+
+## Grabar al rival en Práctica (2026-11-18, `mk9_practice_record.cpp`)
+
+Lo pidió Irrit8 con una donación. La grabación propia del juego (pausa > GRABACIÓN/REPRODUCCIÓN, 8 lugares) graba al
+luchador del jugador; ésta graba al muñeco y se la hace repetir, como el modo de entrenamiento de los juegos de pelea
+de después.
+
+- **El muñeco con un mando**: con pausa > OPCIONES DE IA > TIPO DE ENEMIGO: HUMANA (`[Pause] EnemyType`/`Human` en
+  `Coalesced.*`), el muñeco sigue al usuario 1 de XInput. El juego lee los cuatro mandos en cada cuadro por la
+  interfaz de captura (`sub_82A1C550(tag, data, size, user)`): `0x00FF0002` de 16 bytes es el `X_INPUT_STATE` (número
+  de paquete y el gamepad de 12, big-endian), `0x00FF0003` de 4 el resultado de `XInputGetState` (un temporal en la
+  pila: `data - r1 < 0x400`) y `0x00FF0002` de 20 las capacidades. Mientras graba o reproduce, el usuario 1 aparece
+  conectado (resultado 0, las capacidades de un mando común, como el invitado de una sesión: `netplay::OverrideBlock`)
+  y recibe las entradas; el número de paquete cambia cuando cambia el gamepad, como cuenta XInput.
+- **Grabar**: el gamepad del usuario 0 (mando o teclado) pasa al usuario 1 y el del 0 queda en cero (el luchador del
+  jugador quieto); sin START ni BACK (el muñeco no pausa). START del usuario 0 termina la grabación o la reproducción y
+  sigue al juego (la pausa es del jugador). Hasta 3600 cuadros (60 s).
+- **El lado**: el actor del luchador (objeto `+8`) tiene su lugar en `+0xDC`, `+0xE0`, `+0xE4` (x, y, z, floats;
+  `fight_state::Position`). Al empezar la pelea, (0, -125, 0) y (0, 125, 0): el costado de la pelea es la y. El
+  código toma el eje y su signo en el primer cuadro de la pelea (el jugador 1 empieza a la izquierda) y guarda con cada
+  cuadro grabado de qué lado estaba el muñeco; al reproducir del otro lado, cambia izquierda y derecha (la cruceta y la
+  x del stick izquierdo): adelante sigue siendo adelante. Uno encima del otro (menos de 1 de distancia), el lado queda.
+- **Teclas**: F5 graba, F6 reproduce, F7 en bucle; en el mando BACK + LB, RB o X (`overlay_input`, que en Práctica
+  le saca al juego esos cuadros: LB y RB son el agarre y el relevo). Nunca en una sesión online (`SessionGame`).
+- **Prueba**: `mk9_practice_record_test=17:record,23:record,28:play` (segundos desde el primer cuadro de la pelea) con
+  el guion del mando que pone HUMANA (pausa, OPCIONES DE IA, RB RB, A) y mueve al muñeco. Visto en video: mientras
+  graba, Sub-Zero camina y pega y Scorpion queda quieto; al reproducir repite lo mismo; con Scorpion saltando por
+  encima antes de reproducir, Sub-Zero camina hacia la derecha (grabado hacia la izquierda) y lo alcanza.

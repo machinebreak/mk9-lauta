@@ -937,6 +937,7 @@ el hilo de render de UE3 no tiene escena que recorrer y Renut nada que tirar. Un
 sigue dibujando: corre oculto muchos segundos seguidos, y lo que el juego haga con "dibujado hace mucho" (un esqueleto
 que sólo se actualiza si se ve...) no es lo que hicieron las máquinas de los jugadores. Hook nuevo: el generador llama
 por el nombre a lo enganchado sólo tras `python tools/direct_calls.py --redo` (reescribe los 3 archivos que la llaman).
+Desde la 1.4.2 esos cuadros sí la llaman y sólo dejan afuera la escena 3D: ver "La vida en el online", más abajo.
 
 Medido (SyncTest 4700,12,6, 325 rollbacks de 6 cuadros cada uno, con la PC más tranquila):
 
@@ -1109,6 +1110,35 @@ puerta del VERSUS): termina en el mismo cuadro en todas, cuando todas dijeron qu
 cuadros distintos (en un núcleo: la carga entera; en dos núcleos y lecturas a 100 us/KB: carga, barrera y 13.622
 cuadros de pelea con 213 rollbacks); sin máquina lenta, 4 máquinas y 1 contra 1, 0. Una 1.4.0 nunca manda esa bandera
 y su compañera esperaría para siempre: por eso el protocolo 13, y la 1.4.1 no juega con la 1.4.0.
+
+**La vida en el online: el HUD en los cuadros que el rollback corre otra vez** (1.4.2). En el online la barra de vida,
+después de un golpe, a veces volvía a subir un momento, parpadeaba o tardaba en bajar. Era B2: desde la 0.6.0 los
+cuadros re-corridos no llaman a `FViewport::Draw`, y con él tampoco al `Draw` del cliente del viewport, donde el HUD de
+la pelea (los widgets de NetherRealm: `TopBar_Health*`, las curvas de `FightingArt.Curves`) avanza sus animaciones: el
+relleno de las barras y el rojo del daño que se va vaciando. El rollback le devuelve al HUD la memoria del cuadro al
+que vuelve, como a todo, y los cuadros re-corridos no la movían: cada rollback atrasaba las animaciones de las barras
+tantos cuadros como re-corría. Con el SyncTest (4400,8,6 contra la CPU, con las barras llenándose al empezar) se ve en
+video: 7 cuadros para adelante y 6 para atrás, cada 8. Ahora esos cuadros llaman a `FViewport::Draw` y sólo dejan
+afuera la escena 3D: `BeginRenderingViewFamily` (`sub_8284E880`, la que arma el `FDrawSceneCommand`, vtable
+0x8211D330), el recorrido del hilo de render que ahorraba B2 (`hidden_draw.cpp`; `direct_calls.py --redo` para la
+llamada de `sub_828A42E0`). SyncTest con 150 rollbacks: 0 cuadros distintos y las barras como sin rollback; dos
+máquinas con lag: 0 desync, el cuadro más largo de unos 30 ms.
+
+**El aviso del perfil a mitad de sesión** (issue #17, 1.4.2). Un jugador que guardaba la configuración del mando en
+plena sesión (OPCIONES > MANDO) hacía que en todas las máquinas el juego le preguntara al usuario 0 "iniciar sesión /
+continuar sin guardar" (el aviso del SDK), y cada una lo contestaba a su tiempo (la de un espectador, nunca): los
+juegos se separaban y al espectador se le cortaba la partida. Ahora en una sesión (de jugador, de espectador o de un
+replay) todas lo contestan igual y en el mismo cuadro, como ya hacían con los usuarios 1 a 3
+(`mk9_profile_prompt.cpp`). Una 1.4.1 mostraría el aviso: por eso el protocolo 14 (también el `hi` de las salas,
+`room.cpp` `kProto`), y la 1.4.2 no juega con la 1.4.1.
+
+**Replays de versiones anteriores** (1.4.2). La 1.4.1 sólo abría los replays de su protocolo y los de la 1.4.0 decían
+"otra versión". Los de 12 y 13 se juegan igual acá (13 y 14 cambiaron en qué se ponen de acuerdo las máquinas, no la
+pelea): `CanWatchProtocol` los acepta desde `kOldestWatchable` (12; subirlo con un cambio en cómo se juega una sesión),
+y `MovieWaitAgreed` deja la espera del video de la carga de la 1.4.0 como la tenía (la respuesta de cada máquina, que
+es lo que da un juego que la mira). F1 > Replays lee la cabecera de cada archivo (`MK9NET1`, la versión) y muestra en
+gris, "Otra versión", los que no se pueden ver. Un replay de 1 contra 1 de la 1.4.1: 2 de 7.027 cuadros distintos un
+momento en la carga; uno de cuatro máquinas: 0 de 8.646.
 
 **Rey de la colina** (`mk9_net_koth`, una sesión de tres o cuatro máquinas). Dos asientos (`koth_seat`: los usuarios 0
 y 1 de XInput, jugador 1 y 2) y una fila con las demás: `SeatOf` les da el mando a esas dos, y las entradas de las

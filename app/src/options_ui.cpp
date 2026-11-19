@@ -793,6 +793,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::Checkbox(Tid("Mostrar la frame data en Práctica (arranque y ventaja de cada golpe)").c_str(), &frames)) {
       Set({{"mk9_frame_data", frames ? "true" : "false"}}, T(frames ? "Frame data activada" : "Frame data desactivada"));
     }
+    // mk9-lauta (2026-11-18): Practice's recording of the opponent (mk9_practice_record.h)
+    bool record = rex::cvar::GetFlagByName("mk9_practice_record") == "true";
+    if (ImGui::Checkbox(Tid("Grabar al rival en Práctica (F5 grabar, F6 reproducir, F7 en bucle)").c_str(), &record)) {
+      Set({{"mk9_practice_record", record ? "true" : "false"}},
+          T(record ? "Grabación del rival activada" : "Grabación del rival desactivada"));
+    }
     ImGui::Text("%s", T("Mandos conectados:"));
     bool any_pad = false;
     for (const controls::Device& d : controls::Devices()) {

@@ -13,7 +13,7 @@ project(mk9 VERSION 1.0.4 LANGUAGES CXX)
 # The release version, shown in the homebrew menu (the NRO's NACP); the installer's manifest names the same.
 set(MK9_VERSION "${PROJECT_VERSION}")
 # mk9-lauta: the PC port's own version (the window's title, the release's zip); MK9_VERSION stays mk9-nx's
-set(MK9_LAUTA_VERSION "1.4.1")
+set(MK9_LAUTA_VERSION "1.4.2")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -92,6 +92,7 @@ set(MK9_SOURCES
     src/mk9_input_display.cpp
     # mk9-lauta (2026-11-17): frame data in Practice: each attack's startup and advantage (mk9_frame_data.h).
     src/mk9_frame_data.cpp
+    src/mk9_practice_record.cpp
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
     src/mk9_localization.cpp
