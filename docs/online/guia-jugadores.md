@@ -182,8 +182,15 @@ El teclado ya viene listo para pelear:
 | Pausa / Start | Enter o Esc | Start |
 
 El X-Ray es Cubrirse + Cambio de guardia (L + Ñ). Cada tecla se cambia en **F2 > Controles**: "Cambiar" y apretá la
-tecla nueva. Para jugar un Versus en la misma PC con el teclado y un mando, poné "El teclado maneja al: Jugador 2". En
-el online manejás a tu luchador con el teclado y con cualquier mando conectado.
+tecla nueva (también las del teclado numérico: Num 0 a 9, +, -, * y /). Para jugar un Versus en la misma PC con el
+teclado y un mando, poné "El teclado maneja al: Jugador 2". En el online manejás a tu luchador con el teclado y con
+cualquier mando conectado.
+
+**Dos jugadores en el mismo teclado** (**F2 > Controles**): el segundo juega con las flechas y el teclado numérico
+(Num 7 y 8 los puños, Num 4 y 5 las patadas, Num 9 agarre, Num 6 cubrirse, Num + cambio de guardia, Num - relevo, Num 0
+pausa) y el primero se queda con sus letras (sin las flechas). Cada uno cambia sus teclas en su tabla; una tecla es de
+un solo jugador. Con "Somos dos en esta PC" en la sala, sirve también para el 2 contra 2 online. Algunos teclados no
+registran muchas teclas apretadas a la vez.
 
 Qué golpe hace cada botón se cambia en el menú del juego, **OPCIONES > MANDO**, y el teclado lo sigue.
 

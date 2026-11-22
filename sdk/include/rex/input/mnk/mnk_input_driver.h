@@ -58,6 +58,9 @@ class MnkInputDriver final : public InputDriver,
 
  private:
   bool IsEnabled() const;
+  // mk9-lauta (2026-11-22, issue #18): 0 the keyboard, 1 the second keyboard player's device, -1 none of this driver's
+  int DeviceIndex(DeviceId id) const;
+  X_RESULT GetSecondPlayerState(X_INPUT_STATE* out_state);
   void SetKeyState(uint16_t vk, bool down);
   void EnqueueKeystroke(uint16_t vk_pad, bool down);
 
@@ -78,6 +81,7 @@ class MnkInputDriver final : public InputDriver,
   // Preserve a press until the guest has sampled it at least once. UI key
   // down/up pairs may both arrive between two XInputGetState calls.
   bool key_pressed_[256] = {};
+  bool key_pressed2_[256] = {};  // the same for the second keyboard player's device (mk9-lauta, issue #18)
 
   // Mouse delta tracking. Fractional because relative motion arrives in
   // fractions of a pixel, and truncating each event drops slow movement.
@@ -107,6 +111,7 @@ class MnkInputDriver final : public InputDriver,
 
   // Packet number incremented on state change
   uint32_t packet_number_ = 0;
+  uint32_t packet_number2_ = 0;  // the second keyboard player's
 };
 
 }  // namespace rex::input::mnk

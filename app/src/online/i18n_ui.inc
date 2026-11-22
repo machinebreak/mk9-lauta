@@ -155,6 +155,18 @@
       {"Logos al iniciar", {"Startup logos", "Logos ao iniciar"}},
       {"Cinemáticas", {"Cutscenes", "Cinemáticas"}},
       {"Sonido", {"Sound", "Som"}},
+      {"Dos jugadores en el mismo teclado", {"Two players on the same keyboard", "Dois jogadores no mesmo teclado"}},
+      {"Dos jugadores en el teclado", {"Two players on the keyboard", "Dois jogadores no teclado"}},
+      {"Un jugador en el teclado", {"One player on the keyboard", "Um jogador no teclado"}},
+      {"Jugador {}", {"Player {}", "Jogador {}"}},
+      {"Jugador {} (en el mismo teclado)", {"Player {} (on the same keyboard)", "Jogador {} (no mesmo teclado)"}},
+      {"{} del otro jugador", {"the other player's {}", "{} do outro jogador"}},
+      {"Una tecla es de un solo jugador: si la elegís para uno, se la saco al otro. Algunos teclados no registran "
+       "muchas teclas apretadas a la vez.",
+       {"A key belongs to one player only: choosing it for one takes it from the other. Some keyboards don't register "
+        "many keys pressed at once.",
+        "Uma tecla é de um só jogador: se você a escolhe para um, ela sai do outro. Alguns teclados não registram "
+        "muitas teclas apertadas ao mesmo tempo."}},
       {"Automático (según la placa de sonido)", {"Automatic (as the sound device says)",
                                                  "Automático (conforme a placa de som)"}},
       {"Estéreo (parlantes o auriculares)", {"Stereo (speakers or headphones)", "Estéreo (alto-falantes ou fones)"}},

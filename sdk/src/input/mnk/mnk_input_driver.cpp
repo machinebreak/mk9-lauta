@@ -60,12 +60,33 @@ REXCVAR_DEFINE_STRING(keybind_back, "Z,Tab", "Input/Keybinds/Controller", "Back 
 REXCVAR_DEFINE_STRING(keybind_start, "X,Return", "Input/Keybinds/Controller", "Start button");
 REXCVAR_DEFINE_STRING(keybind_guide, "", "Input/Keybinds/Controller", "Guide button");
 
+// mk9-lauta (2026-11-22, issue #18): a second player on the same keyboard, with keys of their own: a second device
+// ("Keyboard 2") the game's device assignment seats on another player. The defaults are the arrows and the numpad,
+// away from the first player's letters.
+REXCVAR_DEFINE_BOOL(mnk_second_player, false, "Input/Keybinds/Player 2",
+                    "A second player on the keyboard: a second device, \"Keyboard 2\", read with the keybind2_* keys");
+REXCVAR_DEFINE_STRING(keybind2_a, "Numpad4", "Input/Keybinds/Player 2", "A button");
+REXCVAR_DEFINE_STRING(keybind2_b, "Numpad5", "Input/Keybinds/Player 2", "B button");
+REXCVAR_DEFINE_STRING(keybind2_x, "Numpad7", "Input/Keybinds/Player 2", "X button");
+REXCVAR_DEFINE_STRING(keybind2_y, "Numpad8", "Input/Keybinds/Player 2", "Y button");
+REXCVAR_DEFINE_STRING(keybind2_left_trigger, "NumpadPlus", "Input/Keybinds/Player 2", "Left trigger");
+REXCVAR_DEFINE_STRING(keybind2_right_trigger, "Numpad6", "Input/Keybinds/Player 2", "Right trigger");
+REXCVAR_DEFINE_STRING(keybind2_left_shoulder, "NumpadMinus", "Input/Keybinds/Player 2", "Left shoulder");
+REXCVAR_DEFINE_STRING(keybind2_right_shoulder, "Numpad9", "Input/Keybinds/Player 2", "Right shoulder");
+REXCVAR_DEFINE_STRING(keybind2_lstick_up, "Up", "Input/Keybinds/Player 2", "Left stick up");
+REXCVAR_DEFINE_STRING(keybind2_lstick_down, "Down", "Input/Keybinds/Player 2", "Left stick down");
+REXCVAR_DEFINE_STRING(keybind2_lstick_left, "Left", "Input/Keybinds/Player 2", "Left stick left");
+REXCVAR_DEFINE_STRING(keybind2_lstick_right, "Right", "Input/Keybinds/Player 2", "Left stick right");
+REXCVAR_DEFINE_STRING(keybind2_start, "Numpad0", "Input/Keybinds/Player 2", "Start button");
+REXCVAR_DEFINE_STRING(keybind2_back, "NumpadStar", "Input/Keybinds/Player 2", "Back button");
+
 namespace rex::input::mnk {
 
 namespace {
 
-// A single device, so its handle is a constant.
+// A single device, so its handle is a constant. mk9-lauta (2026-11-22, issue #18): and the second keyboard player's.
 constexpr rex::input::DeviceId kMnkDevice = static_cast<rex::input::DeviceId>(0x4D4E4B00);
+constexpr rex::input::DeviceId kMnkDevice2 = static_cast<rex::input::DeviceId>(0x4D4E4B01);
 
 // Bind values are a comma-separated list of alternatives, each optionally
 // carrying modifier prefixes: "Q,I" or "Shift+W". Modifier matching is exact,
@@ -231,11 +252,26 @@ void MnkInputDriver::EnumerateDevices(std::vector<DeviceInfo>& out) {
   info.name = "Keyboard and Mouse";
   info.synthetic = true;
   out.push_back(info);
+  if (REXCVAR_GET(mnk_second_player)) {
+    DeviceInfo second;
+    second.id = kMnkDevice2;
+    second.name = "Keyboard 2";
+    second.synthetic = true;
+    out.push_back(second);
+  }
+}
+
+// The device's handle, when it is one of this driver's (the second only while mnk_second_player is on): its index.
+int MnkInputDriver::DeviceIndex(DeviceId id) const {
+  if (!IsEnabled()) return -1;
+  if (id == kMnkDevice) return 0;
+  if (id == kMnkDevice2 && REXCVAR_GET(mnk_second_player)) return 1;
+  return -1;
 }
 
 X_RESULT MnkInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t flags,
                                                X_INPUT_CAPABILITIES* out_caps) {
-  if (!IsEnabled() || id != kMnkDevice) {
+  if (DeviceIndex(id) < 0) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
   }
   if (out_caps) {
@@ -257,8 +293,12 @@ X_RESULT MnkInputDriver::GetDeviceCapabilities(DeviceId id, uint32_t flags,
 }
 
 X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
-  if (!IsEnabled() || id != kMnkDevice) {
+  const int device = DeviceIndex(id);
+  if (device < 0) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
+  }
+  if (device == 1) {
+    return GetSecondPlayerState(out_state);
   }
 
   // Mass Effect test harness (host only): SA2_AUTO_INPUT="T:BTN[:SECONDS];..." scripts the pad
@@ -415,8 +455,54 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
   return X_ERROR_SUCCESS;
 }
 
+// mk9-lauta (2026-11-22, issue #18): the second keyboard player's pad: the same keyboard read with keybind2_*, the
+// presses latched apart from the first player's (each device's poll takes its own), no mouse and no test script.
+X_RESULT MnkInputDriver::GetSecondPlayerState(X_INPUT_STATE* out_state) {
+  if (!is_active() || !has_focus_) {
+    if (out_state) {
+      std::memset(out_state, 0, sizeof(*out_state));
+      out_state->packet_number = packet_number2_;
+    }
+    return X_ERROR_SUCCESS;
+  }
+  std::lock_guard lock(state_mutex_);
+  bool sampled_keys[256];
+  for (size_t i = 0; i < std::size(sampled_keys); ++i) {
+    sampled_keys[i] = key_down_[i] || key_pressed2_[i];
+    key_pressed2_[i] = false;
+  }
+  uint16_t buttons = 0;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_a))) buttons |= X_INPUT_GAMEPAD_A;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_b))) buttons |= X_INPUT_GAMEPAD_B;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_x))) buttons |= X_INPUT_GAMEPAD_X;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_y))) buttons |= X_INPUT_GAMEPAD_Y;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_left_shoulder))) buttons |= X_INPUT_GAMEPAD_LEFT_SHOULDER;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_right_shoulder))) buttons |= X_INPUT_GAMEPAD_RIGHT_SHOULDER;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_back))) buttons |= X_INPUT_GAMEPAD_BACK;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_start))) buttons |= X_INPUT_GAMEPAD_START;
+  const uint8_t lt = IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_left_trigger)) ? 0xFF : 0;
+  const uint8_t rt = IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_right_trigger)) ? 0xFF : 0;
+  int32_t lx = 0;
+  int32_t ly = 0;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_lstick_left))) lx -= INT16_MAX;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_lstick_right))) lx += INT16_MAX;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_lstick_up))) ly += INT16_MAX;
+  if (IsBindPressed(sampled_keys, REXCVAR_GET(keybind2_lstick_down))) ly -= INT16_MAX;
+  packet_number2_++;
+  if (out_state) {
+    std::memset(out_state, 0, sizeof(*out_state));
+    out_state->packet_number = packet_number2_;
+    out_state->gamepad.buttons = buttons;
+    out_state->gamepad.left_trigger = lt;
+    out_state->gamepad.right_trigger = rt;
+    out_state->gamepad.thumb_lx = static_cast<int16_t>(lx);
+    out_state->gamepad.thumb_ly = static_cast<int16_t>(ly);
+  }
+  return X_ERROR_SUCCESS;
+}
+
 X_RESULT MnkInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibration) {
-  if (!IsEnabled() || id != kMnkDevice) {
+  if (DeviceIndex(id) < 0) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
   }
   return X_ERROR_SUCCESS;
@@ -424,8 +510,12 @@ X_RESULT MnkInputDriver::SetDeviceVibration(DeviceId id, X_INPUT_VIBRATION* vibr
 
 X_RESULT MnkInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
                                             X_INPUT_KEYSTROKE* out_keystroke) {
-  if (!IsEnabled() || id != kMnkDevice) {
+  const int device = DeviceIndex(id);
+  if (device < 0) {
     return X_ERROR_DEVICE_NOT_CONNECTED;
+  }
+  if (device == 1) {
+    return X_ERROR_EMPTY;  // the keystrokes are the first device's
   }
   std::lock_guard lock(state_mutex_);
   if (keystroke_queue_.empty()) {
@@ -531,6 +621,7 @@ void MnkInputDriver::SetKeyState(uint16_t vk, bool down) {
   if (vk < 256) {
     if (down && !key_down_[vk]) {
       key_pressed_[vk] = true;
+      key_pressed2_[vk] = true;  // mk9-lauta (2026-11-22): the second keyboard player's poll takes its own
     }
     key_down_[vk] = down;
   }

@@ -14,25 +14,34 @@
 #if defined(_WIN32)
 #include <windows.h>
 #endif
-#if !defined(_WIN32)
-#include <SDL3/SDL.h>
-#endif
+#include <SDL3/SDL.h>  // (mk9-lauta 2026-11-22: Windows too, for MK9_TEST_KEYS)
 
 
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
+#include <sstream>
 #include <string_view>
+#include <thread>
+
+#include <fmt/format.h>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/input/device.h>
+#include <rex/input/input_system.h>
+#include <rex/runtime.h>
+#include <rex/system/kernel_state.h>
 #include <rex/input/device_assignment.h>
 #include <rex/ui/keybinds.h>
 #include <rex/ui/ui_event.h>
 #include <rex/ui/virtual_key.h>
 #include <rex/ui/window.h>
 #include <rex/ui/window_listener.h>
+#include <rex/ui/window_sdl.h>
+#include <rex/ui/windowed_app_context.h>
 
 REXCVAR_DEFINE_INT32(mk9_keyboard_player, 1, "MK9",
                      "The player the keyboard plays offline (1 or 2; 2 lets a local Versus use the keyboard and one "
@@ -47,6 +56,7 @@ using rex::input::DeviceInfo;
 using rex::input::kMaxGuestUsers;
 
 constexpr std::string_view kKeyboardName = "Keyboard and Mouse";  // the SDK's keyboard device (mnk_input_driver.cpp)
+constexpr std::string_view kKeyboard2Name = "Keyboard 2";  // its second player's (mnk_second_player, issue #18)
 
 std::mutex g_list_mutex;
 std::vector<Device> g_list;
@@ -56,17 +66,24 @@ uint32_t KeyboardUser() {
   return player >= 1 && player <= int32_t(kMaxGuestUsers) ? uint32_t(player - 1) : 0;
 }
 
+// mk9-lauta (2026-11-22, issue #18): the second keyboard player's: player 2, or player 1 when the keyboard plays 2
+uint32_t SecondKeyboardUser() { return KeyboardUser() == 0 ? 1 : 0; }
+
 // As the SDK's SlotAssignment (pad N plays guest user N, synthetic devices user 0), with the keyboard on its player.
 class Assignment final : public rex::input::DeviceAssignment {
  public:
   void OnDevicesChanged(const std::vector<DeviceInfo>& devices) override {
     for (auto& user : users_) user.clear();
     keyboard_ = DeviceId::kInvalid;
+    keyboard2_ = DeviceId::kInvalid;
     std::vector<Device> listed;
     for (const DeviceInfo& device : devices) {
       if (device.synthetic && device.name == kKeyboardName) {
         keyboard_ = device.id;
         listed.push_back({"Teclado", 0, true});
+      } else if (device.synthetic && device.name == kKeyboard2Name) {
+        keyboard2_ = device.id;
+        listed.push_back({"Teclado (segundo jugador)", 0, true, true});
       } else if (device.synthetic) {
         // the stand-in, the test script (pad 1); mk9-lauta (2026-11-13): its pads 2-4, "Script N", on player N
         const size_t n = device.name.rfind("Script ", 0) == 0 && device.name.size() == 8 ? size_t(device.name[7] - '1')
@@ -82,7 +99,8 @@ class Assignment final : public rex::input::DeviceAssignment {
     std::string seen;
     for (const Device& d : listed) {
       seen += (seen.empty() ? "" : ", ") + d.name + " (" +
-              (d.keyboard ? "player " + std::to_string(KeyboardUser() + 1) + " offline"
+              (d.keyboard ? "player " + std::to_string((d.second ? SecondKeyboardUser() : KeyboardUser()) + 1) +
+                                " offline"
                           : d.player ? "player " + std::to_string(d.player) : std::string("no player")) + ")";
     }
     REXLOG_INFO("[controls] {}", seen.empty() ? std::string("no keyboard, no pad") : seen);
@@ -95,11 +113,13 @@ class Assignment final : public rex::input::DeviceAssignment {
     if (user_index >= kMaxGuestUsers) return;
     out = users_[user_index];
     if (keyboard_ != DeviceId::kInvalid && user_index == KeyboardUser()) out.push_back(keyboard_);
+    if (keyboard2_ != DeviceId::kInvalid && user_index == SecondKeyboardUser()) out.push_back(keyboard2_);
   }
 
  private:
   std::vector<std::vector<DeviceId>> users_ = std::vector<std::vector<DeviceId>>(kMaxGuestUsers);
   DeviceId keyboard_ = DeviceId::kInvalid;
+  DeviceId keyboard2_ = DeviceId::kInvalid;
 };
 
 #if defined(_WIN32)
@@ -248,9 +268,82 @@ void FindMappingsFile() {
   if (std::filesystem::exists(beside, ec)) rex::cvar::SetFlagByName("hid_mappings_file", beside.string());
 }
 
+// mk9-lauta (2026-11-22, tests for issues #18 and #20): MK9_TEST_KEYS="<seconds> <SDL key name>[+<name>...];..."
+// presses those keys in the game's window at those seconds after it opens ("8 Keypad 7+Up": SDL's names), as SDL key
+// events with their scan codes handed to the window on its UI thread, the way SDL's own reach it (the SDK translates the
+// scan code, then the window's listeners and the keyboard driver's binds): held 0.5 s, then let go. While they are held
+// it logs the pads players 1 and 2 read ("[controls] test keys ...").
+void StartKeyTest(rex::ui::Window* window) {
+  const char* spec = std::getenv("MK9_TEST_KEYS");
+  auto* sdl_window = dynamic_cast<rex::ui::WindowSDL*>(window);
+  if (!spec || !*spec || !sdl_window) return;
+  std::thread([text = std::string(spec), sdl_window] {
+    const auto start = std::chrono::steady_clock::now();
+    auto deliver = [sdl_window](std::vector<SDL_Event> events) {
+      sdl_window->app_context().CallInUIThreadSynchronous([sdl_window, &events] {
+        for (SDL_Event& e : events) {
+          if (e.type == SDL_EVENT_WINDOW_FOCUS_GAINED) sdl_window->HandleWindowEvent(e);
+          else sdl_window->HandleKeyEvent(e);
+        }
+      });
+    };
+    auto key = [](SDL_Scancode code, bool down) {
+      SDL_Event e{};
+      e.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+      e.key.scancode = code;
+      e.key.key = SDL_GetKeyFromScancode(code, SDL_KMOD_NONE, false);
+      e.key.down = down;
+      return e;
+    };
+    std::istringstream in(text);
+    for (std::string item; std::getline(in, item, ';');) {
+      const size_t space = item.find(' ');
+      if (space == std::string::npos) continue;
+      const double at = std::atof(item.substr(0, space).c_str());
+      std::vector<SDL_Scancode> codes;
+      std::istringstream keys(item.substr(space + 1));
+      for (std::string name; std::getline(keys, name, '+');) {
+        const SDL_Scancode code = SDL_GetScancodeFromName(name.c_str());
+        if (code == SDL_SCANCODE_UNKNOWN) {
+          REXLOG_WARN("[controls] test keys: SDL has no key '{}'", name);
+          continue;
+        }
+        codes.push_back(code);
+      }
+      std::this_thread::sleep_until(start + std::chrono::milliseconds(int64_t(at * 1000)));
+      std::vector<SDL_Event> down;
+      SDL_Event focus{};
+      focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;  // a test window starts minimized: the keyboard listens anyway
+      down.push_back(focus);
+      for (const SDL_Scancode code : codes) down.push_back(key(code, true));
+      deliver(std::move(down));
+      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      auto* runtime = REX_KERNEL_STATE() ? REX_KERNEL_STATE()->emulator() : nullptr;
+      auto* is = runtime ? static_cast<rex::input::InputSystem*>(runtime->input_system()) : nullptr;
+      std::string pads;
+      for (uint32_t user = 0; is && user < 2; ++user) {
+        rex::input::X_INPUT_STATE state{};
+        const bool got = is->GetState(user, &state) == 0;
+        pads += fmt::format("; player {}: {}", user + 1,
+                            got ? fmt::format("buttons {:04X} triggers {} {} stick {} {}",
+                                              uint16_t(state.gamepad.buttons), uint8_t(state.gamepad.left_trigger),
+                                              uint8_t(state.gamepad.right_trigger), int16_t(state.gamepad.thumb_lx),
+                                              int16_t(state.gamepad.thumb_ly))
+                                : std::string("no device"));
+      }
+      REXLOG_INFO("[controls] test keys '{}'{}", item.substr(space + 1), pads);
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      std::vector<SDL_Event> up;
+      for (const SDL_Scancode code : codes) up.push_back(key(code, false));
+      deliver(std::move(up));
+    }
+  }).detach();
+}
+
 void AttachWindow(rex::ui::Window* window) {
   static KeyCapture capture;
   if (window) window->AddInputListener(&capture, 1000);
+  StartKeyTest(window);
 }
 
 void CaptureNextKey(bool on) {
@@ -267,9 +360,32 @@ std::vector<Device> Devices() {
     list = g_list;
   }
   for (Device& d : list) {
-    if (d.keyboard) d.player = int(KeyboardUser()) + 1;
+    if (d.keyboard) d.player = int(d.second ? SecondKeyboardUser() : KeyboardUser()) + 1;
   }
   return list;
+}
+
+int KeyboardPlayer() { return int(KeyboardUser()) + 1; }
+int SecondKeyboardPlayer() { return int(SecondKeyboardUser()) + 1; }
+
+const std::vector<Action>& SecondPlayerActions() {
+  static const std::vector<Action> actions = {
+      {"keybind2_lstick_up", "Arriba (saltar)", "Stick arriba"},
+      {"keybind2_lstick_down", "Abajo (agacharse)", "Stick abajo"},
+      {"keybind2_lstick_left", "Izquierda", "Stick izquierda"},
+      {"keybind2_lstick_right", "Derecha", "Stick derecha"},
+      {"keybind2_x", "Puño frontal (1)", "X"},
+      {"keybind2_y", "Puño trasero (2)", "Y"},
+      {"keybind2_a", "Patada frontal (3) / aceptar", "A"},
+      {"keybind2_b", "Patada trasera (4) / volver", "B"},
+      {"keybind2_right_shoulder", "Agarre", "RB"},
+      {"keybind2_right_trigger", "Cubrirse", "RT"},
+      {"keybind2_left_trigger", "Cambio de guardia", "LT"},
+      {"keybind2_left_shoulder", "Relevo (peleas por equipos)", "LB"},
+      {"keybind2_start", "Pausa (Start)", "Start"},
+      {"keybind2_back", "Back", "Back"},
+  };
+  return actions;
 }
 
 const std::vector<Action>& Actions() {

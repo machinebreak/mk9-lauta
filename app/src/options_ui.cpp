@@ -334,6 +334,22 @@ std::string WithoutKey(const std::string& bind, int virtual_key) {
   return out;
 }
 
+// mk9-lauta (2026-11-22, issue #18): a bind without any key the given binds have (the second keyboard player's keys
+// leave the first's).
+std::string WithoutKeysOf(std::string bind, const std::vector<std::string>& others) {
+  for (const std::string& other : others) {
+    std::istringstream in(other);
+    for (std::string token; std::getline(in, token, ',');) {
+      while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+      while (!token.empty() && token.back() == ' ') token.pop_back();
+      if (token.empty() || token.find('+') != std::string::npos) continue;
+      const int vk = int(rex::ui::ParseVirtualKey(token));
+      if (vk > 0) bind = WithoutKey(bind, vk);
+    }
+  }
+  return bind;
+}
+
 std::filesystem::path ConfigPath() {
   return mk9::platform::ExeDir() / "mk9.toml";
 }
@@ -782,8 +798,23 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
                                  "Jugador 1). Online manejás a tu luchador con el teclado y con cualquier mando "
                                  "conectado."));
       ImGui::PopStyleColor();
+      // mk9-lauta (2026-11-22, issue #18): two players on one keyboard, each with keys of their own
+      bool second = rex::cvar::GetFlagByName("mnk_second_player") == "true";
+      if (ImGui::Checkbox(Tid("Dos jugadores en el mismo teclado").c_str(), &second)) SetSecondPlayer(second);
       ImGui::Spacing();
-      DrawKeys();
+      if (second) {
+        ImGui::Text("%s", Tf("Jugador {}", controls::KeyboardPlayer()).c_str());
+      }
+      DrawKeys(0);
+      if (second) {
+        ImGui::Spacing();
+        ImGui::Text("%s", Tf("Jugador {} (en el mismo teclado)", controls::SecondKeyboardPlayer()).c_str());
+        DrawKeys(kSecondBase);
+        ImGui::PushStyleColor(ImGuiCol_Text, grey);
+        ImGui::TextWrapped("%s", T("Una tecla es de un solo jugador: si la elegís para uno, se la saco al otro. Algunos "
+                                   "teclados no registran muchas teclas apretadas a la vez."));
+        ImGui::PopStyleColor();
+      }
     }
     ImGui::Separator();
     DrawOption(kButtonIconsOption);
@@ -917,10 +948,35 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     }
   }
 
-  void DrawKeys() {
-    const auto& actions = controls::Actions();
-    if (ImGui::BeginTable("keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
-                                         ImGuiTableFlags_SizingStretchProp)) {
+  // mk9-lauta (2026-11-22, issue #18): the actions of the table at base 0 (the keyboard's) or kSecondBase (the second
+  // keyboard player's); capturing_ is base + the action's index.
+  static constexpr int kSecondBase = 100;
+  static const std::vector<controls::Action>& TableActions(int base) {
+    return base == kSecondBase ? controls::SecondPlayerActions() : controls::Actions();
+  }
+
+  // The second keyboard player on or off: on, the first player's keys lose the ones the second's use (the arrows)
+  void SetSecondPlayer(bool on) {
+    StopCapture();
+    std::vector<std::pair<std::string, std::string>> values{{"mnk_second_player", on ? "true" : "false"}};
+    if (on) {
+      std::vector<std::string> theirs;
+      for (const controls::Action& a : controls::SecondPlayerActions()) {
+        theirs.push_back(rex::cvar::GetFlagByName(a.cvar));
+      }
+      for (const controls::Action& a : controls::Actions()) {
+        const std::string bind = rex::cvar::GetFlagByName(a.cvar);
+        const std::string without = WithoutKeysOf(bind, theirs);
+        if (without != bind) values.emplace_back(a.cvar, without);
+      }
+    }
+    Set(values, T(on ? "Dos jugadores en el teclado" : "Un jugador en el teclado"));
+  }
+
+  void DrawKeys(int base = 0) {
+    const auto& actions = TableActions(base);
+    if (ImGui::BeginTable(base ? "keys2" : "keys", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                                                       ImGuiTableFlags_SizingStretchProp)) {
       ImGui::TableSetupColumn(T("Acción"), ImGuiTableColumnFlags_WidthStretch, 2.3f);
       ImGui::TableSetupColumn(T("Mando"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
       ImGui::TableSetupColumn(T("Teclas"), ImGuiTableColumnFlags_WidthStretch, 1.8f);
@@ -928,7 +984,8 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       ImGui::TableHeadersRow();
       for (int i = 0; i < int(actions.size()); ++i) {
         const controls::Action& a = actions[size_t(i)];
-        ImGui::PushID(i);
+        const int id = base + i;
+        ImGui::PushID(id);
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::AlignTextToFramePadding();
@@ -936,27 +993,37 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         ImGui::TableNextColumn();
         ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.7f, 1), "%s", T(a.button));
         ImGui::TableNextColumn();
-        if (capturing_ == i) {
+        if (capturing_ == id) {
           ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1), "%s", T("Apretá una tecla..."));
         } else {
           const std::string keys = controls::KeysLabel(rex::cvar::GetFlagByName(a.cvar));
           ImGui::TextUnformatted(keys.empty() ? T("(ninguna)") : keys.c_str());
         }
         ImGui::TableNextColumn();
-        if (capturing_ == i) {
+        if (capturing_ == id) {
           if (ImGui::Button(Tid("Cancelar").c_str(), ImVec2(-1, 0))) StopCapture();
         } else if (ImGui::Button(Tid("Cambiar").c_str(), ImVec2(-1, 0))) {
-          capturing_ = i;
+          capturing_ = id;
           controls::CaptureNextKey(true);
         }
         ImGui::PopID();
       }
       ImGui::EndTable();
     }
-    if (ImGui::Button(Tid("Volver a las teclas de fábrica").c_str())) {
+    if (base == 0 && ImGui::Button(Tid("Volver a las teclas de fábrica").c_str())) {
       StopCapture();
       std::vector<std::pair<std::string, std::string>> values;
-      for (const controls::Action& a : actions) values.emplace_back(a.cvar, BuiltInDefault(a.cvar));
+      // with a second keyboard player, both to their own, the first's without the second's
+      const bool second = rex::cvar::GetFlagByName("mnk_second_player") == "true";
+      std::vector<std::string> theirs;
+      if (second) {
+        for (const controls::Action& a : controls::SecondPlayerActions()) {
+          const std::string bind = BuiltInDefault(a.cvar);
+          values.emplace_back(a.cvar, bind);
+          theirs.push_back(bind);
+        }
+      }
+      for (const controls::Action& a : actions) values.emplace_back(a.cvar, WithoutKeysOf(BuiltInDefault(a.cvar), theirs));
       Set(values, T("Teclas de fábrica"));
     }
   }
@@ -965,8 +1032,9 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
   void TakeKey() {
     const int vk = controls::TakeCapturedKey();
     if (vk < 0) return;
-    const auto& actions = controls::Actions();
-    const controls::Action& action = actions[size_t(capturing_)];
+    const int base = capturing_ >= kSecondBase ? kSecondBase : 0;
+    const auto& actions = TableActions(base);
+    const controls::Action& action = actions[size_t(capturing_ - base)];
     capturing_ = -1;
     const std::string name = controls::KeyName(vk);
     if (name.empty()) {
@@ -976,13 +1044,19 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     }
     std::vector<std::pair<std::string, std::string>> values{{action.cvar, name}};
     std::string moved;
-    for (const controls::Action& other : actions) {
-      if (&other == &action) continue;
-      const std::string bind = rex::cvar::GetFlagByName(other.cvar);
-      const std::string without = WithoutKey(bind, vk);
-      if (without != bind) {
-        values.emplace_back(other.cvar, without);
-        moved = T(other.label);
+    // mk9-lauta (2026-11-22, issue #18): from the other keyboard player's actions too, when there is one
+    const bool second = rex::cvar::GetFlagByName("mnk_second_player") == "true";
+    for (const int table : {0, kSecondBase}) {
+      if (table == kSecondBase && !second) continue;
+      for (const controls::Action& other : TableActions(table)) {
+        if (&other == &action) continue;
+        const std::string bind = rex::cvar::GetFlagByName(other.cvar);
+        const std::string without = WithoutKey(bind, vk);
+        if (without != bind) {
+          values.emplace_back(other.cvar, without);
+          moved = table == base ? std::string(T(other.label))
+                                : Tf("{} del otro jugador", T(other.label));
+        }
       }
     }
     Set(values, std::string(T(action.label)) + ": " + controls::KeysLabel(name) +

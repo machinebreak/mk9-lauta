@@ -39,6 +39,7 @@ struct Device {
   std::string name;
   int player = 0;  // 1-based; 0: none (a fifth pad)
   bool keyboard = false;
+  bool second = false;  // the second keyboard player's device (issue #18)
 };
 // The devices now connected, as last enumerated (any thread).
 std::vector<Device> Devices();
@@ -51,6 +52,12 @@ struct Action {
 };
 // In the options window's order: the four directions, the attacks, the rest.
 const std::vector<Action>& Actions();
+// mk9-lauta (2026-11-22, issue #18): the second player on the same keyboard (the SDK's mnk_second_player: a second
+// device, "Keyboard 2", seated on the player the keyboard does not play): the same actions on the keybind2_* cvars.
+const std::vector<Action>& SecondPlayerActions();
+// The player (1-based) each keyboard plays offline: the keyboard's (mk9_keyboard_player) and the second's, the other.
+int KeyboardPlayer();
+int SecondKeyboardPlayer();
 
 // A bind's keys as the player's keyboard prints them ("U", "Ñ", "Enter", "Flecha izquierda"), comma-separated ("" for
 // none). The SDK names keys by their place on an English keyboard (Semicolon: right of L), shown as this layout's key
