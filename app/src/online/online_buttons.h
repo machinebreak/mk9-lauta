@@ -47,4 +47,26 @@ std::string Encode(const Layout& layout);
 // game's own.
 void ToGameButtons(uint8_t* gamepad);
 
+// mk9-lauta (2026-11-22): the sticks and the triggers in a session's fights, as steady as the game reads them.
+//
+// A real pad trembles: a stick held still, or a trigger held down, reads a few units apart from one frame to the next.
+// The rollback predicts the other machine's next input as its last one, and every byte that changed was a wrong
+// prediction: with a stick in use, a rollback nearly every frame even with a short ping (the players' reports: the
+// HUD stuck and stutters with 25-35 ms; the tests' scripted pads never trembled). The game makes nothing of those
+// units: each frame sub_829D4ED8 turns each stick axis into a direction when it is past the stick's dead zone (its
+// sign, sub_829D4978: the pad object's +64 for the left stick, +68 for the right) and each trigger into a press past
+// the triggers' threshold (the first pad object's +44, a fraction of 255). Here they go as that: an axis past its
+// dead zone, all the way to that side (the game's 1.0 or -1.0), else centred; a trigger past the threshold, 255, else 0.
+// Both machines play the steadied pad, and the game's directions and presses are the ones it would have made of the
+// trembling one; a new input is a real change only.
+struct AnalogLimits {
+  float left_dead_zone = 0;     // a fraction of a full tilt
+  float right_dead_zone = 0;
+  float trigger_threshold = 0;  // a fraction of 255
+};
+// Whether the game's values (read from its memory) are usable: each in [0, 1).
+bool Usable(const AnalogLimits& limits);
+// The pad's sticks and triggers as the game reads them in a fight. Returns whether anything changed.
+bool ToGameAnalog(uint8_t* gamepad, const AnalogLimits& limits);
+
 }  // namespace mk9::online_buttons

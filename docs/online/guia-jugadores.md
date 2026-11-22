@@ -105,6 +105,10 @@ en la pelea.
   tiene un salto, el juego se corrige solo sin frenar. Los menús, la intro de cada pelea y la tragamonedas de DESAFÍO
   DE SUERTE (mientras gira nadie toca nada) van sincronizados con un retraso según el ping, así no se traban. En otros
   modos las peleas pueden ir con ese retraso, sin rollback.
+- Con stick o gatillos (un mando de Xbox o de PlayStation), en la pelea cuenta lo mismo que en el juego original: la
+  dirección del stick pasada su zona muerta y el gatillo apretado. El temblor normal de un stick o un gatillo ya no se
+  manda como si fuera otra entrada (antes, con un stick en uso, el rollback corregía casi todos los cuadros aunque el
+  ping fuera bajo).
 - En la pelea online **no hay pausa** (START no pausa).
 - Al terminar la partida, el que perdió elige en CONTINUE?: REMATCH, otro luchador o volver al menú.
 
@@ -312,6 +316,10 @@ de la pelea: tu partida queda como estaba.
 vuelve a armar jugando). Si borrás `portable.txt` vuelve a usar Documentos\mk9; lo que jugaste en modo portable queda
 en `user_data` y no se copia de vuelta.
 
+Si tus Documentos están en OneDrive o Windows no deja que el juego escriba ahí ("Acceso controlado a carpetas"), el
+juego no puede guardar en Documentos\mk9: desde la 1.4.2 lo dice en el log y sigue sin cerrarse (antes se cerraba al
+guardar, por ejemplo al entrar al Modo Historia). Con `portable.txt` las partidas quedan en la carpeta del juego.
+
 ## Actualizaciones
 
 Al abrirse, el juego se fija si hay una versión nueva en GitHub. Si la hay, aparece un aviso: **"Actualizar ahora"**
@@ -328,6 +336,11 @@ En **F2 > Acerca de > Abrir la carpeta de logs** está todo lo que pasó: mandá
 `crash_*.dmp` de la misma hora si el juego se cerró de golpe) en "Reportar un problema". Si en una partida online
 los dos vieron cosas distintas, cada uno tiene su `session_<fecha>_p1.mk9net` o `_p2.mk9net` de esa sesión: con los
 dos archivos se ve en qué cuadro se separaron los juegos.
+
+**No se escuchan el locutor ni las presentaciones de los personajes, o las voces suenan bajas**: tu PC le dice al
+juego que tiene parlantes 5.1 o 7.1 y el juego manda las voces al parlante del centro. Elegí
+**F2 > Pantalla e idioma > Sonido > Estéreo** y volvé a abrir el juego (o poné los parlantes en estéreo en la
+configuración de sonido de Windows).
 
 ## PCs con poca placa de video o poca memoria
 

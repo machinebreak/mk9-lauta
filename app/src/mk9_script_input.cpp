@@ -28,6 +28,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -211,6 +212,40 @@ void ParseLine(std::string line, std::vector<Event>& out) {
   out.push_back(e);
 }
 
+// MK9_TEST_STICK_NOISE's trembling (above GetDeviceState): each pad's own pseudo-random steps and resting points.
+void Tremble(int pad, int n, int16_t& lx, int16_t& ly, int16_t& rx, int16_t& ry, uint8_t& lt, uint8_t& rt) {
+  static uint32_t state[kScriptPads];
+  static int rest[kScriptPads][4];
+  uint32_t& s = state[pad];
+  if (!s) {
+    s = 0x9E3779B9u * uint32_t(pad + 1);
+    const int start[4] = {n * 3, -n * 2, n, -n};  // off centre, well inside any dead zone
+    for (int i = 0; i < 4; ++i) rest[pad][i] = start[i];
+  }
+  auto next = [&s] {
+    s ^= s << 13;
+    s ^= s >> 17;
+    s ^= s << 5;
+    return s;
+  };
+  int16_t* axes[4] = {&lx, &ly, &rx, &ry};
+  for (int i = 0; i < 4; ++i) {
+    int16_t& a = *axes[i];
+    if (a == 0) {
+      if (next() % 4 == 0) {  // a resting stick moves now and then, a little
+        rest[pad][i] += int(next() % uint32_t(n / 4 + 1)) - n / 8;
+        rest[pad][i] = std::clamp(rest[pad][i], -n * 4, n * 4);
+      }
+      a = int16_t(rest[pad][i]);
+    } else {
+      a = int16_t((a > 0 ? 26000 : -26000) + int(next() % uint32_t(2 * n + 1)) - n);
+    }
+  }
+  for (uint8_t* t : {&lt, &rt}) {
+    if (*t) *t = uint8_t(200 + next() % 56);
+  }
+}
+
 class ScriptInputDriver final : public rex::input::InputDriver {
  public:
   explicit ScriptInputDriver(std::vector<Event> events)
@@ -276,6 +311,15 @@ class ScriptInputDriver final : public rex::input::InputDriver {
         REXLOG_INFO("[script] {:.2f} s: release {}{}", now, e.pad ? fmt::format("P{}:", e.pad + 1) : "", e.text);
       }
     }
+    // mk9-lauta (2026-11-22, tests): MK9_TEST_STICK_NOISE=<n>: the scripted sticks and triggers tremble like a real
+    // pad's: a stick at rest a little off centre and moving now and then, a tilted one short of the edge and moving by
+    // up to n every read, a pressed trigger anywhere from 200 to 255. What a session makes of a real pad (the scripted
+    // ones never trembled, online_buttons.h ToGameAnalog).
+    static const int noise = [] {
+      const char* v = std::getenv("MK9_TEST_STICK_NOISE");
+      return v ? std::max(0, std::atoi(v)) : 0;
+    }();
+    if (noise > 0) Tremble(pad, noise, lx, ly, rx, ry, lt, rt);
     const uint64_t key = uint64_t(buttons) | uint64_t(lt) << 16 | uint64_t(rt) << 24 |
                          uint64_t(uint16_t(lx)) << 32 | uint64_t(uint16_t(ly)) << 48;
     PadState& last = last_[pad];

@@ -1167,3 +1167,30 @@ Medido en esta PC (Radeon 760M, cuatro instancias a la vez):
 Con cuatro instancias más otros programas abiertos en la misma PC el juego bajó a 12-16 fps (la PC no daba; cada
 jugador real tiene la suya). El diagnóstico de los luchadores (no el hash de sincronía) marcó una vez el campo
 `+0x79a8` (un tiempo de carga: 7,01 contra 7,20, 0,1875 de diferencia), el mismo falso positivo de 2026-11-11.
+
+### Los sticks y gatillos que tiemblan (1.4.2, 2026-11-22)
+
+Jugadores con buen ping (25-35 ms) veían el cartel FIGHT pegado toda la ronda, el reloj saltando entre dos valores,
+las barras subiendo y bajando, tirones, y decían que el online era "otro juego" (hitboxes raros, cancelaciones con más
+margen). La entrada de cada cuadro es el `X_INPUT_GAMEPAD` entero (12 bytes) y la predicción del rollback es la
+última entrada del otro: cualquier byte distinto es una predicción errada. Un stick o un gatillo de verdad tiembla
+(unas unidades de un cuadro al otro, quieto o inclinado), así que con un stick en uso casi todos los cuadros eran un
+rollback; los guiones de las pruebas nunca temblaban. El juego no hace nada con esas unidades: `sub_829D4ED8` convierte
+cada eje en una dirección cuando pasa la zona muerta (`sub_829D4978`, el objeto del mando `+64` para el stick
+izquierdo, `+68` el derecho: 0,25) y cada gatillo en un botón cuando pasa el umbral (`[0x83426F70 + 44]` por 255: 0,
+o sea cualquier valor). Ahora (`mk9_net_steady_analog`, `online_buttons.h` `ToGameAnalog`) la entrada nueva de cada
+cuadro de pelea lleva cada eje pasado la zona muerta hasta el tope (1,0 o -1,0 para el juego) o al centro, y cada
+gatillo apretado en 255 o suelto en 0, con la cuenta del juego hecha igual (en precisión simple, con su +1 del lado
+negativo): las direcciones y los botones son los que el juego habría sacado del mando que tiembla.
+
+Medido con dos juegos, 15 ± 3 ms por lado, delay 1 y mandos de prueba que tiemblan como uno real
+(`MK9_TEST_STICK_NOISE=300`, el guion de pelea con el stick y RT): sin esto, el lado que predice hizo 1340 rollbacks
+en ~2850 cuadros de pelea (80 % de predicciones erradas, hasta 10 cuadros para atrás, 130-189 cuadros re-corridos
+cada 5 s); con esto, 118 (7,5 % erradas, hasta 2 cuadros, 1-16 cada 5 s). Sin desync en las dos. Y la pelea es la
+misma: la grabación de una sesión así (sin estabilizar) reproducida con cada mando de la pelea estabilizado
+(`MK9_TEST_REPLAY_STEADY=1`, 3386 cuadros de pelea cambiados) dio 0 cuadros distintos de 7758 (los chequeos del
+juego, la vida y las posiciones), igual que reproducida tal cual. El HUD con un rollback casi por cuadro es lo de "La
+vida en el online" (los cuadros re-corridos ahora dibujan el HUD): en la 1.4.1 cada rollback lo atrasaba, y con uno
+por cuadro no avanzaba nunca (el cartel FIGHT de un video de un jugador); con la 1.4.2, en esa misma sesión de 90 %
+de predicciones erradas, el HUD se ve como sin rollback.
+

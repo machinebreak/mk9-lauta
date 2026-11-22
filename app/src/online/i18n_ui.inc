@@ -154,6 +154,19 @@
       {"Idioma del juego", {"Game language", "Idioma do jogo"}},
       {"Logos al iniciar", {"Startup logos", "Logos ao iniciar"}},
       {"Cinemáticas", {"Cutscenes", "Cinemáticas"}},
+      {"Sonido", {"Sound", "Som"}},
+      {"Automático (según la placa de sonido)", {"Automatic (as the sound device says)",
+                                                 "Automático (conforme a placa de som)"}},
+      {"Estéreo (parlantes o auriculares)", {"Stereo (speakers or headphones)", "Estéreo (alto-falantes ou fones)"}},
+      {"Si no se escuchan el locutor ni las presentaciones de los personajes, o las voces suenan bajas, elegí "
+       "Estéreo: tu PC dice tener parlantes 5.1 o 7.1 y el juego manda las voces al parlante del centro. Se aplica al "
+       "volver a abrir el juego.",
+       {"If the announcer and the fighters' introductions can't be heard, or the voices sound low, choose Stereo: "
+        "your PC says it has 5.1 or 7.1 speakers and the game sends the voices to the center speaker. Applies when the "
+        "game is opened again.",
+        "Se o locutor e as apresentações dos personagens não são ouvidos, ou as vozes soam baixas, escolha Estéreo: "
+        "seu PC diz ter alto-falantes 5.1 ou 7.1 e o jogo manda as vozes para o alto-falante central. Vale ao abrir o "
+        "jogo de novo."}},
       {"Videos de las cinemáticas", {"Cutscene videos", "Vídeos das cinemáticas"}},
       {"Los .bik si están (HD)", {"The .bik files if present (HD)", "Os .bik se existirem (HD)"}},
       {"Los del juego", {"The game's own", "Os do jogo"}},

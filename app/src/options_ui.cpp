@@ -208,6 +208,14 @@ const std::vector<Option>& DisplayOptions() {
        "Los textos del juego y de estas ventanas (estas cambian al momento; el juego, al volver a abrirlo). Si no "
        "elegís uno, es el idioma de tu PC. En español el Modo Historia está doblado.",
        true},
+      // mk9-lauta (2026-11-22): the game's 5.1 folded to stereo whatever the device says (the SDK's audio_output): a
+      // player heard no announcer and no intros, and low voices in the fights
+      {"audio_output", "Sonido",
+       {{"auto", "Automático (según la placa de sonido)"}, {"stereo", "Estéreo (parlantes o auriculares)"}},
+       "Si no se escuchan el locutor ni las presentaciones de los personajes, o las voces suenan bajas, elegí "
+       "Estéreo: tu PC dice tener parlantes 5.1 o 7.1 y el juego manda las voces al parlante del centro. Se aplica al "
+       "volver a abrir el juego.",
+       true},
   };
   return options;
 }

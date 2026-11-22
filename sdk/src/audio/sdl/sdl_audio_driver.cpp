@@ -42,6 +42,13 @@ REXCVAR_DEFINE_INT32(audio_dump_output_s, 0, "Audio",
                      "silences from missing frames) that are saved to audio_output.wav; 0 = none");
 REXCVAR_DEFINE_INT32(audio_dump_output_from_s, 0, "Audio",
                      "Diagnostic: seconds of SDL output skipped before the dump");
+// mk9-lauta (2026-11-22): a player heard no announcer and no fighters' intros in a fight and the voices low: what a
+// device that says 5.1 or 7.1 (Windows' speaker setup) with two speakers or headphones behind it does to a game that
+// puts its voices in the center channel. "stereo" folds the game's 5.1 to two channels whatever the device says.
+REXCVAR_DEFINE_STRING(audio_output, "auto", "Audio",
+                      "The sound's channels: auto (as the device says: 5.1 through to a device of more than two "
+                      "channels, folded to stereo otherwise) or stereo (always folded to two channels, the center's "
+                      "voices in both speakers)");
 
 namespace rex::audio::sdl {
 
@@ -257,7 +264,8 @@ bool SDLAudioDriver::OpenDevice() {
 
   // A 1-channel device gets the stereo fold too, then SDL collapses to mono.
   // Handing it a 6ch stream instead would use SDL's own downmix.
-  if (obtained_spec.channels <= 2) {
+  const bool stereo = REXCVAR_GET(audio_output) == "stereo";
+  if (obtained_spec.channels <= 2 || stereo) {
     SDL_DestroyAudioStream(sdl_stream_);
     sdl_stream_ = nullptr;
     desired_spec.channels = 2;
@@ -277,9 +285,10 @@ bool SDLAudioDriver::OpenDevice() {
   // first thing worth knowing when a report says the balance is wrong on one
   // speaker setup and right on another.
   const char* device_name = SDL_GetAudioDeviceName(sdl_device);
-  REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}; submitting {} ch",
+  REXAPU_INFO("audio endpoint '{}': {} ch, {} Hz, format 0x{:04X}; submitting {} ch{}",
               device_name ? device_name : "?", obtained_spec.channels, obtained_spec.freq,
-              static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
+              static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_),
+              stereo && obtained_spec.channels > 2 ? " (audio_output = stereo)" : "");
 
   if (!SDL_ResumeAudioDevice(sdl_device)) {
     return fail("SDL_ResumeAudioDevice()");

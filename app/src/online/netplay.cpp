@@ -108,6 +108,7 @@
 #endif
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <atomic>
 #include <condition_variable>
@@ -198,6 +199,10 @@ REXCVAR_DEFINE_BOOL(mk9_net_skip_logos, true, "MK9 Online",
                     "while one plays (an input, so both machines see it at the same frame)");
 REXCVAR_DEFINE_BOOL(mk9_net_pause_in_fights, false, "MK9 Online",
                     "START pauses a fight with rollback too (off: no pause in online fights; menus keep it)");
+REXCVAR_DEFINE_BOOL(mk9_net_steady_analog, true, "MK9 Online",
+                    "In a session's fights the sticks and triggers go as the game reads them (online_buttons.h "
+                    "ToGameAnalog: an axis past the game's dead zone all the way, a trigger past its threshold all the "
+                    "way): a real pad's trembling is no new input, and no rollback (false: as the pad gives them)");
 REXCVAR_DEFINE_INT32(mk9_net_local_players, 1, "MK9 Online",
                      "Players at this machine in a session: 2 = two against two with four players, two at each "
                      "machine (the second pad is the game's player 3 on the host, player 4 on the guest)")
@@ -1017,6 +1022,47 @@ uint32_t Load32(const uint8_t* base, uint32_t addr) {
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
 }
 
+// mk9-lauta (2026-11-22): the game's limits of a pad's analog parts (online_buttons.h ToGameAnalog), from its memory:
+// the pad objects (0x83426F70, 1540 bytes each) keep the sticks' dead zones at +64 and +68 and the first one the
+// triggers' threshold at +44 (sub_829D4ED8).
+constexpr uint32_t kGamePads = 0x83426F70;
+online_buttons::AnalogLimits GameAnalogLimits(const uint8_t* base) {
+  auto f32 = [&](uint32_t addr) { return std::bit_cast<float>(Load32(base, addr)); };
+  online_buttons::AnalogLimits limits;
+  limits.left_dead_zone = f32(kGamePads + 64);
+  limits.right_dead_zone = f32(kGamePads + 68);
+  limits.trigger_threshold = f32(kGamePads + 44);
+  return limits;
+}
+
+// This machine's new input of a fight frame, its sticks and triggers steadied (mk9_net_steady_analog): counted, and the
+// game's limits said once (a player's log)
+uint64_t g_steadied = 0, g_steady_made = 0;
+void SteadyAnalog(const uint8_t* base, uint8_t* bytes, uint8_t* bytes2) {
+  if (!REXCVAR_GET(mk9_net_steady_analog)) return;
+  const online_buttons::AnalogLimits limits = GameAnalogLimits(base);
+  static bool told = false;
+  if (!told) {
+    told = true;
+    if (online_buttons::Usable(limits)) {
+      REXLOG_INFO("[net] the fights' sticks and triggers go as the game reads them (mk9_net_steady_analog): dead zones "
+                  "{:.4f} (left stick) and {:.4f} (right), triggers pressed past {:.4f} of 255; the other pads' {:.4f} "
+                  "{:.4f} {:.4f}",
+                  limits.left_dead_zone, limits.right_dead_zone, limits.trigger_threshold,
+                  std::bit_cast<float>(Load32(base, kGamePads + 1540 + 64)),
+                  std::bit_cast<float>(Load32(base, kGamePads + 2 * 1540 + 64)),
+                  std::bit_cast<float>(Load32(base, kGamePads + 3 * 1540 + 64)));
+    } else {
+      REXLOG_WARN("[net] the game's pad limits read {} {} {}: the fights' sticks and triggers go as the pad gives them",
+                  limits.left_dead_zone, limits.right_dead_zone, limits.trigger_threshold);
+    }
+  }
+  ++g_steady_made;
+  bool changed = online_buttons::ToGameAnalog(bytes, limits);
+  if (g.local_players == 2) changed |= online_buttons::ToGameAnalog(bytes2, limits);
+  if (changed) ++g_steadied;
+}
+
 // An epoch's seed: the host's for epoch 0, then an integer hash of it and the epoch (the same on both machines).
 uint32_t EpochSeed(uint32_t epoch) {
   if (epoch == 0) return g.seed;
@@ -1218,7 +1264,10 @@ void EndSession(EndReason why, bool goodbye) {
   g_frame_started_us = 0;  // frames go on without the session: no hang to watch for
   REXLOG_INFO("[net] session ended: {}", ReasonText(why));
   if (g.watching) {
-    REXLOG_INFO("[watch] {} of {} frames compared differed from the match", g.watch_diffs, g.watch_compared);
+    REXLOG_INFO("[watch] {} of {} frames compared differed from the match{}", g.watch_diffs, g.watch_compared,
+                g_steady_made ? fmt::format(" (MK9_TEST_REPLAY_STEADY: {} of {} fight frames with a pad steadied)",
+                                            g_steadied, g_steady_made)
+                              : std::string());
   }
   RecordClose();
   heap_undo::End();
@@ -2204,7 +2253,7 @@ void LogStats() {
                        "(render {:.2f}, pools and queries {:.2f}, park {:.2f}; longest {:.1f}, {} unparked, {} query "
                        "batches collected of {} query objects, {} pool waits); advantage {:.1f}, {} sleeps; phase {:+.1f} ms ahead "
                        "(here {:+.1f}, there {:+.1f}), the grid moved back {:.1f} ms in {} steps; {} frames "
-                       "run again and {} live with no snapshot; the delay changed {} times",
+                       "run again and {} live with no snapshot; the delay changed {} times; {} of {} inputs made steadied",
                        g.speculating ? "" : " (learning)", g.rollbacks, g.resimulated, g.max_depth, g.predicted,
                        g.mispredicted, g.keeps ? g.ms_keep / double(g.keeps) : 0.0,
                        g.rollbacks ? g.ms_restore / double(g.rollbacks) : 0.0,
@@ -2214,7 +2263,7 @@ void LogStats() {
                        q.settles ? q.ms_park / double(q.settles) : 0.0, q.ms_max, q.unparked, q.collected,
                        q.queries_seen, q.pool_waits, advantage, g.syncs_slept, (phase - peer_phase) / 2.0, phase,
                        peer_phase, g.phase_shifted_ms, g.phase_shifts, g.light_boundaries, g.light_live,
-                       g.delay_changes);
+                       g.delay_changes, g_steadied, g_steady_made);
     }
     const sound::HeapStats sound = sound::Stats();
     const sound_replay::Stats sounds = sound_replay::GetStats();
@@ -2413,6 +2462,7 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     // mk9-lauta (2026-11-16): a lockstep fight: the player's buttons as the game's own (online_buttons.h); the menus
     // get them as they are
     if (g.game_state.load(std::memory_order_relaxed) == fight_state::kStatePlay) {
+      SteadyAnalog(base, mine.bytes, mine.bytes2);  // mk9-lauta (2026-11-22): first, so the buttons see it steady
       online_buttons::ToGameButtons(mine.bytes);
       online_buttons::ToGameButtons(mine.bytes2);
     }
@@ -2522,6 +2572,8 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
         fill.sound = sound_sync::AnnounceFor(f);
       }
       Pad pad = ReadLocalPad();
+      // mk9-lauta (2026-11-22): the sticks and triggers as the game reads them: a trembling pad, no rollback
+      SteadyAnalog(base, pad.bytes, pad.bytes2);
       // mk9-lauta (2026-11-16): the player's buttons as the game's own (online_buttons.h)
       online_buttons::ToGameButtons(pad.bytes);
       online_buttons::ToGameButtons(pad.bytes2);
@@ -3124,7 +3176,25 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
     g_frame_started_us = NowUs();
   }
   g.watch_ready_before = fight ? 0 : ready;
-  SetFramePads(f.pads);
+  // mk9-lauta (2026-11-22, tests): MK9_TEST_REPLAY_STEADY=1: the fights' pads of a replay steadied as a player's are now
+  // (mk9_net_steady_analog). Played on a recording of trembling pads, its frames' hashes say whether the game makes
+  // anything of what the steadying takes away.
+  static const bool steady_replay = std::getenv("MK9_TEST_REPLAY_STEADY") != nullptr;
+  if (steady_replay && fight) {
+    Pad pads[kMaxMachines];
+    const online_buttons::AnalogLimits limits = GameAnalogLimits(base);
+    bool changed = false;
+    for (int m = 0; m < kMaxMachines; ++m) {
+      pads[m] = f.pads[m];
+      changed |= online_buttons::ToGameAnalog(pads[m].bytes, limits);
+      changed |= online_buttons::ToGameAnalog(pads[m].bytes2, limits);
+    }
+    if (changed) ++g_steadied;
+    ++g_steady_made;
+    SetFramePads(pads);
+  } else {
+    SetFramePads(f.pads);
+  }
   if (frames_sound) {
     // the players' words up to this frame (a callback's frame is never earlier than its later word's: the recording
     // up to here decides every one due here)

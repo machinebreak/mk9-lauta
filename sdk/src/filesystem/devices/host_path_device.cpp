@@ -62,10 +62,15 @@ HostPathDevice::HostPathDevice(const std::string_view mount_path,
 HostPathDevice::~HostPathDevice() = default;
 
 bool HostPathDevice::Initialize() {
-  if (!std::filesystem::exists(host_path_)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(host_path_, ec)) {
     if (!read_only_) {
-      // Create the path.
-      std::filesystem::create_directories(host_path_);
+      // Create the path. mk9-lauta (2026-11-22): without an exception (a folder Windows does not let the game write)
+      std::filesystem::create_directories(host_path_, ec);
+      if (ec) {
+        REXFS_ERROR("Host path {} could not be created: {}", rex::path_to_utf8(host_path_), ec.message());
+        return false;
+      }
     } else {
       REXFS_ERROR("Host path does not exist");
       return false;

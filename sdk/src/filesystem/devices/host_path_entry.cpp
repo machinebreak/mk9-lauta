@@ -117,7 +117,8 @@ std::unique_ptr<Entry> HostPathEntry::CreateEntryInternal(const std::string_view
                                                           uint32_t attributes) {
   auto full_path = host_path_ / rex::to_path(name);
   if (attributes & kFileAttributeDirectory) {
-    if (!std::filesystem::create_directories(full_path)) {
+    std::error_code ec;  // mk9-lauta (2026-11-22): no exception from a folder Windows does not let the game write
+    if (!std::filesystem::create_directories(full_path, ec)) {
       return nullptr;
     }
   } else {

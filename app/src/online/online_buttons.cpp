@@ -117,6 +117,66 @@ std::string Encode(const Layout& layout) {
   return out;
 }
 
+bool Usable(const AnalogLimits& limits) {
+  for (const float v : {limits.left_dead_zone, limits.right_dead_zone, limits.trigger_threshold}) {
+    if (!(v >= 0.0f && v < 1.0f)) return false;  // NaN too
+  }
+  return true;
+}
+
+namespace {
+
+// sub_829D4978, step by step in its single precision: an axis made a value from -1 to 1 past the dead zone. Its sign is
+// the direction sub_829D4ED8 sets. (Its negative side adds 1 before dividing: the first value past the dead zone on that
+// side can come out a hair above 0, a direction the other way, and so it does here too.)
+float GameAxis(int16_t axis, float dead_zone) {
+  const double half = 32767.0;
+  const double scaled = float(double(dead_zone) * half);
+  const double shifted = float(double(float(axis)) + half);
+  const double upper = float(scaled + half);
+  const double lower = float(half - scaled);
+  if (shifted > upper) return float(float(shifted - upper) / lower);
+  if (shifted < lower) {
+    const double past = float(float(shifted + scaled) + 1.0);
+    return float(-double(float(float(half - past) / lower)));
+  }
+  return 0.0f;
+}
+
+// The steadied axis at bytes p (big-endian): 32767 and -32768 give the game exactly 1.0 and -1.0.
+bool SteadyAxis(uint8_t* p, float dead_zone) {
+  const int16_t axis = int16_t(uint16_t(p[0]) << 8 | p[1]);
+  const float value = GameAxis(axis, dead_zone);
+  const int sign = value > 0.0f ? 1 : value < 0.0f ? -1 : 0;
+  const int16_t steady = sign > 0 ? int16_t(32767) : sign < 0 ? int16_t(-32768) : int16_t(0);
+  if (steady == axis) return false;
+  p[0] = uint8_t(uint16_t(steady) >> 8);
+  p[1] = uint8_t(uint16_t(steady) & 0xFF);
+  return true;
+}
+
+// sub_829D4ED8's trigger: pressed when its value is past the threshold times 255 (single precision).
+bool SteadyTrigger(uint8_t* p, float threshold) {
+  const float limit = float(double(threshold) * 255.0);
+  const uint8_t steady = float(*p) > limit ? 255 : 0;
+  if (steady == *p) return false;
+  *p = steady;
+  return true;
+}
+
+}  // namespace
+
+bool ToGameAnalog(uint8_t* gamepad, const AnalogLimits& limits) {
+  if (!Usable(limits)) return false;
+  bool changed = SteadyTrigger(gamepad + 2, limits.trigger_threshold);
+  changed |= SteadyTrigger(gamepad + 3, limits.trigger_threshold);
+  changed |= SteadyAxis(gamepad + 4, limits.left_dead_zone);
+  changed |= SteadyAxis(gamepad + 6, limits.left_dead_zone);
+  changed |= SteadyAxis(gamepad + 8, limits.right_dead_zone);
+  changed |= SteadyAxis(gamepad + 10, limits.right_dead_zone);
+  return changed;
+}
+
 void ToGameButtons(uint8_t* gamepad) {
   const Layout layout = Current();
   if (layout == kGameLayout) return;

@@ -232,7 +232,8 @@ ContentPackage::~ContentPackage() {
 }
 
 void ContentPackage::LoadPackageLicenseMask(const std::filesystem::path header_path) {
-  if (!std::filesystem::exists(header_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(header_path, ec)) {
     return;
   }
 
@@ -241,8 +242,8 @@ void ContentPackage::LoadPackageLicenseMask(const std::filesystem::path header_p
     return;
   }
 
-  auto file_size = std::filesystem::file_size(header_path);
-  if (file_size < sizeof(XCONTENT_AGGREGATE_DATA) + sizeof(license_)) {
+  const auto file_size = std::filesystem::file_size(header_path, ec);
+  if (ec || file_size < sizeof(XCONTENT_AGGREGATE_DATA) + sizeof(license_)) {
     fclose(file);
     return;
   }
@@ -373,7 +374,8 @@ std::vector<XCONTENT_AGGREGATE_DATA> ContentManager::ListContent(uint32_t device
 std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
     const std::string_view root_name, uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data) {
   auto package_path = ResolvePackagePath(xuid, data);
-  if (!std::filesystem::exists(package_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(package_path, ec)) {
     return nullptr;
   }
   auto package = std::make_unique<ContentPackage>(kernel_state_, root_name, data, package_path);
@@ -382,7 +384,8 @@ std::unique_ptr<ContentPackage> ContentManager::ResolvePackage(
 
 bool ContentManager::ContentExists(uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data) {
   auto path = ResolvePackagePath(xuid, data);
-  return std::filesystem::exists(path);
+  std::error_code ec;
+  return std::filesystem::exists(path, ec);
 }
 
 X_RESULT ContentManager::WriteContentHeaderFile(uint64_t xuid, XCONTENT_AGGREGATE_DATA data,
@@ -399,8 +402,12 @@ X_RESULT ContentManager::WriteContentHeaderFile(uint64_t xuid, XCONTENT_AGGREGAT
       ResolvePackageHeaderPath(data.file_name(), used_xuid, data.title_id, data.content_type);
   auto parent_path = header_path.parent_path();
 
-  if (!std::filesystem::exists(parent_path)) {
-    if (!std::filesystem::create_directories(parent_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(parent_path, ec)) {
+    std::filesystem::create_directories(parent_path, ec);
+    if (ec) {
+      REXSYS_ERROR("[save] header of '{}': could NOT create {} ({})", data.file_name(),
+                   rex::path_to_utf8(parent_path), ec.message());
       return X_ERROR_ACCESS_DENIED;
     }
   }
@@ -427,7 +434,8 @@ X_RESULT ContentManager::ReadContentHeaderFile(const std::string_view file_name,
   auto header_file_path = ResolvePackageHeaderPath(file_name, xuid, title_id, content_type);
   constexpr uint32_t header_size = sizeof(XCONTENT_AGGREGATE_DATA);
 
-  if (!std::filesystem::exists(header_file_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(header_file_path, ec)) {
     return X_ERROR_FILE_NOT_FOUND;
   }
 
@@ -436,8 +444,8 @@ X_RESULT ContentManager::ReadContentHeaderFile(const std::string_view file_name,
     return X_ERROR_FILE_NOT_FOUND;
   }
 
-  auto file_size = std::filesystem::file_size(header_file_path);
-  if (file_size < header_size) {
+  const auto file_size = std::filesystem::file_size(header_file_path, ec);
+  if (ec || file_size < header_size) {
     fclose(file);
     return X_ERROR_FILE_NOT_FOUND;
   }
@@ -466,13 +474,17 @@ X_RESULT ContentManager::CreateContent(const std::string_view root_name, uint64_
   auto package_path = ResolvePackagePath(xuid, data);
   REXSYS_INFO("[save] create '{}' (root {}) in {}", data.file_name(), root_name,
               rex::path_to_utf8(package_path));
-  if (std::filesystem::exists(package_path)) {
+  std::error_code ec;
+  if (std::filesystem::exists(package_path, ec)) {
     REXSYS_WARN("[save] create '{}': it already existed, returning ALREADY_EXISTS", data.file_name());
     return X_ERROR_ALREADY_EXISTS;
   }
-  if (!std::filesystem::create_directories(package_path)) {
-    REXSYS_ERROR("[save] create '{}': could NOT create {}", data.file_name(),
-                 rex::path_to_utf8(package_path));
+  // mk9-lauta (2026-11-22): without exceptions: a folder Windows does not let the game write (Documents under
+  // Controlled folder access, OneDrive) threw std::filesystem_error out of here, an unhandled C++ exception on the game
+  // thread that saved (a player's Story mode, 1.4.1). Now the game hears "access denied" and the log says why.
+  if (!std::filesystem::create_directories(package_path, ec) && ec) {
+    REXSYS_ERROR("[save] create '{}': could NOT create {} ({})", data.file_name(),
+                 rex::path_to_utf8(package_path), ec.message());
     return X_ERROR_ACCESS_DENIED;
   }
   auto package = ResolvePackage(root_name, xuid, data);
@@ -499,7 +511,8 @@ X_RESULT ContentManager::OpenContent(const std::string_view root_name, uint64_t 
   }
 
   auto package_path = ResolvePackagePath(xuid, data);
-  if (!std::filesystem::exists(package_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(package_path, ec)) {
     REXSYS_WARN("[save] open '{}': {} does not exist", data.file_name(),
                 rex::path_to_utf8(package_path));
     return X_ERROR_FILE_NOT_FOUND;
@@ -552,7 +565,8 @@ X_RESULT ContentManager::GetContentThumbnail(uint64_t xuid, const XCONTENT_AGGRE
   auto global_lock = global_critical_region_.Acquire();
   auto package_path = ResolvePackagePath(xuid, data);
   auto thumb_path = package_path / kThumbnailFileName;
-  if (std::filesystem::exists(thumb_path)) {
+  std::error_code ec;
+  if (std::filesystem::exists(thumb_path, ec)) {
     auto file = rex::filesystem::OpenFile(thumb_path, "rb");
     fseek(file, 0, SEEK_END);
     size_t file_len = ftell(file);
@@ -570,8 +584,9 @@ X_RESULT ContentManager::SetContentThumbnail(uint64_t xuid, const XCONTENT_AGGRE
                                              std::vector<uint8_t> buffer) {
   auto global_lock = global_critical_region_.Acquire();
   auto package_path = ResolvePackagePath(xuid, data);
-  std::filesystem::create_directories(package_path);
-  if (std::filesystem::exists(package_path)) {
+  std::error_code ec;
+  std::filesystem::create_directories(package_path, ec);
+  if (std::filesystem::exists(package_path, ec)) {
     auto thumb_path = package_path / kThumbnailFileName;
     auto file = rex::filesystem::OpenFile(thumb_path, "wb");
     fwrite(buffer.data(), 1, buffer.size(), file);
@@ -788,7 +803,8 @@ static X_RESULT ExtractEntry(rex::filesystem::Entry* entry,
 }
 
 X_RESULT ContentManager::InstallContent(const std::filesystem::path& package_path) {
-  if (!std::filesystem::exists(package_path)) {
+  std::error_code ec;
+  if (!std::filesystem::exists(package_path, ec)) {
     return X_ERROR_FILE_NOT_FOUND;
   }
 
@@ -820,7 +836,7 @@ X_RESULT ContentManager::InstallContent(const std::filesystem::path& package_pat
   auto install_path = ResolvePackagePath(0, content_data);
 
   // Create destination directory
-  std::error_code ec;
+  ec.clear();
   std::filesystem::create_directories(install_path, ec);
   if (ec) {
     return X_ERROR_ACCESS_DENIED;
