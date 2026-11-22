@@ -15,6 +15,12 @@
 // first, on player 1. '#' starts a comment. Times count from the creation of the input system, which is
 // within a second of the process start (the snapshot times of mk9_snapshot_s count from about the same point).
 // Every press and release is logged ("[script] ..."), so the log lines up with snapshots.
+//
+// mk9-lauta (2026-11-21): "@<anchor> <seconds> <BUTTONS> [hold]" counts from an anchor instead of the start: "@fight"
+// the first frame the fight is in play (fight_state kStatePlay), "@<package>" the first time the game asks for that
+// package (online/loading.cpp: "@FatalityArt" the Finish Him). Whatever the loads before took, the inputs land at the
+// same moment of the fight. "!<anchor>" after the buttons: the event does not start once that anchor came (a fight's
+// attacks "!FatalityArt": none in the Finish Him).
 
 #include "mk9_script_input.h"
 
@@ -36,6 +42,7 @@
 #include <fmt/format.h>
 
 #include "mk9_controls.h"
+#include "online/fight_state.h"
 #include "online/snapshot.h"
 
 extern std::atomic<uint64_t> g_mk9_game_frames;  // src/mk9_frame_counter.cpp
@@ -67,6 +74,8 @@ int PadOf(DeviceId id) {
 }
 
 struct Event {
+  std::string anchor;  // lower case: its time counts from that anchor's ("": from the start)
+  std::string until;   // lower case: it does not start once that anchor came ("": always)
   int pad = 0;  // 0-3: P1 (none), P2:, P3:, P4:
   double start_s = 0;
   double hold_s = 0.15;
@@ -111,13 +120,80 @@ bool ApplyName(const std::string& name, Event& e) {
   return true;
 }
 
+// The anchors the script names (lower case) and when each came (the script's clock; < 0: not yet).
+std::mutex g_anchor_mutex;
+std::vector<std::pair<std::string, double>> g_anchors;
+std::atomic<bool> g_has_anchors{false};
+std::chrono::steady_clock::time_point g_start = std::chrono::steady_clock::now();
+
+// The script's clock: game frames / 60 with mk9_input_script_frames (the SyncTest's frame in its runs), else seconds
+// since the input system was made.
+double Now() {
+  const int64_t synctest_frame = mk9::snapshot::SyncTestScriptFrame();
+  return synctest_frame >= 0 && REXCVAR_GET(mk9_input_script_frames) ? double(synctest_frame) / 60.0
+         : REXCVAR_GET(mk9_input_script_frames)
+             ? double(g_mk9_game_frames.load(std::memory_order_relaxed)) / 60.0
+             : std::chrono::duration<double>(std::chrono::steady_clock::now() - g_start).count();
+}
+
+std::string Lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+  return s;
+}
+
+void Want(const std::string& anchor) {
+  std::lock_guard lock(g_anchor_mutex);
+  for (const auto& [name, at] : g_anchors) {
+    if (name == anchor) return;
+  }
+  g_anchors.emplace_back(anchor, -1.0);
+  g_has_anchors = true;
+}
+
+// An anchor's time (< 0: not yet).
+double AnchorTime(const std::string& anchor) {
+  std::lock_guard lock(g_anchor_mutex);
+  for (const auto& [name, at] : g_anchors) {
+    if (name == anchor) return at;
+  }
+  return -1.0;
+}
+
+void Reach(const std::string& anchor) {
+  if (!g_has_anchors.load(std::memory_order_relaxed)) return;
+  const std::string key = Lower(anchor);
+  std::lock_guard lock(g_anchor_mutex);
+  for (auto& [name, at] : g_anchors) {
+    if (name == key && at < 0) {
+      at = Now();
+      REXLOG_INFO("[script] anchor '{}' at {:.2f} s", anchor, at);
+    }
+  }
+}
+
 void ParseLine(std::string line, std::vector<Event>& out) {
   if (auto hash = line.find('#'); hash != std::string::npos) line.resize(hash);
   std::istringstream in(line);
   Event e;
   std::string names;
+  if (const size_t first = line.find_first_not_of(" \t"); first != std::string::npos && line[first] == '@') {
+    in >> e.anchor;
+    e.anchor = Lower(e.anchor.substr(1));
+    if (e.anchor.empty()) return;
+    Want(e.anchor);
+  }
   if (!(in >> e.start_s >> names)) return;
-  in >> e.hold_s;
+  for (std::string word; in >> word;) {  // the hold, "!<anchor>"
+    if (word[0] == '!' && word.size() > 1) {
+      e.until = Lower(word.substr(1));
+      Want(e.until);
+    } else {
+      try {
+        e.hold_s = std::stod(word);
+      } catch (...) {
+      }
+    }
+  }
   if (names.size() > 3 && (names[0] == 'P' || names[0] == 'p') && names[1] >= '1' && names[1] <= '4' &&
       names[2] == ':') {
     e.pad = names[1] - '1';
@@ -138,8 +214,8 @@ void ParseLine(std::string line, std::vector<Event>& out) {
 class ScriptInputDriver final : public rex::input::InputDriver {
  public:
   explicit ScriptInputDriver(std::vector<Event> events)
-      : InputDriver(nullptr, 0), events_(std::move(events)), start_(std::chrono::steady_clock::now()),
-        logged_(events_.size(), 0) {
+      : InputDriver(nullptr, 0), events_(std::move(events)), logged_(events_.size(), 0) {
+    g_start = std::chrono::steady_clock::now();
     used_[0] = true;  // pad 1 always (the tests' player 1)
     for (const Event& e : events_) used_[e.pad] = true;
   }
@@ -162,11 +238,7 @@ class ScriptInputDriver final : public rex::input::InputDriver {
     const int pad = PadOf(id);
     if (pad < 0 || !used_[pad]) return X_ERROR_DEVICE_NOT_CONNECTED;
     if (!out_state) return X_ERROR_SUCCESS;
-    const int64_t synctest_frame = mk9::snapshot::SyncTestScriptFrame();
-    const double now = synctest_frame >= 0 && REXCVAR_GET(mk9_input_script_frames) ? double(synctest_frame) / 60.0
-        : REXCVAR_GET(mk9_input_script_frames)
-        ? double(g_mk9_game_frames.load(std::memory_order_relaxed)) / 60.0
-        : std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+    const double now = Now();
     uint16_t buttons = 0;
     uint8_t lt = 0, rt = 0;
     int16_t lx = 0, ly = 0, rx = 0, ry = 0;
@@ -174,7 +246,17 @@ class ScriptInputDriver final : public rex::input::InputDriver {
     for (size_t i = 0; i < events_.size(); ++i) {
       const auto& e = events_[i];
       if (e.pad != pad) continue;
-      const bool active = now >= e.start_s && now < e.start_s + e.hold_s;
+      double start = e.start_s;
+      if (!e.anchor.empty()) {  // from its anchor, once it came
+        const double at = AnchorTime(e.anchor);
+        if (at < 0) continue;
+        start += at;
+      }
+      if (!e.until.empty() && logged_[i] == 0) {  // not started yet, and its "until" anchor came before its start
+        const double until = AnchorTime(e.until);
+        if (until >= 0 && start >= until) continue;
+      }
+      const bool active = now >= start && now < start + e.hold_s;
       if (active) {
         buttons |= e.buttons;
         lt = std::max(lt, e.left_trigger);
@@ -189,7 +271,7 @@ class ScriptInputDriver final : public rex::input::InputDriver {
         logged_[i] = 1;
         REXLOG_INFO("[script] {:.2f} s: press {}{} (for {:.2f} s)", now, e.pad ? fmt::format("P{}:", e.pad + 1) : "",
                     e.text, e.hold_s);
-      } else if (!active && now >= e.start_s + e.hold_s && logged_[i] < 2) {
+      } else if (!active && now >= start + e.hold_s && logged_[i] < 2) {
         logged_[i] = 2;
         REXLOG_INFO("[script] {:.2f} s: release {}{}", now, e.pad ? fmt::format("P{}:", e.pad + 1) : "", e.text);
       }
@@ -242,7 +324,6 @@ class ScriptInputDriver final : public rex::input::InputDriver {
 
  private:
   std::vector<Event> events_;
-  std::chrono::steady_clock::time_point start_;
   std::mutex mutex_;
   std::vector<uint8_t> logged_;
   struct PadState {
@@ -268,6 +349,13 @@ std::vector<Event> LoadScript() {
 }
 
 }  // namespace
+
+void NotePackage(const std::string& name) { Reach(name); }
+
+void OnFrame(uint8_t* base) {
+  if (!g_has_anchors.load(std::memory_order_relaxed)) return;
+  if (mk9::fight_state::State(base) == mk9::fight_state::kStatePlay) Reach("fight");
+}
 
 std::unique_ptr<rex::system::IInputSystem> CreateInputSystem(bool tool_mode) {
   mk9::controls::FindMappingsFile();  // before SDL starts and reads it

@@ -39,6 +39,8 @@ class VirtualFileSystem {
   bool FindSymbolicLink(const std::string_view path, std::string& target);
 
   Entry* ResolvePath(const std::string_view path);
+  // mk9-lauta (2026-11-21): the file an overlay device (Device::SetOverlay) has at this path, or null.
+  Entry* ResolveOverlay(const std::string_view path);
 
   Entry* CreatePath(const std::string_view path, uint32_t attributes);
   bool DeletePath(const std::string_view path);
@@ -52,8 +54,10 @@ class VirtualFileSystem {
   rex::thread::global_critical_region global_critical_region_;
   std::vector<std::unique_ptr<Device>> devices_;
   std::unordered_map<std::string, std::string> symlinks_;
+  bool has_overlays_ = false;
 
   bool ResolveSymbolicLink(const std::string_view path, std::string& result);
+  Entry* OverlayFile(const std::string& normalized_path, size_t min_mount);
 };
 
 }  // namespace rex::filesystem

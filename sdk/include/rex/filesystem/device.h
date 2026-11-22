@@ -30,6 +30,12 @@ class Device {
   const std::string& mount_path() const { return mount_path_; }
   virtual bool is_read_only() const { return true; }
 
+  // An overlay (mk9-lauta, 2026-11-21): mounted over another device's tree, it serves the files it has and leaves the
+  // rest, its folders too, to the device under it (VirtualFileSystem::ResolvePath, ResolveOverlay, OpenFile), instead
+  // of hiding that tree.
+  bool overlay() const { return overlay_; }
+  void SetOverlay(bool overlay) { overlay_ = overlay; }
+
   virtual void Dump(string::StringBuffer* string_buffer) = 0;
   /// Resolves a guest-relative path against the device. An empty @p path is
   /// the documented alias for the device root and returns the root entry.
@@ -47,6 +53,7 @@ class Device {
  protected:
   rex::thread::global_critical_region global_critical_region_;
   std::string mount_path_;
+  bool overlay_ = false;
 };
 
 }  // namespace rex::filesystem

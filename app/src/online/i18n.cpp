@@ -395,6 +395,42 @@ const std::unordered_map<std::string_view, Text>& Table() {
       {"Los jugadores de esta partida todavía no tienen a Kratos: para mirarla hay que tener lo mismo que ellos.",
        {"The players of this match do not have Kratos yet: to watch it you need what they have.",
         "Os jogadores desta partida ainda não têm o Kratos: para assistir é preciso ter o mesmo que eles."}},
+      {"{} tiene los trajes de PS Vita y vos no (F2 > Controles, y reiniciá el juego): para pelear online tienen que "
+       "tener lo mismo.",
+       {"{} has the PS Vita costumes and you do not (F2 > Controls, then restart the game): to fight online you both "
+        "need the same.",
+        "{} tem os trajes de PS Vita e você não (F2 > Controles, e reinicie o jogo): para lutar online vocês precisam "
+        "ter o mesmo."}},
+      {"{} no tiene los trajes de PS Vita (una versión anterior de mk9-lauta, o los apagó en F2): para pelear online "
+       "tienen que tener lo mismo.",
+       {"{} does not have the PS Vita costumes (an older version of mk9-lauta, or they turned them off in F2): to fight "
+        "online you both need the same.",
+        "{} não tem os trajes de PS Vita (uma versão anterior do mk9-lauta, ou desligou no F2): para lutar online "
+        "vocês precisam ter o mesmo."}},
+      {"{} tiene otra versión de los trajes de PS Vita: para pelear online tienen que tener la misma versión de "
+       "mk9-lauta (F2 > Acerca de).",
+       {"{} has another version of the PS Vita costumes: to fight online you both need the same version of mk9-lauta "
+        "(F2 > About).",
+        "{} tem outra versão dos trajes de PS Vita: para lutar online vocês precisam ter a mesma versão do mk9-lauta "
+        "(F2 > Sobre)."}},
+      {"La partida se juega sin los trajes de PS Vita y vos los tenés: para mirarla hay que tener lo mismo que los "
+       "jugadores (F2 > Controles, y reiniciá el juego).",
+       {"The match is played without the PS Vita costumes and you have them: to watch it you need what the players "
+        "have (F2 > Controls, then restart the game).",
+        "A partida é jogada sem os trajes de PS Vita e você os tem: para assistir é preciso ter o mesmo que os "
+        "jogadores (F2 > Controles, e reinicie o jogo)."}},
+      {"La partida se juega con los trajes de PS Vita y vos no los tenés: para mirarla hay que tener lo mismo que los "
+       "jugadores (F2 > Controles, y reiniciá el juego).",
+       {"The match is played with the PS Vita costumes and you do not have them: to watch it you need what the "
+        "players have (F2 > Controls, then restart the game).",
+        "A partida é jogada com os trajes de PS Vita e você não os tem: para assistir é preciso ter o mesmo que os "
+        "jogadores (F2 > Controles, e reinicie o jogo)."}},
+      {"La partida se juega con otra versión de los trajes de PS Vita: para mirarla hay que tener la misma versión de "
+       "mk9-lauta (F2 > Acerca de).",
+       {"The match is played with another version of the PS Vita costumes: to watch it you need the same version of "
+        "mk9-lauta (F2 > About).",
+        "A partida é jogada com outra versão dos trajes de PS Vita: para assistir é preciso ter a mesma versão do "
+        "mk9-lauta (F2 > Sobre)."}},
       {"Kratos listo: aparece la próxima vez que abras el juego",
        {"Kratos is ready: he appears the next time you open the game",
         "Kratos pronto: ele aparece na próxima vez que você abrir o jogo"}},

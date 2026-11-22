@@ -1753,18 +1753,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       return;
     }
     std::string why;
-    if (info.replay) {
+    if (info.end_reason == netplay::EndReason::kOtherContent) {
+      why = mk9::room::WatchModsWhy(info.other_content);
+    } else if (info.replay) {
       why = info.end_reason == netplay::EndReason::kOtherVersion
                 ? T("Este replay es de otra versión de mk9-lauta: no se puede ver con esta.")
             : info.end_reason == netplay::EndReason::kFailed ? T("No se pudo leer el replay.")
                                                              : T("El replay terminó.");
     } else if (info.watching) {
-      if (room.watch_mods == "kratos")
-        why = T("La partida se juega con Kratos y vos todavía no lo tenés: se descarga solo; cuando termine, reiniciá "
-                "el juego.");
-      else if (!room.watch_mods.empty())
-        why = T("Los jugadores de esta partida todavía no tienen a Kratos: para mirarla hay que tener lo mismo que "
-                "ellos.");
+      if (!room.watch_mods.empty())
+        why = mk9::room::WatchModsWhy(room.watch_mods);
       else if (room.watch_full) why = T("La sala ya tiene el máximo de espectadores.");
       else if (info.end_reason == netplay::EndReason::kFailed) why = T("No se pudo traer la partida.");
       else if (info.end_reason == netplay::EndReason::kOtherVersion)

@@ -93,6 +93,7 @@
 // second players).
 
 #include "mk9_kratos.h"
+#include "mk9_vita_costumes.h"
 #include "mk9_platform.h"
 #include "online/netplay.h"
 
@@ -672,6 +673,8 @@ void KothWatched() {
 //   'E'      u32 epoch, u64 the game frame of its frame 0, u8 rollback
 //   'F'      u32 frame, 18 bytes this player's input, 18 bytes the other's (the packets' pad record), u64 sync hash
 //   'M'      u32 frame: the fight's mode ended there (mk9-lauta, 2026-11-10)
+//   'C'      (mk9-lauta, 2026-11-21: right after the header) u8 length, the game's content beyond the disc as the rooms
+//            say it (room::ContentMods: Kratos, the PS Vita costumes); a game with other content does not play it
 //   'N'      (mk9-lauta, 2026-11-17: a session of more than two machines, right after the header) u8 machines, then
 //            u8 players at each machine in order
 //   'K'      (mk9-lauta, 2026-11-17: King of the Hill, right after 'N' and at each change) u32 epoch, u32 frame
@@ -811,6 +814,13 @@ void RecordOpen() {
     REXLOG_INFO("[net] the session's inputs go to {} (replays on: mk9_net_record)", g_rec.path);
   }
   RecordHeader();
+  {  // 'C': the content (a replay played without it, or with more, would go apart)
+    const std::string mods = room::ContentMods();
+    const size_t n = std::min<size_t>(mods.size(), 255);
+    RecordValue<uint8_t>('C');
+    RecordValue<uint8_t>(uint8_t(n));
+    RecordPut(mods.data(), n);
+  }
   if (g.machines > 2) {  // 'N': the machines and their players (the frames are 'H')
     RecordValue<uint8_t>('N');
     RecordValue<uint8_t>(uint8_t(g.machines));
@@ -1053,6 +1063,13 @@ int64_t FinalUpto() {
 // session's inputs are in its .mk9net (named in the summary).
 std::string g_desync_report;  // the report's folder (the online screens offer it)
 std::mutex g_desync_report_mutex;
+// mk9-lauta (2026-11-21): a recording's content when it is not this game's (WatchParse; Info reads it)
+std::mutex g_other_content_mutex;
+std::string g_other_content;
+std::string OtherContent() {
+  std::lock_guard lock(g_other_content_mutex);
+  return g_other_content;
+}
 double RoundTripTypical();
 
 void WriteDesyncReport(int64_t frame, uint64_t local, uint64_t remote, bool fighters_only, int machine) {
@@ -1179,6 +1196,7 @@ const char* ReasonText(EndReason why) {
     case EndReason::kDesync: return "the two games went out of sync";
     case EndReason::kFailed: return "it could not start";
     case EndReason::kOtherVersion: return "the other player has another release of mk9-lauta";
+    case EndReason::kOtherContent: return "the recording's game had other content (Kratos, the PS Vita costumes)";
     default: return "?";
   }
 }
@@ -1233,9 +1251,10 @@ bool SendHello(Peer& peer) {
   p.push_back(uint8_t(std::min<size_t>(release.size(), 15)));
   p.insert(p.end(), release.begin(), release.begin() + std::min<size_t>(release.size(), 15));
   // the settings both games must share; bit 1 (mk9-lauta 2026-11-11): Kratos installed (mk9_kratos.h); bit 2
-  // (2026-11-13): two players at this machine (its pads carry the second's: PadBytes)
+  // (2026-11-13): two players at this machine (its pads carry the second's: PadBytes); bit 3 (2026-11-21): the PS Vita
+  // costumes (mk9_vita_costumes.h)
   p.push_back(uint8_t((virtual_time::Enabled() ? 1 : 0) | (mk9::kratos::Installed() ? 2 : 0) |
-                      (g.local_players == 2 ? 4 : 0)));
+                      (g.local_players == 2 ? 4 : 0) | (mk9::vita_costumes::Installed() ? 8 : 0)));
   p.push_back(uint8_t(g.machines));  // (12 and up) the session's machines: every machine must say the same
   const bool sent = peer.link->Send(p.data(), p.size());
   peer.last_sent_us = NowUs();
@@ -1378,6 +1397,12 @@ void ReceiveFrom(int machine, Peer& peer) {
                        "such a fight from starting)",
                        machine + 1, ((p[13 + p[12]] >> 1) & 1) ? "has" : "does not have",
                        mk9::kratos::Installed() ? "has" : "does not");
+        }
+        if (left >= 14 + p[12] && ((p[13 + p[12]] >> 3) & 1) != (mk9::vita_costumes::Installed() ? 1 : 0)) {
+          REXLOG_ERROR("[net] player {}'s game {} the PS Vita costumes and this one {}: the games will go apart if a "
+                       "fighter wears one (the rooms keep such a fight from starting)",
+                       machine + 1, ((p[13 + p[12]] >> 3) & 1) ? "has" : "does not have",
+                       mk9::vita_costumes::Installed() ? "has" : "does not");
         }
         if (left >= 14 + p[12] && (p[13 + p[12]] & 1) != (virtual_time::Enabled() ? 1 : 0)) {
           REXLOG_ERROR("[net] player {}'s game {} the game thread's clock made of frames and this one {} "
@@ -1635,6 +1660,8 @@ void LoadReplayPads() {
       at += 1 + 4 + 2 * PadBytes(tag == 'G' ? 2 : 1) + 8;
     } else if (tag == 'M' && at + 5 <= data.size()) {
       at += 5;
+    } else if (tag == 'C' && at + 2 <= data.size()) {
+      at += 2 + size_t(data[at + 1]);
     } else {
       break;
     }
@@ -2784,7 +2811,25 @@ void WatchParse() {
       std::memcpy(&pad->sound, at + 14, 4);
       if (size == kPadBytes2) std::memcpy(pad->bytes2, at + 18, 12);
     };
-    if (tag == 'N') {
+    if (tag == 'C') {
+      // mk9-lauta (2026-11-21): the match's content: this game must have the same (a replay of a game with Kratos or
+      // the PS Vita costumes, played without them, would go apart)
+      uint8_t r[2];
+      if (!read(g.watch_read, r, sizeof(r))) return;
+      std::string mods(r[1], ' ');
+      if (r[1] && !read(g.watch_read + 2, mods.data(), r[1])) return;
+      g.watch_read += 2 + size_t(r[1]);
+      if (mods != room::ContentMods()) {
+        REXLOG_ERROR("[watch] the match was played with the content \"{}\" and this game has \"{}\": it is not played",
+                     mods, room::ContentMods());
+        {
+          std::lock_guard lock(g_other_content_mutex);
+          g_other_content = mods.empty() ? "none" : mods;
+        }
+        g.failed = true;
+        return;
+      }
+    } else if (tag == 'N') {
       // mk9-lauta (2026-11-17): a session of more than two machines: how many, and their players (frames 'H')
       uint8_t r[2 + kMaxMachines];
       if (!read(g.watch_read, r, 2)) return;
@@ -2946,7 +2991,10 @@ void SpectatorFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   if (!g.started) {
     g_frame_started_us = 0;
     if (!WatchWait([] { return g.watch_header && !g.watched.empty(); })) {
-      EndSession(g.watch_other_release ? EndReason::kOtherVersion : EndReason::kFailed, false);
+      EndSession(g.watch_other_release ? EndReason::kOtherVersion
+                 : OtherContent().empty()  ? EndReason::kFailed
+                                           : EndReason::kOtherContent,
+                 false);
       return;
     }
     g.started = true;
@@ -3456,6 +3504,7 @@ SessionInfo Info() {
     std::lock_guard lock(g_desync_report_mutex);
     info.desync_report = g_desync_report;
   }
+  info.other_content = OtherContent();
   return info;
 }
 

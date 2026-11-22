@@ -93,6 +93,8 @@ set(MK9_SOURCES
     # mk9-lauta (2026-11-17): frame data in Practice: each attack's startup and advantage (mk9_frame_data.h).
     src/mk9_frame_data.cpp
     src/mk9_practice_record.cpp
+    # mk9-lauta (2026-11-21): the PS Vita version's extra costumes, made from the player's files (mk9_vita_costumes.h).
+    src/mk9_vita_costumes.cpp
     src/mk9_controls.cpp
     # The main menu's Xbox LIVE entry and its message, in the game's languages, point to this version's online (F1).
     src/mk9_localization.cpp
@@ -217,6 +219,9 @@ if(WIN32 OR (UNIX AND NOT APPLE AND NOT REXGLUE_PLATFORM_SWITCH))
         target_compile_options(mk9_miniz PRIVATE -fvisibility=hidden)
     endif()
     target_link_libraries(mk9 PRIVATE mk9_miniz)
+    # mk9-lauta (2026-11-21): the PS Vita costumes (src/mk9_vita_costumes.cpp: their patches, app/costumes/
+    # vita_costumes.bin, compiled in with #embed; miniz for them)
+    target_compile_definitions(mk9 PRIVATE MK9_VITA_COSTUMES=1)
 endif()
 if(WIN32)
     target_compile_definitions(mk9_juice PUBLIC JUICE_STATIC PRIVATE USE_NETTLE=0 NO_SERVER WIN32_LEAN_AND_MEAN NOMINMAX

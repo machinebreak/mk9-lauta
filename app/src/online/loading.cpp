@@ -11,6 +11,7 @@
 #include <rex/ppc/func.h>
 #include <rex/hook.h>
 
+#include "mk9_script_input.h"
 #include "online/netplay.h"
 #include "online/snapshot.h"
 
@@ -83,6 +84,7 @@ void FlushPending(PPCContext& ctx, uint8_t* base) {
 extern "C" REX_FUNC(__imp__sub_82730F70);
 REX_HOOK_RAW(sub_82730F70) {
   const std::string name = mk9::loading::PackageName(base, ctx.r3.u32);
+  mk9::script_input::NotePackage(name);  // tests: the scripted gamepad's "@<package>" anchors
   if (REXCVAR_GET(mk9_log_loads)) {
     REXLOG_INFO("[loading] package '{}' asked for at frame {}", name, mk9::online::CurrentFrame());
   }

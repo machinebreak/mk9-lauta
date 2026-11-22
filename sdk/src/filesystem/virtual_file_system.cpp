@@ -9,6 +9,7 @@
  * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
  */
 
+#include <algorithm>
 #include <chrono>
 
 #include <rex/filesystem/vfs.h>
@@ -35,6 +36,7 @@ VirtualFileSystem::~VirtualFileSystem() {
 
 bool VirtualFileSystem::RegisterDevice(std::unique_ptr<Device> device) {
   auto global_lock = global_critical_region_.Acquire();
+  has_overlays_ |= device->overlay();
   devices_.emplace_back(std::move(device));
   return true;
 }
@@ -104,6 +106,45 @@ bool VirtualFileSystem::ResolveSymbolicLink(const std::string_view path, std::st
   return was_resolved;
 }
 
+// mk9-lauta (2026-11-21): a file an overlay device has (SetOverlay: the costumes' folder, mounted at the game's own
+// mount path), mounted at least as deep as the device that holds the path otherwise (min_mount); its folders are
+// never served (the folders, and their listings, stay the device's under it).
+Entry* VirtualFileSystem::OverlayFile(const std::string& normalized_path, size_t min_mount) {
+  if (!has_overlays_) {
+    return nullptr;
+  }
+  for (const auto& d : devices_) {
+    if (!d->overlay() || d->mount_path().size() < min_mount ||
+        !rex::string::utf8_starts_with_case(normalized_path, d->mount_path())) {
+      continue;
+    }
+    Entry* entry = d->ResolvePath(normalized_path.substr(d->mount_path().size()));
+    if (entry && !(entry->attributes() & kFileAttributeDirectory)) {
+      return entry;
+    }
+  }
+  return nullptr;
+}
+
+Entry* VirtualFileSystem::ResolveOverlay(const std::string_view path) {
+  auto global_lock = global_critical_region_.Acquire();
+  if (!has_overlays_) {
+    return nullptr;
+  }
+  auto normalized_path(rex::string::utf8_canonicalize_guest_path(path));
+  std::string resolved_path;
+  if (ResolveSymbolicLink(normalized_path, resolved_path)) {
+    normalized_path = resolved_path;
+  }
+  size_t min_mount = 0;
+  for (const auto& d : devices_) {
+    if (!d->overlay() && rex::string::utf8_starts_with_case(normalized_path, d->mount_path())) {
+      min_mount = std::max(min_mount, d->mount_path().size());
+    }
+  }
+  return OverlayFile(normalized_path, min_mount);
+}
+
 Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
   auto global_lock = global_critical_region_.Acquire();
 
@@ -119,13 +160,19 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
 
   // Find the device: the most specific mount that holds the path. mk9-nx online (2026-11-09): a folder mounted over
   // part of another device's tree (the game's localization, rewritten, over the game's own folder) wins there; with
-  // one device holding the path, as before.
+  // one device holding the path, as before. mk9-lauta (2026-11-21): an overlay device (OverlayFile) serves the files
+  // it has before that device.
   auto it = devices_.cend();
   for (auto d = devices_.cbegin(); d != devices_.cend(); ++d) {
-    if (rex::string::utf8_starts_with_case(normalized_path, (*d)->mount_path()) &&
+    if (!(*d)->overlay() && rex::string::utf8_starts_with_case(normalized_path, (*d)->mount_path()) &&
         (it == devices_.cend() || (*d)->mount_path().size() > (*it)->mount_path().size())) {
       it = d;
     }
+  }
+  if (Entry* entry = OverlayFile(normalized_path, it == devices_.cend() ? 0 : (*it)->mount_path().size())) {
+    REXFS_TRACE("VFS resolved '{}' on the overlay '{}' -> '{}'", path, entry->device()->mount_path(),
+                entry->absolute_path());
+    return entry;
   }
   if (it == devices_.cend()) {
     REXFS_WARN("VFS: '{}' -> [no device]", path);
@@ -224,7 +271,12 @@ X_STATUS VirtualFileSystem::OpenFile(Entry* root_entry, const std::string_view p
   Entry* entry = nullptr;
 
   auto base_path = rex::string::utf8_find_base_guest_path(path);
-  if (!base_path.empty()) {
+  // mk9-lauta (2026-11-21): a file an overlay device has (ResolveOverlay) is that one, though its folder is the
+  // device's under it (the parent folder's children below would not have it)
+  if (Entry* overlay_entry = !root_entry ? ResolveOverlay(path) : nullptr) {
+    entry = overlay_entry;
+    parent_entry = overlay_entry->parent();
+  } else if (!base_path.empty()) {
     parent_entry = !root_entry ? ResolvePath(base_path) : root_entry->ResolvePath(base_path);
     if (!parent_entry) {
       *out_action = FileAction::kDoesNotExist;

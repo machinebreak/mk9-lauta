@@ -55,7 +55,10 @@ picture, and live spectating of other players' matches.
 
 **The whole game.** Story mode, Ladder and Tag Ladder, two-player Versus on one PC, the Challenge Tower, Training, the
 Krypt and every Komplete Edition fighter. Kratos, the PlayStation 3 release's guest fighter, downloads by himself the
-first time you open the game. In Practice each attack shows its frame data (startup and advantage on hit or on block),
+first time you open the game, and the PS Vita release's extra costumes are there too (Scorpion, Sub-Zero, Reptile,
+Ermac, Mileena and Skarlet), each with its Babality: they are made in a few seconds at the first start from your own
+game files (about 320 MB in `cache/costumes`; the game files are not touched), and **F2 > Controls** turns them off. In
+Practice each attack shows its frame data (startup and advantage on hit or on block),
 and you can record the opponent with your controller and have it repeat what you did, once or in a loop (F5, F6 and
 F7). In any fight your inputs can show on screen. Cutscenes can be skipped with START or A (the first time too), and if
 you copy the PC version's `.bik` videos (for example an HQ videos mod) into the game's Movies folder, they play
@@ -133,7 +136,7 @@ On the Steam Deck: in desktop mode, **Steam > Add a Non-Steam Game** and pick th
 6. Three or four taking turns? Create a **King of the Hill** room: two fight and the others watch live; the winner
    stays and the loser goes to the end of the line.
 
-Both players need the same version; the game updates itself. Online matches always start with the default buttons
+Both players need the same version (and the PS Vita costumes both on or both off); the game updates itself. Online matches always start with the default buttons
 (so both PCs play exactly the same); choose your own for online fights in **F2 > Controls > Online buttons**.
 The full players' guide (in Spanish) is in [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) and in the
 zip's `LEEME.txt`.

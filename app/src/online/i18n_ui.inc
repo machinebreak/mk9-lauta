@@ -203,6 +203,17 @@
         "Gravar o rival no Treino (F5 gravar, F6 reproduzir, F7 em loop)"}},
       {"Grabación del rival activada", {"Opponent recording on", "Gravação do rival ativada"}},
       {"Grabación del rival desactivada", {"Opponent recording off", "Gravação do rival desativada"}},
+      {"Trajes extra de la versión de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena y Skarlet)",
+       {"The PS Vita version's extra costumes (Scorpion, Sub-Zero, Reptile, Ermac, Mileena and Skarlet)",
+        "Trajes extras da versão de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena e Skarlet)"}},
+      {"Trajes de PS Vita activados", {"PS Vita costumes on", "Trajes de PS Vita ativados"}},
+      {"Trajes de PS Vita desactivados", {"PS Vita costumes off", "Trajes de PS Vita desativados"}},
+      {"{} trajes listos: aparecen en la selección de personaje (los Babalities también).",
+       {"{} costumes ready: they are in the character select (their Babalities too).",
+        "{} trajes prontos: aparecem na seleção de personagem (os Babalities também)."}},
+      {"No se pudieron armar desde los archivos del juego: la carpeta logs dice por qué (F2 > Acerca de).",
+       {"They could not be made from the game files: the logs folder says why (F2 > About).",
+        "Não foi possível montá-los a partir dos arquivos do jogo: a pasta logs diz por quê (F2 > Sobre)."}},
       {"Este replay es de una versión anterior de mk9-lauta y ésta lo jugaría distinto: no se puede ver. Los de la "
        "1.4.0 en adelante, sí.",
        {"This replay is from an older version of mk9-lauta and this one would play it differently: it cannot be "

@@ -129,4 +129,11 @@ void EnterSession(const std::string& code, bool host, const std::string& me, con
 void Watch(const std::string& code);
 void EnterWatch(const std::string& code, const std::string& me, const std::string& id);
 
+// mk9-lauta (2026-11-21): why a match cannot be watched when its content differs from this game's (State's
+// watch_mods, a recording's: netplay's kOtherContent): Kratos on one side only, or the PS Vita costumes.
+std::string WatchModsWhy(const std::string& match_mods);
+// mk9-lauta (2026-11-21): this game's content beyond the disc as the rooms say it ("kratos", "vita-<set>", joined by
+// '+'; "" none): the recordings carry it too.
+std::string ContentMods();
+
 }  // namespace mk9::room

@@ -8,6 +8,9 @@
 *.xexp
 *.iso
 *.bin
+# ... but the PS Vita costumes' patches: copy instructions over the player's own game files and the bytes that are new
+# (names, tables, colors), no game file (tools/costumes/README.md)
+!/app/costumes/vita_costumes.bin
 *.ucode
 *.mesp
 *.mesp.idx

@@ -42,6 +42,7 @@
 #include "mk9_overlay_input.h"
 #include "mk9_plugins.h"
 #include "mk9_updater.h"
+#include "mk9_vita_costumes.h"
 #include "online/i18n.h"
 #include "online/online_buttons.h"
 #include "renut_engine/gpu/backend/backend.h"
@@ -798,6 +799,30 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     if (ImGui::Checkbox(Tid("Grabar al rival en Práctica (F5 grabar, F6 reproducir, F7 en bucle)").c_str(), &record)) {
       Set({{"mk9_practice_record", record ? "true" : "false"}},
           T(record ? "Grabación del rival activada" : "Grabación del rival desactivada"));
+    }
+    // mk9-lauta (2026-11-21): the PS Vita costumes (mk9_vita_costumes.h), at the next start
+    if (rex::cvar::GetFlagInfo("mk9_vita_costumes")) {
+      bool vita = Current("mk9_vita_costumes") != "false";
+      if (ImGui::Checkbox(Tid("Trajes extra de la versión de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena y "
+                              "Skarlet)").c_str(),
+                          &vita)) {
+        Set({{"mk9_vita_costumes", vita ? "true" : "false"}},
+            T(vita ? "Trajes de PS Vita activados" : "Trajes de PS Vita desactivados"));
+      }
+      // what this start has (the switch applies at the next one)
+      if (rex::cvar::GetFlagByName("mk9_vita_costumes") != "false") {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1));
+        if (vita_costumes::Installed()) {
+          ImGui::TextWrapped("%s", Tf("{} trajes listos: aparecen en la selección de personaje (los Babalities "
+                                      "también).",
+                                      vita_costumes::Summary())
+                                       .c_str());
+        } else {
+          ImGui::TextWrapped("%s", T("No se pudieron armar desde los archivos del juego: la carpeta logs dice por "
+                                     "qué (F2 > Acerca de)."));
+        }
+        ImGui::PopStyleColor();
+      }
     }
     ImGui::Text("%s", T("Mandos conectados:"));
     bool any_pad = false;

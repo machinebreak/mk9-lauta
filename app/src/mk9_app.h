@@ -22,6 +22,7 @@
 #include "mk9_script_input.h"
 #include "mk9_controls.h"
 #include "mk9_localization.h"
+#include "mk9_vita_costumes.h"
 #include "mk9_installer.h"
 #include "mk9_hardware.h"
 #include "online/i18n.h"
@@ -306,6 +307,9 @@ class Mk9App : public rex::ReXApp {
     }
     // mk9-nx online (2026-11-09): the Xbox LIVE entry's texts point to this version's online, F1 (mk9_localization.h)
     mk9::localization::Install(runtime()->file_system(), game_data_root());
+    // mk9-lauta (2026-11-21): the PS Vita costumes, made from these game files and mounted over them
+    // (mk9_vita_costumes.h)
+    mk9::vita_costumes::Install(runtime()->file_system(), game_data_root());
     const char* path = std::getenv("MK9_DUMP_IMAGE");
     if (!path) {
       return;

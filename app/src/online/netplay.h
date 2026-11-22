@@ -93,6 +93,9 @@ enum class EndReason : uint8_t {
   kDesync,    // the two games' sync hashes differed: each game went its own way
   kFailed,    // the session could not start (no path to the other player, a different build)
   kOtherVersion,  // the other player's game is another release of mk9-lauta (SessionInfo::peer_release)
+  // mk9-lauta (2026-11-21): a recording (a replay, a spectator's match) of a game with other content than this one's
+  // (Kratos, the PS Vita costumes: SessionInfo::other_content)
+  kOtherContent,
 };
 // The session as the online screens show it.
 struct SessionInfo {
@@ -130,6 +133,8 @@ struct SessionInfo {
   uint64_t watch_diffs = 0;
   // mk9-lauta (2026-11-11, F5): a replay (mk9_net_replay): watching a recording read from a file
   bool replay = false;
+  // mk9-lauta (2026-11-21): kOtherContent: the recording's content as the rooms say it ("none": the disc's alone)
+  std::string other_content;
   // mk9-lauta (2026-11-11, A3): the folder of this session's desync report (logs\desync_<date>_p<N>; empty: none)
   std::string desync_report;
   // mk9-lauta (2026-11-13): the people at this machine and at the other one (mk9_net_local_players; a spectator: the

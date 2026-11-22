@@ -15,6 +15,7 @@
 #include <rex/logging.h>
 
 #include "mk9_kratos.h"
+#include "mk9_vita_costumes.h"
 #include "online/avatars.h"
 #include "online/feed.h"
 #include "online/flags.h"
@@ -103,8 +104,23 @@ std::string Normalize(const std::string& code) {
   return out.substr(0, 8);
 }
 
-// mk9-lauta (2026-11-11): this game's content beyond the disc, as the rooms say it ("kratos"; "" none).
-std::string Mods() { return mk9::kratos::Installed() ? "kratos" : ""; }
+// mk9-lauta (2026-11-11): this game's content beyond the disc, as the rooms say it ("kratos"; "" none). 2026-11-21:
+// and the PS Vita costumes, "vita-<their set>" (mk9_vita_costumes.h), joined by '+'.
+std::string Mods() {
+  std::string out = mk9::kratos::Installed() ? "kratos" : "";
+  if (mk9::vita_costumes::Installed()) {
+    if (!out.empty()) out += '+';
+    out += fmt::format("vita-{:08x}", mk9::vita_costumes::Signature());
+  }
+  return out;
+}
+
+bool HasKratos(const std::string& mods) { return mods == "kratos" || mods.rfind("kratos+", 0) == 0; }
+
+std::string CostumesIn(const std::string& mods) {
+  const size_t at = mods.find("vita-");
+  return at == std::string::npos ? std::string() : mods.substr(at);
+}
 
 // This player's country and record, for the other player (with the hello, the welcome and the keepalives).
 // mk9-lauta (2026-11-11): and its picture's hash (avatars.h; "" none): the picture itself only if the other lacks it.
@@ -261,13 +277,27 @@ void TakeMods(const json& d, const std::string& who) {
   Touch();
   if (!differs) return;
   const std::string other = who.empty() ? T("El rival") : who;
-  const std::string line = Mods() == "kratos"
-                               ? Tf("{} todavía no tiene a Kratos (se le descarga solo): cuando le termine, tiene que "
-                                    "reiniciar el juego para pelear online con vos.",
-                                    other)
-                               : Tf("{} ya tiene a Kratos y vos todavía no: se está descargando solo (abajo a la "
-                                    "derecha del menú). Cuando termine, reiniciá el juego.",
-                                    other);
+  std::string line;
+  if (HasKratos(mods) != HasKratos(Mods())) {
+    line = HasKratos(Mods()) ? Tf("{} todavía no tiene a Kratos (se le descarga solo): cuando le termine, tiene que "
+                                  "reiniciar el juego para pelear online con vos.",
+                                  other)
+                             : Tf("{} ya tiene a Kratos y vos todavía no: se está descargando solo (abajo a la "
+                                  "derecha del menú). Cuando termine, reiniciá el juego.",
+                                  other);
+  } else if (CostumesIn(Mods()).empty()) {
+    line = Tf("{} tiene los trajes de PS Vita y vos no (F2 > Controles, y reiniciá el juego): para pelear online "
+              "tienen que tener lo mismo.",
+              other);
+  } else if (CostumesIn(mods).empty()) {
+    line = Tf("{} no tiene los trajes de PS Vita (una versión anterior de mk9-lauta, o los apagó en F2): para pelear "
+              "online tienen que tener lo mismo.",
+              other);
+  } else {
+    line = Tf("{} tiene otra versión de los trajes de PS Vita: para pelear online tienen que tener la misma versión "
+              "de mk9-lauta (F2 > Acerca de).",
+              other);
+  }
   AddLine("", line, true);
   g.s.status = line;
   REXLOG_WARN("[room] {}'s game has content \"{}\", this one \"{}\": the fight cannot start", other, mods, Mods());
@@ -1202,5 +1232,29 @@ void Pump() {
     }
   }
 }
+
+std::string WatchModsWhy(const std::string& match_mods) {
+  const std::string match = match_mods == "none" ? std::string() : match_mods;
+  if (HasKratos(match) && !HasKratos(Mods())) {
+    return T("La partida se juega con Kratos y vos todavía no lo tenés: se descarga solo; cuando termine, reiniciá "
+             "el juego.");
+  }
+  if (!HasKratos(match) && HasKratos(Mods())) {
+    return T("Los jugadores de esta partida todavía no tienen a Kratos: para mirarla hay que tener lo mismo que "
+             "ellos.");
+  }
+  if (CostumesIn(match).empty()) {
+    return T("La partida se juega sin los trajes de PS Vita y vos los tenés: para mirarla hay que tener lo mismo que "
+             "los jugadores (F2 > Controles, y reiniciá el juego).");
+  }
+  if (CostumesIn(Mods()).empty()) {
+    return T("La partida se juega con los trajes de PS Vita y vos no los tenés: para mirarla hay que tener lo mismo "
+             "que los jugadores (F2 > Controles, y reiniciá el juego).");
+  }
+  return T("La partida se juega con otra versión de los trajes de PS Vita: para mirarla hay que tener la misma "
+           "versión de mk9-lauta (F2 > Acerca de).");
+}
+
+std::string ContentMods() { return Mods(); }
 
 }  // namespace mk9::room

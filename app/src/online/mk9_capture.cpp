@@ -65,6 +65,7 @@
 #include "mk9_brand.h"
 #include "mk9_frame_data.h"
 #include "mk9_practice_record.h"
+#include "mk9_script_input.h"
 #include "mk9_profile_prompt.h"
 #include "mk9_input_display.h"
 #include "online/online_ui.h"
@@ -700,6 +701,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::frame_data::OnFrame(base);          // Practice: each attack's frames measured from it (mk9_frame_data.h)
   mk9::practice_record::OnFrame(base);     // Practice: the opponent's recording (mk9_practice_record.h)
+  mk9::script_input::OnFrame(base);        // tests: the scripted gamepad's "@fight" anchor (mk9_script_input.h)
   mk9::profile::OnFrame(base);             // once at the main menu: the profile's saves loaded (mk9_profile_prompt.h)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)
   mk9::brand::Install();         // once: the main menu's corner (mk9_brand.h), under the windows

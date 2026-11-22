@@ -54,7 +54,8 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 
 **El juego completo.** El modo Historia (doblado al español), Torneo y Torneo por equipos, Versus de a dos en la misma
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
-versión de PlayStation 3, se descarga solo la primera vez que abrís el juego. En Práctica, cada golpe muestra su frame
+versión de PlayStation 3, se descarga solo la primera vez que abrís el juego, y también están los trajes extra de la
+versión de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena y Skarlet), con su Babality. En Práctica, cada golpe muestra su frame
 data (arranque y ventaja al golpear o al bloquear), y podés grabar al rival con tu mando para que después repita lo que
 hiciste, una vez o en bucle (F5, F6 y F7). En cualquier pelea podés ver tus entradas en pantalla. Las
 cinemáticas se saltean con START o A (también la primera vez), y si copiás los videos `.bik` de la versión de PC (por
@@ -138,8 +139,8 @@ En Steam Deck: en el modo escritorio, **Steam > Agregar un juego que no es de St
 6. ¿De tres a cuatro con ganas de turnarse? **Rey de la colina**: pelean dos y los demás miran en vivo; el que gana se
    queda y el que pierde va al final de la fila.
 
-Los dos tienen que tener la misma versión, y el juego se actualiza solo. La guía completa, con los controles y todas
-las opciones, está en [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` del zip.
+Los dos tienen que tener la misma versión (y los trajes de PS Vita prendidos los dos, o apagados los dos), y el juego
+se actualiza solo. La guía completa, con los controles y todas las opciones, está en [docs/online/guia-jugadores.md](docs/online/guia-jugadores.md) y en el `LEEME.txt` del zip.
 
 ## Preguntas frecuentes
 
@@ -174,6 +175,18 @@ la carpeta de logs**). Revisá también que Windows le haya dado permiso de red 
 
 La primera vez que abrís el juego se descarga solo (unos 95 MB, del port de la comunidad hecho por eLGatoRDV) y se
 instala antes de empezar. En la selección de personajes está en la fila de extras, abajo a la izquierda.
+
+</details>
+
+<details>
+<summary><b>¿Dónde están los trajes de PS Vita?</b></summary>
+
+En la selección de personajes, al final de la lista de trajes de cada uno: los retro de MK2 de Scorpion, Sub-Zero,
+Reptile, Ermac y Mileena, y los de MK2 y MK3 de Skarlet, cada uno con su Babality. No vienen con mk9-lauta: la primera
+vez que abrís el juego se arman en unos segundos a partir de tus propios archivos del juego (quedan en
+`cache/costumes`, unos 320 MB, y los archivos del juego no se tocan). Se apagan en **F2 > Controles** (vale al volver a
+abrir el juego; apagados, esa carpeta se puede borrar). Para pelear online, los dos tienen que tenerlos igual: la sala
+avisa si no.
 
 </details>
 
