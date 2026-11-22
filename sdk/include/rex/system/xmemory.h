@@ -591,6 +591,9 @@ class Memory {
   // Returns false if guest_address is outside every registered module range.
   bool SetFunction(uint32_t guest_address, PPCFunc* host_function);
   bool HasAnyFunctionTable() const;
+  // mk9-nx (2026-11-22): the recompiled guest function a host PC is in (the one whose host code starts last before
+  // it), 0 if none; *host_start gets that host code's start. For crash logs: slow (it scans the whole table).
+  uint32_t GuestFunctionForHostPC(uint64_t pc, uint64_t* host_start = nullptr) const;
 
  private:
 #if REX_PLATFORM_MAC

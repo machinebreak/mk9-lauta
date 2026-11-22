@@ -9,6 +9,7 @@ void Install(rex::filesystem::VirtualFileSystem*, const std::filesystem::path&) 
 bool Installed() { return false; }
 uint32_t Signature() { return 0; }
 std::string Summary() { return {}; }
+int PackDownload() { return -1; }
 }  // namespace mk9::vita_costumes
 #else
 
@@ -21,6 +22,7 @@ std::string Summary() { return {}; }
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <rex/cvar.h>
@@ -37,6 +39,10 @@ REXCVAR_DEFINE_BOOL(mk9_vita_costumes, true, "MK9",
                     "The PS Vita version's extra costumes (MK2 Scorpion, Sub-Zero, Reptile, Ermac and Mileena, MK2 and "
                     "MK3 Skarlet), made from the player's game files at the first start (mk9_vita_costumes.h)")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_STRING(mk9_vita_costumes_pack, "", "MK9",
+                      "Tests: the pack of the costumes made of the PS Vita's own meshes and textures read from this "
+                      "file (tools/costumes/make_mk3_pack.py) instead of the downloaded one")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 namespace mk9::vita_costumes {
 namespace {
@@ -46,6 +52,14 @@ const unsigned char kVitaCostumes[] = {
 #embed "../costumes/vita_costumes.bin"
 };
 constexpr size_t kVitaCostumesSize = sizeof(kVitaCostumes);
+
+// The pack of the costumes made of the Vita's own meshes and textures (its MK3 retro look's: tools/costumes/
+// make_mk3_pack.py): the same format, but its new bytes are the Vita's data, converted, so it is not built in: it is
+// hosted apart and downloaded, as the Kratos port is, and used from the next start. No URL: not published yet
+// (mk9_vita_costumes_pack, a local file, for the tests).
+constexpr const char* kPackUrl = "";
+constexpr const char* kPackSha = "";
+constexpr uint64_t kPackSize = 0;
 
 namespace fs = std::filesystem;
 
@@ -301,8 +315,8 @@ bool ParsePatch(const uint8_t* data, size_t size, Patch& patch) {
   return r.ok && patch.ops && !patch.sources.empty();
 }
 
-bool ParseBundle(std::vector<Costume>& out) {
-  Reader r{kVitaCostumes, kVitaCostumes + kVitaCostumesSize};
+bool ParseBundle(const uint8_t* data, size_t size, std::vector<Costume>& out) {
+  Reader r{data, data + size};
   if (r.Str(4) != "MK9V" || r.U32() != 1) return false;
   const uint32_t count = r.U32();
   for (uint32_t i = 0; i < count && r.ok; ++i) {
@@ -646,16 +660,106 @@ uint32_t Fnv(std::string_view text, uint32_t h = 2166136261u) {
   return h;
 }
 
+std::string g_pack;                     // the pack's bytes (its patches point into them)
+std::atomic<int> g_pack_progress{-1};  // its download: -1 none, 0-100 going, 101 done (in at the next start)
+
+fs::path PackPath() { return mk9::platform::ExeDir() / "costumes" / "vita_costumes_pack.bin"; }
+
+// The published pack: its size, then its SHA-256.
+bool PackGood(const fs::path& file) {
+  std::error_code ec;
+  uint8_t digest[32];
+  return *kPackSha && fs::file_size(file, ec) == kPackSize && !ec && updater::FileSha256(file, digest) &&
+         Hex(digest, 32) == kPackSha;
+}
+
+// The pack's costumes after the built-in ones: the downloaded pack (when it is the published one) or the test's file.
+void LoadPack(std::vector<Costume>& costumes) {
+  const std::string test = REXCVAR_GET(mk9_vita_costumes_pack);
+  const fs::path file = test.empty() ? PackPath() : rex::to_path(test);
+  std::error_code ec;
+  if (!fs::is_regular_file(file, ec)) return;
+  if (test.empty() && !PackGood(file)) {
+    REXLOG_WARN("[costumes] {} is not the published pack (size or SHA-256): deleted", rex::path_to_utf8(file));
+    fs::remove(file, ec);
+    return;
+  }
+  std::vector<Costume> more;
+  if (!ReadAll(file, g_pack) || !ParseBundle(reinterpret_cast<const uint8_t*>(g_pack.data()), g_pack.size(), more)) {
+    REXLOG_ERROR("[costumes] the pack {} is damaged: its costumes left out", rex::path_to_utf8(file));
+    return;
+  }
+  REXLOG_INFO("[costumes] the pack {}: {} costumes", rex::path_to_utf8(file), more.size());
+  for (Costume& c : more) costumes.push_back(std::move(c));
+}
+
+// Downloaded when it is published and not here (not in an online session's game nor in a test), in the background:
+// in from the next start.
+void StartPackDownload() {
+  if (!*kPackUrl || !REXCVAR_GET(mk9_vita_costumes) || rex::cvar::GetFlagByName("mk9_lobby_url") == "off") return;
+  for (const char* name : {"mk9_net_room", "mk9_net_role", "mk9_net_replay", "mk9_input_script",
+                           "mk9_input_script_file", "mk9_online_test", "mk9_vita_costumes_pack"}) {
+    if (!rex::cvar::GetFlagByName(name).empty()) return;
+  }
+  std::error_code ec;
+  if (fs::exists(PackPath(), ec)) return;
+  g_pack_progress = 0;
+  std::thread([] {
+    const fs::path file = PackPath();
+    fs::path partial = file;
+    partial += ".partial";
+    std::error_code ec;
+    fs::create_directories(file.parent_path(), ec);
+    uint64_t got = fs::exists(partial, ec) ? fs::file_size(partial, ec) : 0;
+    if (ec || got >= kPackSize) got = 0;  // nothing usable there: from the start
+    std::ofstream out(partial, std::ios::binary | (got ? std::ios::app : std::ios::trunc));
+    if (!out) {
+      REXLOG_ERROR("[costumes] could not write {}", rex::path_to_utf8(partial));
+      g_pack_progress = -1;
+      return;
+    }
+    REXLOG_INFO("[costumes] downloading the PS Vita costumes' pack ({} MB) from {}", kPackSize >> 20, kPackUrl);
+    std::string error;
+    const bool ok = updater::DownloadTo(
+        kPackUrl,
+        [&](const char* data, size_t n) {
+          out.write(data, std::streamsize(n));
+          if (!out) return false;
+          got += n;
+          g_pack_progress = int(std::min<uint64_t>(100, got * 100 / std::max<uint64_t>(kPackSize, 1)));
+          return true;
+        },
+        &error, got);
+    out.close();
+    if (!ok) {
+      REXLOG_WARN("[costumes] the pack's download stopped ({}): it goes on at the next start", error);
+      g_pack_progress = -1;
+      return;
+    }
+    if (!PackGood(partial)) {
+      REXLOG_ERROR("[costumes] the download is not the published pack (size or SHA-256): discarded");
+      fs::remove(partial, ec);
+      g_pack_progress = -1;
+      return;
+    }
+    fs::rename(partial, file, ec);
+    g_pack_progress = ec ? -1 : 101;
+    if (!ec) REXLOG_INFO("[costumes] the PS Vita costumes' pack downloaded: they come at the next start");
+  }).detach();
+}
+
 }  // namespace
 
 void Install(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::path& game_root) {
   if (!vfs || game_root.empty() || !REXCVAR_GET(mk9_vita_costumes)) return;
   const auto start = std::chrono::steady_clock::now();
   std::vector<Costume> costumes;
-  if (!ParseBundle(costumes)) {
+  if (!ParseBundle(kVitaCostumes, kVitaCostumesSize, costumes)) {
     REXLOG_ERROR("[costumes] the built-in costume patches are damaged: none");
     return;
   }
+  LoadPack(costumes);
+  StartPackDownload();
   const fs::path folder = mk9::platform::ExeDir() / "cache" / "costumes";
   // the packages to make (the first start, or a release with other patches) and how many of them each source package
   // of the game is for: its decompressed image (tens of MB) goes after its last one
@@ -750,6 +854,8 @@ bool Installed() { return g_installed.load(std::memory_order_relaxed); }
 uint32_t Signature() { return g_signature.load(std::memory_order_relaxed); }
 
 std::string Summary() { return g_summary; }
+
+int PackDownload() { return g_pack_progress.load(std::memory_order_relaxed); }
 
 }  // namespace mk9::vita_costumes
 

@@ -36,4 +36,8 @@ uint32_t Signature();
 // For F2: how many costumes are in ("" none).
 std::string Summary();
 
+// For F2: the download of the pack of the costumes made of the Vita's own data (-1 none, 0-100 going, 101 done: in
+// from the next start).
+int PackDownload();
+
 }  // namespace mk9::vita_costumes

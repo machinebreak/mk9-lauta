@@ -591,6 +591,7 @@ runtime::MMIORange* Memory::LookupVirtualMappedRange(uint32_t virtual_address) {
 
 #if REX_PLATFORM_SWITCH
 extern "C" void* RexGmShadowFor(uint64_t window_address);
+#endif
 
 namespace {
 /*
@@ -603,11 +604,22 @@ namespace {
  * report itself can never fault on a watched or not yet faulted-in page.
  */
 bool ReadGuest32(uint8_t* virtual_membase, uint32_t address, uint32_t* out) {
+#if REX_PLATFORM_SWITCH
   const auto* p = static_cast<const uint8_t*>(
       RexGmShadowFor(reinterpret_cast<uint64_t>(virtual_membase + address)));
   if (!p) {
     return false;
   }
+#else
+  // mk9-nx (2026-11-22): the same report on PC: a page not readable (not committed, watched) is skipped
+  const uint8_t* p = virtual_membase + address;
+  rex::memory::PageAccess access;
+  size_t length = 4;
+  if (!rex::memory::QueryProtect(const_cast<uint8_t*>(p), length, access) ||
+      access == rex::memory::PageAccess::kNoAccess) {
+    return false;
+  }
+#endif
   uint32_t v;
   std::memcpy(&v, p, sizeof(v));
   *out = rex::byte_swap(v);
@@ -677,7 +689,6 @@ void DumpGuestCrashContext(uint8_t* virtual_membase) {
   }
 }
 }  // namespace
-#endif
 
 namespace {
 // mk9-nx (2026-11-09): host code that reads guest memory which may be gone by the time it reads (the renderer's
@@ -707,9 +718,7 @@ bool Memory::AccessViolationCallback(std::unique_lock<std::recursive_mutex> glob
         "Unhandled guest access violation: {} of guest 0x{:08X} (host 0x{:016X}) on thread 0x{:X}",
         is_write ? "write" : "read", virtual_address, reinterpret_cast<uintptr_t>(host_address),
         rex::thread::current_thread_id());
-#if REX_PLATFORM_SWITCH
     DumpGuestCrashContext(virtual_membase_);
-#endif
     rex::NotifyGuestCrash();
     return false;
   }
@@ -1026,6 +1035,26 @@ bool Memory::SetFunction(uint32_t guest_address, PPCFunc* host_function) {
   auto* slot = TranslateVirtual<PPCFunc**>(table_address);
   *slot = host_function;
   return true;
+}
+
+uint32_t Memory::GuestFunctionForHostPC(uint64_t pc, uint64_t* host_start) const {
+  std::lock_guard lock(function_tables_mutex_);
+  uint32_t best = 0;
+  uint64_t best_host = 0;
+  for (const auto& entry : function_tables_) {
+    for (uint32_t a = entry.code_base; a < entry.code_base + entry.code_size; a += 4) {
+      const auto* slot = TranslateVirtual<PPCFunc* const*>(entry.table_base + (a - entry.code_base) * 2);
+      const uint64_t host = reinterpret_cast<uint64_t>(*slot);
+      if (host && host <= pc && host > best_host) {
+        best_host = host;
+        best = a;
+      }
+    }
+  }
+  if (host_start) {
+    *host_start = best_host;
+  }
+  return best;
 }
 
 bool Memory::HasAnyFunctionTable() const {

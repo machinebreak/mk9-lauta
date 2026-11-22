@@ -136,6 +136,10 @@ SDLAudioDriver::SDLAudioDriver(memory::Memory* memory, rex::thread::Semaphore* s
     : AudioDriver(memory), semaphore_(semaphore) {}
 
 SDLAudioDriver::~SDLAudioDriver() {
+  if (no_device_.joinable()) {
+    active_no_device_ = false;
+    no_device_.join();
+  }
   if (pump_.joinable()) {
     active_pump_ = false;
     pump_.join();
@@ -153,10 +157,82 @@ bool SDLAudioDriver::Initialize() {
 
   if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
     REXAPU_ERROR("SDL_InitSubSystem(SDL_INIT_AUDIO) failed: {}", SDL_GetError());
-    return false;
+  } else {
+    sdl_initialized_ = true;
   }
-  sdl_initialized_ = true;
+  if (!sdl_initialized_ || !OpenDevice()) {
+    REXAPU_WARN("[audio] no audio device: the game's sound is taken in time and played nowhere until there is one "
+                "(looked for every 2 s)");
+    active_no_device_ = true;
+    no_device_ = std::thread([this]() { NoDevice(); });
+  }
 
+  if (REXCVAR_GET(audio_sdl_pump)) {
+    active_pump_ = true;
+    pump_ = std::thread([this]() { Pump(); });
+    REXAPU_INFO("audio: diagnostic pump at 187.5 Hz active");
+  }
+
+  return true;
+}
+
+void SDLAudioDriver::NoDevice() {
+  using Clock = std::chrono::steady_clock;
+  const auto interval = std::chrono::nanoseconds(1'000'000'000ll * channel_samples_ / frame_frequency_);
+  auto deadline = Clock::now() + interval;
+  auto next_look = Clock::now() + std::chrono::seconds(2);
+  while (active_no_device_.load(std::memory_order_relaxed)) {
+    const auto now = Clock::now();
+    if (now >= next_look) {
+      next_look = now + std::chrono::seconds(2);
+      // the device's callback takes the frames from the moment it opens; this thread then stops taking them
+      if (sdl_initialized_ && OpenDevice()) {
+        REXAPU_INFO("[audio] an audio device is there now: the sound plays on it");
+        active_no_device_ = false;
+        return;
+      }
+    }
+    if (now < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
+    }
+    // each frame's time gone by: a queued frame taken, as the device's callback takes one (with its release);
+    // none queued, nothing owed (the callback plays silence then)
+    while (deadline <= now) {
+      bool taken = false;
+      {
+        std::unique_lock<std::mutex> guard(frames_mutex_);
+        if (!frames_queued_.empty()) {
+          frames_unused_.push(frames_queued_.front());
+          frames_queued_.pop();
+          taken = true;
+        }
+      }
+      if (taken && !active_pump_.load(std::memory_order_relaxed)) {
+        semaphore_->Release(1, nullptr);
+      }
+      deadline += interval;
+    }
+    if (now - deadline > std::chrono::milliseconds(100)) {  // a long stall: no catching up on it
+      deadline = now + interval;
+    }
+  }
+}
+
+bool SDLAudioDriver::OpenDevice() {
+  // Tried again every 2 s while there is no device: only the first failure is logged.
+  static bool failure_logged = false;
+  const auto fail = [&](const char* what) {
+    if (!failure_logged) {
+      REXAPU_ERROR("{} failed: {}", what, SDL_GetError());
+      failure_logged = true;
+    }
+    if (sdl_stream_) {
+      SDL_DestroyAudioStream(sdl_stream_);
+      sdl_stream_ = nullptr;
+    }
+    return false;
+  };
   SDL_AudioSpec desired_spec = {};
   SDL_AudioSpec obtained_spec = {};
   desired_spec.freq = frame_frequency_;
@@ -166,14 +242,12 @@ bool SDLAudioDriver::Initialize() {
   sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
                                           SDLCallback, this);
   if (!sdl_stream_) {
-    REXAPU_ERROR("SDL_OpenAudioDeviceStream() failed: {}", SDL_GetError());
-    return false;
+    return fail("SDL_OpenAudioDeviceStream()");
   }
 
   SDL_AudioDeviceID sdl_device = SDL_GetAudioStreamDevice(sdl_stream_);
   if (!sdl_device) {
-    REXAPU_ERROR("SDL_GetAudioStreamDevice() failed: {}", SDL_GetError());
-    return false;
+    return fail("SDL_GetAudioStreamDevice()");
   }
 
   if (!SDL_GetAudioDeviceFormat(sdl_device, &obtained_spec, NULL)) {
@@ -191,13 +265,11 @@ bool SDLAudioDriver::Initialize() {
     sdl_stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &desired_spec,
                                             SDLCallback, this);
     if (!sdl_stream_) {
-      REXAPU_ERROR("SDL_OpenAudioDeviceStream() stereo fallback failed: {}", SDL_GetError());
-      return false;
+      return fail("SDL_OpenAudioDeviceStream() (stereo fallback)");
     }
     sdl_device = SDL_GetAudioStreamDevice(sdl_stream_);
     if (!sdl_device) {
-      REXAPU_ERROR("SDL_GetAudioStreamDevice() failed after stereo fallback: {}", SDL_GetError());
-      return false;
+      return fail("SDL_GetAudioStreamDevice() (stereo fallback)");
     }
   }
 
@@ -210,16 +282,8 @@ bool SDLAudioDriver::Initialize() {
               static_cast<uint32_t>(obtained_spec.format), static_cast<int>(sdl_device_channels_));
 
   if (!SDL_ResumeAudioDevice(sdl_device)) {
-    REXAPU_ERROR("SDL_ResumeAudioDevice() failed: {}", SDL_GetError());
-    return false;
+    return fail("SDL_ResumeAudioDevice()");
   }
-
-  if (REXCVAR_GET(audio_sdl_pump)) {
-    active_pump_ = true;
-    pump_ = std::thread([this]() { Pump(); });
-    REXAPU_INFO("audio: diagnostic pump at 187.5 Hz active");
-  }
-
   return true;
 }
 
@@ -282,6 +346,10 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
 }
 
 void SDLAudioDriver::Shutdown() {
+  if (no_device_.joinable()) {
+    active_no_device_ = false;
+    no_device_.join();
+  }
   if (pump_.joinable()) {
     active_pump_ = false;
     pump_.join();

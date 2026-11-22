@@ -61,6 +61,14 @@ class SDLAudioDriver : public AudioDriver {
   void Pump();
   std::thread pump_ = {};
   std::atomic<bool> active_pump_{false};
+  // mk9-nx (2026-11-22): no audio device when the game starts (a monitor's speakers off, nothing plugged in). The
+  // game's audio thread waits for each frame to be taken, so a driver that is not there hangs it (the intro's movie
+  // never ends). Without a device, a thread takes the frames in time and plays them nowhere, and opens the device
+  // when one appears (looked for every 2 s).
+  bool OpenDevice();
+  void NoDevice();
+  std::thread no_device_ = {};
+  std::atomic<bool> active_no_device_{false};
 };
 
 }  // namespace rex::audio::sdl

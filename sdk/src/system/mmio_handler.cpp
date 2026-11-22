@@ -21,6 +21,7 @@
 #include <rex/memory.h>
 #include <rex/platform.h>
 #include <rex/system/mmio_handler.h>
+#include <rex/system/xmemory.h>
 #include <rex/types.h>
 
 #if REX_PLATFORM_WINDOWS
@@ -450,8 +451,13 @@ bool MMIOHandler::ExceptionCallback(arch::Exception* ex) {
       const bool handled = access_violation_callback_(
           std::move(lock), access_violation_callback_context_, fault_host_address, is_write);
       if (!handled && !rex::memory::QuietGuestFaults()) {
-        REXLOG_ERROR("Unhandled guest access violation at host PC {:p}{}",
-                     reinterpret_cast<const void*>(ex->pc()), DescribeHostCode(ex->pc()));
+        // the guest function the host code belongs to (the callback's context is the guest memory)
+        uint64_t host_start = 0;
+        const uint32_t guest_function = static_cast<const memory::Memory*>(access_violation_callback_context_)
+                                            ->GuestFunctionForHostPC(ex->pc(), &host_start);
+        REXLOG_ERROR("Unhandled guest access violation at host PC {:p}{} (in sub_{:08X} + 0x{:X})",
+                     reinterpret_cast<const void*>(ex->pc()), DescribeHostCode(ex->pc()), guest_function,
+                     ex->pc() - host_start);
         rex::NotifyGuestCrash();
       }
       return handled;

@@ -23,6 +23,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/guest_park.h>
 #include <rex/system/thread_state.h>
+#include <rex/system/xmemory.h>
 
 namespace rex::runtime {
 
@@ -36,8 +37,15 @@ FunctionDispatcher* GetBoundFunctionDispatcher() {
 }  // namespace
 
 static void InvalidFunctionTrap(PPCContext& ctx, uint8_t* /*base*/) {
-  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",
-            ctx.last_indirect_target);
+  // mk9-nx (2026-11-22): the guest function that made the call (the recompiled code this returns to), for the log
+  const uint64_t back = reinterpret_cast<uint64_t>(__builtin_return_address(0));
+  uint64_t start = 0;
+  uint32_t caller = 0;
+  if (Runtime* runtime = Runtime::instance(); runtime && runtime->memory()) {
+    caller = runtime->memory()->GuestFunctionForHostPC(back, &start);
+  }
+  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X} (from sub_{:08X} + 0x{:X})",
+            ctx.last_indirect_target, caller, back - start);
 }
 
 PPCFunc* ResolveIndirectFunction(uint32_t guest_address) {

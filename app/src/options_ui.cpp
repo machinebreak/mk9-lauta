@@ -803,9 +803,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     // mk9-lauta (2026-11-21): the PS Vita costumes (mk9_vita_costumes.h), at the next start
     if (rex::cvar::GetFlagInfo("mk9_vita_costumes")) {
       bool vita = Current("mk9_vita_costumes") != "false";
-      if (ImGui::Checkbox(Tid("Trajes extra de la versión de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena y "
-                              "Skarlet)").c_str(),
-                          &vita)) {
+      if (ImGui::Checkbox(Tid("Trajes extra de la versión de PS Vita (con sus Babalities)").c_str(), &vita)) {
         Set({{"mk9_vita_costumes", vita ? "true" : "false"}},
             T(vita ? "Trajes de PS Vita activados" : "Trajes de PS Vita desactivados"));
       }
@@ -820,6 +818,12 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
         } else {
           ImGui::TextWrapped("%s", T("No se pudieron armar desde los archivos del juego: la carpeta logs dice por "
                                      "qué (F2 > Acerca de)."));
+        }
+        // the pack of the ones made with the Vita's own data, being downloaded (in from the next start)
+        if (const int got = vita_costumes::PackDownload(); got >= 0 && got <= 100) {
+          ImGui::TextWrapped("%s", Tf("Descargando los trajes hechos con datos de la PS Vita: {}%", got).c_str());
+        } else if (got > 100) {
+          ImGui::TextWrapped("%s", T("Trajes de la PS Vita descargados: están desde el próximo inicio."));
         }
         ImGui::PopStyleColor();
       }
