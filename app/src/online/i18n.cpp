@@ -425,6 +425,30 @@ const std::unordered_map<std::string_view, Text>& Table() {
         "players have (F2 > Controls, then restart the game).",
         "A partida é jogada com os trajes de PS Vita e você não os tem: para assistir é preciso ter o mesmo que os "
         "jogadores (F2 > Controles, e reinicie o jogo)."}},
+      {"{} todavía no tiene los trajes de PS Vita que se descargan aparte: tiene que cerrar el juego y volver a "
+       "abrirlo para que se le descarguen.",
+       {"{} does not have the PS Vita costumes that are downloaded separately yet: they have to close the game and "
+        "open it again to get them.",
+        "{} ainda não tem os trajes de PS Vita que são baixados à parte: precisa fechar o jogo e abrir de novo para "
+        "que sejam baixados."}},
+      {"{} tiene los trajes de PS Vita que se descargan aparte y vos todavía no: cerrá el juego y volvé a abrirlo "
+       "para que se descarguen.",
+       {"{} has the PS Vita costumes that are downloaded separately and you do not yet: close the game and open it "
+        "again to download them.",
+        "{} tem os trajes de PS Vita que são baixados à parte e você ainda não: feche o jogo e abra de novo para "
+        "baixá-los."}},
+      {"La partida se juega con los trajes de PS Vita que se descargan aparte y vos todavía no los tenés: cerrá el "
+       "juego y volvé a abrirlo para que se descarguen.",
+       {"The match is played with the PS Vita costumes that are downloaded separately and you do not have them yet: "
+        "close the game and open it again to download them.",
+        "A partida é jogada com os trajes de PS Vita que são baixados à parte e você ainda não os tem: feche o jogo e "
+        "abra de novo para baixá-los."}},
+      {"La partida se juega sin los trajes de PS Vita que se descargan aparte (un jugador todavía no los tiene): para "
+       "mirarla hay que tener lo mismo que los jugadores.",
+       {"The match is played without the PS Vita costumes that are downloaded separately (a player does not have them "
+        "yet): to watch it you need what the players have.",
+        "A partida é jogada sem os trajes de PS Vita que são baixados à parte (um jogador ainda não os tem): para "
+        "assistir é preciso ter o mesmo que os jogadores."}},
       {"La partida se juega con otra versión de los trajes de PS Vita: para mirarla hay que tener la misma versión de "
        "mk9-lauta (F2 > Acerca de).",
        {"The match is played with another version of the PS Vita costumes: to watch it you need the same version of "

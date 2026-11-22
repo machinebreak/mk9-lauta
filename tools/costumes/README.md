@@ -94,9 +94,12 @@ python make_mk3_pack.py <game> out/vita_mk3 <test folder> out/vita_pack/vita_cos
 ```
 
 `<Vita>` is the Vita game's files (PCSE00023). The pack has the bundle format; its new bytes are the Vita's data,
-converted, so it is not built into the program: it is hosted apart and downloaded (`mk9_vita_costumes.cpp`, as the
-Kratos port is), and `mk9_vita_costumes_pack` reads a local one for the tests. Its DLC ids follow the built-in
-bundle's (20008 on).
+converted, so it is not built into the program: it is hosted apart, as a release asset of
+[machinebreak/mk9-lauta-vita-costumes](https://github.com/machinebreak/mk9-lauta-vita-costumes) (v1: 15,309,810
+bytes, SHA-256 `e96f7e31…`), and the game downloads it before its first start with it, in a window as Kratos' (the
+URL, size and SHA-256 in `mk9_vita_costumes.cpp`); `mk9_vita_costumes_pack` reads a local one for the tests. A pack
+with other bytes goes up as a new release there (v2, …) and the game version that uses it names it: an older game
+keeps downloading the one it checks. Its DLC ids follow the built-in bundle's (20008 on).
 
 The conversion (`vita_convert.py`, `xenos.py`, `skelmesh.py`):
 

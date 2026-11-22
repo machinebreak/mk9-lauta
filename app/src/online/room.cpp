@@ -105,12 +105,14 @@ std::string Normalize(const std::string& code) {
 }
 
 // mk9-lauta (2026-11-11): this game's content beyond the disc, as the rooms say it ("kratos"; "" none). 2026-11-21:
-// and the PS Vita costumes, "vita-<their set>" (mk9_vita_costumes.h), joined by '+'.
+// and the PS Vita costumes, "vita-<their set>" (mk9_vita_costumes.h), joined by '+'. 2026-11-22: "+vitapack" after it
+// when the downloaded pack's are among them (the set says it too; this tells a player who lacks them what to do).
 std::string Mods() {
   std::string out = mk9::kratos::Installed() ? "kratos" : "";
   if (mk9::vita_costumes::Installed()) {
     if (!out.empty()) out += '+';
     out += fmt::format("vita-{:08x}", mk9::vita_costumes::Signature());
+    if (mk9::vita_costumes::PackIn()) out += "+vitapack";
   }
   return out;
 }
@@ -121,6 +123,8 @@ std::string CostumesIn(const std::string& mods) {
   const size_t at = mods.find("vita-");
   return at == std::string::npos ? std::string() : mods.substr(at);
 }
+
+bool HasVitaPack(const std::string& mods) { return mods.find("+vitapack") != std::string::npos; }
 
 // This player's country and record, for the other player (with the hello, the welcome and the keepalives).
 // mk9-lauta (2026-11-11): and its picture's hash (avatars.h; "" none): the picture itself only if the other lacks it.
@@ -293,6 +297,15 @@ void TakeMods(const json& d, const std::string& who) {
     line = Tf("{} no tiene los trajes de PS Vita (una versión anterior de mk9-lauta, o los apagó en F2): para pelear "
               "online tienen que tener lo mismo.",
               other);
+  } else if (HasVitaPack(mods) != HasVitaPack(Mods())) {
+    // the same costumes built in, the pack's on one side only: its download failed at a start
+    line = HasVitaPack(Mods())
+               ? Tf("{} todavía no tiene los trajes de PS Vita que se descargan aparte: tiene que cerrar el juego y "
+                    "volver a abrirlo para que se le descarguen.",
+                    other)
+               : Tf("{} tiene los trajes de PS Vita que se descargan aparte y vos todavía no: cerrá el juego y volvé a "
+                    "abrirlo para que se descarguen.",
+                    other);
   } else {
     line = Tf("{} tiene otra versión de los trajes de PS Vita: para pelear online tienen que tener la misma versión "
               "de mk9-lauta (F2 > Acerca de).",
@@ -1250,6 +1263,14 @@ std::string WatchModsWhy(const std::string& match_mods) {
   if (CostumesIn(Mods()).empty()) {
     return T("La partida se juega con los trajes de PS Vita y vos no los tenés: para mirarla hay que tener lo mismo "
              "que los jugadores (F2 > Controles, y reiniciá el juego).");
+  }
+  if (HasVitaPack(match) && !HasVitaPack(Mods())) {
+    return T("La partida se juega con los trajes de PS Vita que se descargan aparte y vos todavía no los tenés: cerrá "
+             "el juego y volvé a abrirlo para que se descarguen.");
+  }
+  if (!HasVitaPack(match) && HasVitaPack(Mods())) {
+    return T("La partida se juega sin los trajes de PS Vita que se descargan aparte (un jugador todavía no los "
+             "tiene): para mirarla hay que tener lo mismo que los jugadores.");
   }
   return T("La partida se juega con otra versión de los trajes de PS Vita: para mirarla hay que tener la misma "
            "versión de mk9-lauta (F2 > Acerca de).");

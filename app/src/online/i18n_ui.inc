@@ -206,12 +206,12 @@
       {"Trajes extra de la versión de PS Vita (con sus Babalities)",
        {"The PS Vita version's extra costumes (with their Babalities)",
         "Trajes extras da versão de PS Vita (com seus Babalities)"}},
-      {"Descargando los trajes hechos con datos de la PS Vita: {}%",
-       {"Downloading the costumes made with the PS Vita's data: {}%",
-        "Baixando os trajes feitos com dados do PS Vita: {}%"}},
-      {"Trajes de la PS Vita descargados: están desde el próximo inicio.",
-       {"PS Vita costumes downloaded: they are in from the next start.",
-        "Trajes do PS Vita baixados: estão no jogo a partir do próximo início."}},
+      {"Faltan los trajes hechos con datos de la PS Vita (no se pudieron descargar): se descargan la próxima vez que "
+       "abras el juego.",
+       {"The costumes made with the PS Vita's data are missing (they could not be downloaded): they download the next "
+        "time you open the game.",
+        "Faltam os trajes feitos com dados do PS Vita (não puderam ser baixados): eles são baixados na próxima vez que "
+        "você abrir o jogo."}},
       {"Trajes de PS Vita activados", {"PS Vita costumes on", "Trajes de PS Vita ativados"}},
       {"Trajes de PS Vita desactivados", {"PS Vita costumes off", "Trajes de PS Vita desativados"}},
       {"{} trajes listos: aparecen en la selección de personaje (los Babalities también).",
@@ -610,7 +610,7 @@
         "it.",
         "Copie de novo a pasta game_root da sua cópia do jogo (Xbox 360, Komplete Edition) ao lado do mk9, inteira."}},
 
-      // --- Kratos' download (mk9_kratos.cpp)
+      // --- the downloads before the game (mk9_fetch_window.cpp): Kratos' (mk9_kratos.cpp)
       {"Descargando a Kratos", {"Downloading Kratos", "Baixando o Kratos"}},
       {"Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo para jugar "
        "online con los que también lo tienen.",
@@ -619,6 +619,14 @@
         "Kratos entra no jogo (uma única vez, uns 96 MB). Quando terminar, o jogo inicia com ele, pronto para jogar "
         "online com quem também o tem."}},
       {"{} de {} MB", {"{} of {} MB", "{} de {} MB"}},
+      // the PS Vita costumes' pack (mk9_vita_costumes.cpp), in the same window
+      {"Descargando los trajes de PS Vita", {"Downloading the PS Vita costumes", "Baixando os trajes de PS Vita"}},
+      {"Los trajes extra de la versión de PS Vita se suman al juego (una sola vez, unos 15 MB). Cuando termine, el "
+       "juego arranca con ellos.",
+       {"The PS Vita version's extra costumes join the game (only once, about 15 MB). When it finishes, the game "
+        "starts with them.",
+        "Os trajes extras da versão de PS Vita entram no jogo (uma única vez, uns 15 MB). Quando terminar, o jogo "
+        "inicia com eles."}},
       {"Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras.",
        {"Closing this window closes the game: the download goes on the next time you open it.",
         "Se você fechar esta janela, o jogo fecha: o download continua na próxima vez que você o abrir."}},

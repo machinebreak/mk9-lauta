@@ -270,16 +270,23 @@ descarga, la sala lo avisa y la pelea no arranca hasta que reinicie el juego. Lo
 
 ## Trajes de PS Vita
 
-La versión de PS Vita trae trajes que la de Xbox 360 no tiene. mk9-lauta suma los que se pueden armar con lo que ya
-está en el juego: los retro de MK2 de Scorpion, Sub-Zero, Reptile, Ermac y Mileena, y los de MK2 y MK3 de Skarlet, cada
-uno con su Babality. Están al final de la lista de trajes de cada personaje.
+La versión de PS Vita trae trajes que la de Xbox 360 no tiene, y mk9-lauta los suma todos, cada uno con su Babality:
+los retro de MK2 de Scorpion, Sub-Zero, Reptile, Ermac, Mileena y Skarlet, los de MK3 de Scorpion, Sub-Zero, Reptile,
+Ermac, Smoke, Noob, Rain y Skarlet, y los alternativos de Kenshi y de Skarlet. Están al final de la lista de trajes de
+cada personaje.
 
 No vienen en el zip: la primera vez que abrís el juego se arman en unos segundos a partir de tus propios archivos del
-juego y quedan en la carpeta `cache\costumes` (unos 320 MB). Los archivos del juego no se tocan. Se apagan en
-**F2 > Controles** (vale al volver a abrir el juego; apagados, esa carpeta se puede borrar).
+juego y quedan en la carpeta `cache\costumes` (unos 600 MB). Los archivos del juego no se tocan. Nueve de ellos (los de
+MK3 de los ninjas y los alternativos de Kenshi y de Skarlet) usan modelos y texturas que sólo tiene la versión de PS
+Vita: vienen en un paquete aparte (unos 15 MB,
+[machinebreak/mk9-lauta-vita-costumes](https://github.com/machinebreak/mk9-lauta-vita-costumes)) que el juego
+descarga solo la primera vez, con una ventana como la de Kratos. Si la cerrás, se cierra el juego y la descarga sigue
+la próxima vez; si no hay conexión, el juego arranca con los otros siete y lo intenta de nuevo la próxima vez que lo
+abras (**F2 > Controles** avisa si faltan). Se apagan en **F2 > Controles** (vale al volver a abrir el juego;
+apagados, esa carpeta se puede borrar).
 
-Para jugar online, los dos tienen que tenerlos prendidos (o apagados los dos): si no, la sala lo avisa y la pelea no
-arranca. Lo mismo para mirar una partida o un replay.
+Para jugar online, los dos tienen que tener los mismos (o apagados los dos): si no, la sala lo avisa, dice qué hacer y
+la pelea no arranca. Lo mismo para mirar una partida o un replay.
 
 ## Videos HQ de las cinemáticas
 

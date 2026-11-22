@@ -55,6 +55,8 @@ set(MK9_SOURCES
     src/mk9_jobs.cpp
     # mk9-lauta: Kratos from the community's Xbox 360 port, when the player installed it (kratos.toml).
     src/mk9_kratos.cpp
+    # mk9-lauta (2026-11-22): the window before the game while Kratos or the PS Vita costumes' pack downloads.
+    src/mk9_fetch_window.cpp
     src/mk9_movie.cpp
     # Switch: every thread's stack in logs/rex/rex_crash.log when no frame is presented for a while (mk9_hang_dump_s).
     src/mk9_hang_watch.cpp

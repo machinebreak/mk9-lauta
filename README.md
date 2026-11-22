@@ -55,7 +55,8 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 **El juego completo.** El modo Historia (doblado al español), Torneo y Torneo por equipos, Versus de a dos en la misma
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
 versión de PlayStation 3, se descarga solo la primera vez que abrís el juego, y también están los trajes extra de la
-versión de PS Vita (Scorpion, Sub-Zero, Reptile, Ermac, Mileena y Skarlet), con su Babality. En Práctica, cada golpe muestra su frame
+versión de PS Vita (los retro de MK2 y de MK3 de los ninjas, Mileena y Skarlet, y los alternativos de Kenshi y de
+Skarlet), cada uno con su Babality. En Práctica, cada golpe muestra su frame
 data (arranque y ventaja al golpear o al bloquear), y podés grabar al rival con tu mando para que después repita lo que
 hiciste, una vez o en bucle (F5, F6 y F7). En cualquier pelea podés ver tus entradas en pantalla. Las
 cinemáticas se saltean con START o A (también la primera vez), y si copiás los videos `.bik` de la versión de PC (por
@@ -182,11 +183,14 @@ instala antes de empezar. En la selección de personajes está en la fila de ext
 <summary><b>¿Dónde están los trajes de PS Vita?</b></summary>
 
 En la selección de personajes, al final de la lista de trajes de cada uno: los retro de MK2 de Scorpion, Sub-Zero,
-Reptile, Ermac y Mileena, y los de MK2 y MK3 de Skarlet, cada uno con su Babality. No vienen con mk9-lauta: la primera
-vez que abrís el juego se arman en unos segundos a partir de tus propios archivos del juego (quedan en
-`cache/costumes`, unos 320 MB, y los archivos del juego no se tocan). Se apagan en **F2 > Controles** (vale al volver a
-abrir el juego; apagados, esa carpeta se puede borrar). Para pelear online, los dos tienen que tenerlos igual: la sala
-avisa si no.
+Reptile, Ermac, Mileena y Skarlet, los de MK3 de Scorpion, Sub-Zero, Reptile, Ermac, Smoke, Noob, Rain y Skarlet, y los
+alternativos de Kenshi y de Skarlet, cada uno con su Babality. No vienen con mk9-lauta: la primera vez que abrís el
+juego se arman en unos segundos a partir de tus propios archivos del juego (quedan en `cache/costumes`, unos 600 MB, y
+los archivos del juego no se tocan). Nueve de ellos (los de MK3 de los ninjas y los alternativos) usan modelos y
+texturas que sólo tiene la versión de PS Vita: vienen en un paquete aparte de unos 15 MB
+([mk9-lauta-vita-costumes](https://github.com/machinebreak/mk9-lauta-vita-costumes)) que el juego descarga solo antes
+de empezar, con una ventana como la de Kratos. Se apagan en **F2 > Controles** (vale al volver a abrir el juego;
+apagados, esa carpeta se puede borrar). Para pelear online, los dos tienen que tenerlos igual: la sala avisa si no.
 
 </details>
 

@@ -237,6 +237,7 @@ REX_HOOK_RAW(sub_826B2710) {
 
 #include <fmt/format.h>
 
+#include "mk9_fetch_window.h"
 #include "mk9_updater.h"
 #include "online/i18n.h"
 
@@ -804,188 +805,31 @@ bool StartFetchLocked() {
   return true;
 }
 
-// The window before the game: the download's bar. mk9-lauta (2026-11-15): no button to play without him any more (a
-// player who went on without him met rivals who had him, and the rooms kept those fights from starting): the game
-// starts once he is in. Its X closes the game (the download goes on from where it was at the next start); a download
-// that fails (no connection) closes the window and the game starts without him, as before.
-#if defined(_WIN32)
-constexpr UINT_PTR kTimer = 1;
-struct FetchWindow {
-  HWND hwnd = nullptr, bar = nullptr, status = nullptr;
-  HFONT font = nullptr, title_font = nullptr;
-  UINT dpi = 96;
-  bool quit = false;  // its X: the game closes
-};
-FetchWindow* g_window = nullptr;
-
-// A UTF-8 text (the window's, translated) as Windows' wide one.
-std::wstring WideText(const std::string& utf8) {
-  const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-  std::wstring wide(size_t(n > 0 ? n : 0), L'\0');
-  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), n);
-  return wide;
-}
-
-LRESULT CALLBACK FetchWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
-  FetchWindow& w = *g_window;
-  switch (msg) {
-    case WM_TIMER: {
-      const Fetch f = FetchStatus();
-      if (!f.downloading) {
-        DestroyWindow(hwnd);
-        return 0;
-      }
-      SendMessageW(w.bar, PBM_SETPOS, WPARAM(std::clamp(f.progress, 0.0f, 1.0f) * 1000.0f), 0);
-      const std::wstring text =
-          WideText(fmt::format(fmt::runtime(i18n::T("{} de {} MB")), int(f.progress * float(kZipSize) / 1000000.0f),
-                                     int((kZipSize + 500000) / 1000000)));
-      SetWindowTextW(w.status, text.c_str());
-      return 0;
-    }
-    case WM_CLOSE:
-      w.quit = true;
-      DestroyWindow(hwnd);
-      return 0;
-    case WM_CTLCOLORSTATIC:
-      SetBkMode(reinterpret_cast<HDC>(wparam), TRANSPARENT);
-      return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
-    case WM_DESTROY:
-      KillTimer(hwnd, kTimer);
-      PostQuitMessage(0);
-      return 0;
-    default:
-      break;
-  }
-  return DefWindowProcW(hwnd, msg, wparam, lparam);
-}
-
-void RunFetchWindow(FetchWindow& w) {
-  SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-  INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_PROGRESS_CLASS | ICC_STANDARD_CLASSES};
-  InitCommonControlsEx(&controls);
-  HINSTANCE instance = GetModuleHandleW(nullptr);
-  WNDCLASSEXW wc{sizeof(wc)};
-  wc.lpfnWndProc = FetchWindowProc;
-  wc.hInstance = instance;
-  wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));  // IDC_ARROW
-  wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-  wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
-  wc.lpszClassName = L"mk9LautaKratos";
-  RegisterClassExW(&wc);
-  w.dpi = GetDpiForSystem();
-  auto scale = [&](int v) { return MulDiv(v, int(w.dpi), 96); };
-  const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-  RECT area{0, 0, scale(560), scale(230)};
-  AdjustWindowRectExForDpi(&area, style, FALSE, 0, w.dpi);
-  const int ww = area.right - area.left, wh = area.bottom - area.top;
-  w.hwnd = CreateWindowExW(0, wc.lpszClassName, L"MK9 Online by Lauta - Kratos", style,
-                           (GetSystemMetrics(SM_CXSCREEN) - ww) / 2, (GetSystemMetrics(SM_CYSCREEN) - wh) / 2, ww, wh,
-                           nullptr, nullptr, instance, nullptr);
-  NONCLIENTMETRICSW metrics{sizeof(metrics)};
-  SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0, w.dpi);
-  metrics.lfMessageFont.lfHeight = -MulDiv(10, int(w.dpi), 72);
-  w.font = CreateFontIndirectW(&metrics.lfMessageFont);
-  LOGFONTW title = metrics.lfMessageFont;
-  title.lfHeight = -MulDiv(15, int(w.dpi), 72);
-  title.lfWeight = FW_BOLD;
-  w.title_font = CreateFontIndirectW(&title);
-  auto make = [&](const wchar_t* cls, const wchar_t* text, DWORD st, int x, int y, int cw, int ch, int id) {
-    HWND control = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | st, scale(x), scale(y), scale(cw), scale(ch),
-                                   w.hwnd, reinterpret_cast<HMENU>(intptr_t(id)), instance, nullptr);
-    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(w.font), TRUE);
-    return control;
-  };
-  HWND heading = make(L"STATIC", WideText(i18n::T("Descargando a Kratos")).c_str(), 0, 24, 16, 512, 30, 0);
-  SendMessageW(heading, WM_SETFONT, reinterpret_cast<WPARAM>(w.title_font), TRUE);
-  make(L"STATIC",
-       WideText(i18n::T("Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca "
-                              "con él, listo para jugar online con los que también lo tienen."))
-           .c_str(),
-       0, 24, 52, 512, 56, 0);
-  w.bar = make(PROGRESS_CLASSW, L"", 0, 24, 118, 512, 20, 0);
-  SendMessageW(w.bar, PBM_SETRANGE32, 0, 1000);
-  w.status = make(L"STATIC", L"", SS_LEFT, 24, 146, 512, 22, 0);
-  make(L"STATIC",
-       WideText(i18n::T("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo "
-                              "abras."))
-           .c_str(),
-       0, 24, 180, 512, 40, 0);
-  ShowWindow(w.hwnd, SW_SHOW);
-  SetForegroundWindow(w.hwnd);
-  SetTimer(w.hwnd, kTimer, 150, nullptr);
-  MSG msg;
-  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    if (!IsDialogMessageW(w.hwnd, &msg)) {
-      TranslateMessage(&msg);
-      DispatchMessageW(&msg);
-    }
-  }
-  DeleteObject(w.font);
-  DeleteObject(w.title_font);
-}
-#else
-// mk9-lauta (2026-11-13): Linux: a small window of the game's (mk9_small_window.h), the same words and bar.
-struct FetchWindow {
-  bool quit = false;  // its X: the game closes
-};
-FetchWindow* g_window = nullptr;
-
-void RunFetchWindow(FetchWindow& w) {
-  small_window::Run(
-      "MK9 Online by Lauta - Kratos", 560, 230,
-      [](const small_window::Look& look) {
-        const Fetch f = FetchStatus();
-        if (!f.downloading) return false;
-        const float s = look.scale;
-        ImGui::PushFont(look.title, 28.0f * s);
-        ImGui::TextUnformatted(i18n::T("Descargando a Kratos"));
-        ImGui::PopFont();
-        ImGui::TextWrapped("%s", i18n::T("Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el "
-                                         "juego arranca con él, listo para jugar online con los que también lo "
-                                         "tienen."));
-        ImGui::Spacing();
-        ImGui::ProgressBar(std::clamp(f.progress, 0.0f, 1.0f), ImVec2(-1.0f, 20.0f * s), "");
-        ImGui::TextUnformatted(fmt::format(fmt::runtime(i18n::T("{} de {} MB")),
-                                           int(f.progress * float(kZipSize) / 1000000.0f),
-                                           int((kZipSize + 500000) / 1000000))
-                                   .c_str());
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.65f, 0.7f, 1.0f));
-        ImGui::TextWrapped("%s", i18n::T("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima "
-                                         "vez que lo abras."));
-        ImGui::PopStyleColor();
-        return true;
-      },
-      [&w] {
-        w.quit = true;
-        return true;
-      });
-}
-#endif
-
+// The window before the game: the download's bar (mk9_fetch_window.h). mk9-lauta (2026-11-15): no button to play
+// without him any more (a player who went on without him met rivals who had him, and the rooms kept those fights from
+// starting): the game starts once he is in. Its X closes the game (the download goes on from where it was at the next
+// start); a download that fails (no connection) closes the window and the game starts without him, as before.
 void FetchAtStart() {
   if (!FetchWanted()) return;
   {
     std::lock_guard<std::mutex> lock(g_fetch_mutex);
     if (!StartFetchLocked()) return;
   }
-  FetchWindow window;
-  g_window = &window;
-#if defined(_WIN32)
-  std::thread ui([&window] { RunFetchWindow(window); });  // a message loop of its own
-  ui.join();
-#else
-  RunFetchWindow(window);  // SDL's window: on the main thread (this one), as SDL asks
-#endif
-  g_window = nullptr;
-  if (window.quit) {
+  const bool stayed = fetch_window::Run(
+      {"MK9 Online by Lauta - Kratos", i18n::T("Descargando a Kratos"),
+       i18n::T("Kratos se suma al juego (una sola vez, unos 96 MB). Cuando termine, el juego arranca con él, listo "
+               "para jugar online con los que también lo tienen."),
+       i18n::T("Si cerrás esta ventana se cierra el juego: la descarga sigue la próxima vez que lo abras."), kZipSize},
+      [](float& progress) {
+        const Fetch f = FetchStatus();
+        progress = f.progress;
+        return f.downloading;
+      });
+  if (!stayed) {
     // the game had not started yet: nothing of it to close; the .partial stays for the next start's download
     REXLOG_INFO("[kratos] the start's window was closed while he downloaded: the game closes (the download goes on at "
                 "the next start)");
-    rex::FlushLogging();
-#if defined(_WIN32)
-    TerminateProcess(GetCurrentProcess(), 0);
-#endif
-    std::_Exit(0);
+    fetch_window::CloseGame();
   }
   const Fetch f = FetchStatus();
   REXLOG_INFO("[kratos] the start's window: {}", f.ready ? "the download ended" : "the download stopped (he comes later)");

@@ -819,11 +819,10 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
           ImGui::TextWrapped("%s", T("No se pudieron armar desde los archivos del juego: la carpeta logs dice por "
                                      "qué (F2 > Acerca de)."));
         }
-        // the pack of the ones made with the Vita's own data, being downloaded (in from the next start)
-        if (const int got = vita_costumes::PackDownload(); got >= 0 && got <= 100) {
-          ImGui::TextWrapped("%s", Tf("Descargando los trajes hechos con datos de la PS Vita: {}%", got).c_str());
-        } else if (got > 100) {
-          ImGui::TextWrapped("%s", T("Trajes de la PS Vita descargados: están desde el próximo inicio."));
+        // the pack of the ones made of the Vita's own data, when its download at this start failed
+        if (vita_costumes::PackMissing()) {
+          ImGui::TextWrapped("%s", T("Faltan los trajes hechos con datos de la PS Vita (no se pudieron descargar): "
+                                     "se descargan la próxima vez que abras el juego."));
         }
         ImGui::PopStyleColor();
       }

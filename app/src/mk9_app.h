@@ -195,6 +195,9 @@ class Mk9App : public rex::ReXApp {
     rex::SetFileOpenedHook(&mk9::movie::NoteOpened);
     // Switch (1.0.1): the game files against the release's list; a bad one is named on screen and the game ends here.
     mk9::file_check::AtStart(game_data_root());
+    // mk9-lauta (2026-11-22): the pack of the PS Vita costumes made of the Vita's own data, downloaded now when it is
+    // not here yet, with a window as Kratos' (mk9_vita_costumes.h): its costumes are in from this start
+    mk9::vita_costumes::AtStart();
     // The Thorhax intro video, while the game boots behind it (nothing has the window or the audio device yet).
     thorhax::intro::Start();
     mk9::file_check::TestAfterIntroStarted();
