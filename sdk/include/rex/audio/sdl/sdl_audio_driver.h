@@ -69,6 +69,18 @@ class SDLAudioDriver : public AudioDriver {
   void NoDevice();
   std::thread no_device_ = {};
   std::atomic<bool> active_no_device_{false};
+  // mk9-lauta (2026-11-23): a device that stops taking the sound is let go (audio_watch_device): the time the callback
+  // last took a frame, and the thread that watches it. device_mutex_ keeps the stream's opening and letting go apart.
+  void Watch();
+  std::thread watch_ = {};
+  std::atomic<bool> active_watch_{false};
+  std::atomic<int64_t> last_taken_ns_{0};
+  std::mutex device_mutex_ = {};
+  // audio_test_fake_device (tests): a device of the driver's own
+  void FakeDevice();
+  std::thread fake_ = {};
+  std::atomic<bool> active_fake_{false};
+  std::atomic<bool> fake_stalled_{false};
 };
 
 }  // namespace rex::audio::sdl

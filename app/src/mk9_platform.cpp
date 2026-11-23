@@ -95,6 +95,7 @@ bool StartDetached(const std::filesystem::path& exe, const std::vector<std::stri
   if (!CreateProcessW(exe.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &si, &pi)) {
     return false;
   }
+  AllowSetForegroundWindow(pi.dwProcessId);  // mk9-lauta (2026-11-23): the game started again may come to the front
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   return true;

@@ -781,6 +781,7 @@ static void StartAgain() {
   }
   if (CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, exe_folder.c_str(), &si,
                      &pi)) {
+    AllowSetForegroundWindow(pi.dwProcessId);  // mk9-lauta (2026-11-23): the updated game may come to the front
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     ExitProcess(0);

@@ -229,6 +229,13 @@ const Option kButtonIconsOption = {
     "conectado al abrir el juego, o las teclas si no hay ninguno. Se aplica al volver a abrir el juego.",
     true};
 
+// mk9-lauta (2026-11-23): player 1's fighter while the opponent is recorded in Practice (mk9_practice_record.cpp)
+const Option kRecordGuardOption = {
+    "mk9_practice_record_guard", "Tu luchador mientras grabás al rival",
+    {{"none", "Quieto"}, {"stand", "Se cubre de pie"}, {"crouch", "Se cubre agachado"}},
+    "Las presiones del rival siguen distinto si te pegan o si las cubrís: grabalas contra lo que quieras practicar. "
+    "En Práctica también cambia con F8."};
+
 const std::vector<Option>& OnlineOptions() {
   static const std::vector<Option> options = {
       {"mk9_net_rollback_delay", "Retraso de entrada en las peleas",
@@ -839,6 +846,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
       Set({{"mk9_practice_record", record ? "true" : "false"}},
           T(record ? "Grabación del rival activada" : "Grabación del rival desactivada"));
     }
+    if (record) DrawOption(kRecordGuardOption);
     // mk9-lauta (2026-11-21): the PS Vita costumes (mk9_vita_costumes.h), at the next start
     if (rex::cvar::GetFlagInfo("mk9_vita_costumes")) {
       bool vita = Current("mk9_vita_costumes") != "false";

@@ -155,6 +155,23 @@
       {"Logos al iniciar", {"Startup logos", "Logos ao iniciar"}},
       {"Cinemáticas", {"Cutscenes", "Cinemáticas"}},
       {"Sonido", {"Sound", "Som"}},
+      {"Tu luchador mientras grabás al rival", {"Your fighter while you record the opponent",
+                                                "Seu lutador enquanto você grava o rival"}},
+      {"Quieto", {"Stands still", "Parado"}},
+      {"Se cubre de pie", {"Blocks standing", "Defende em pé"}},
+      {"Se cubre agachado", {"Blocks crouching", "Defende agachado"}},
+      {"Las presiones del rival siguen distinto si te pegan o si las cubrís: grabalas contra lo que quieras practicar. "
+       "En Práctica también cambia con F8.",
+       {"The opponent's pressure goes on differently when it hits you and when you block it: record it against what "
+        "you want to practice. In Practice, F8 changes it too.",
+        "As pressões do rival continuam diferente se acertam ou se você defende: grave contra o que quiser praticar. "
+        "No Treino, F8 também muda."}},
+      {"quieto", {"stands still", "parado"}},
+      {"se cubre de pie", {"blocks standing", "defende em pé"}},
+      {"se cubre agachado", {"blocks crouching", "defende agachado"}},
+      {"Tu luchador:", {"Your fighter:", "Seu lutador:"}},
+      {"Al grabar, tu luchador:", {"While recording, your fighter:", "Ao gravar, seu lutador:"}},
+      {"(F8 cambia)", {"(F8 changes it)", "(F8 muda)"}},
       {"Dos jugadores en el mismo teclado", {"Two players on the same keyboard", "Dois jogadores no mesmo teclado"}},
       {"Dos jugadores en el teclado", {"Two players on the keyboard", "Dois jogadores no teclado"}},
       {"Un jugador en el teclado", {"One player on the keyboard", "Um jogador no teclado"}},

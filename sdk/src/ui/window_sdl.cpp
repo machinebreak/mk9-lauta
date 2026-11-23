@@ -23,6 +23,10 @@
 
 #include <rex/cvar.h>
 
+// mk9-lauta (2026-11-23): see OpenImpl
+REXCVAR_DEFINE_BOOL(window_raise_at_start, true, "UI/Window",
+                    "The window comes to the front when it opens, the forceful way (SDL_HINT_FORCE_RAISEWINDOW): a "
+                    "player with only a controller has no Alt+Tab (the game started by an online session too)");
 REXCVAR_DEFINE_BOOL(window_start_minimized, false, "UI/Window",
                     "Start the window minimized, without fullscreen and without taking focus "
                     "(for unattended test runs)")
@@ -199,6 +203,13 @@ bool WindowSDL::OpenImpl() {
   SDL_ShowWindow(sdl_window_);
   if (start_minimized) {
     SDL_MinimizeWindow(sdl_window_);
+  } else if (REXCVAR_GET(window_raise_at_start)) {
+    // mk9-lauta (2026-11-23): in front, the forceful way (on Windows SDL attaches to the window in front's input to
+    // take its place): a window that opens behind another one (Windows keeps the one the player last touched in front,
+    // or the game started again by an online session) needed a keyboard's Alt+Tab
+    SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "1");
+    SDL_RaiseWindow(sdl_window_);
+    SDL_SetHint(SDL_HINT_FORCE_RAISEWINDOW, "0");
   }
 
   // Actualize state for the common Window code. Listener dispatch is handled

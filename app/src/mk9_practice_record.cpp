@@ -28,6 +28,11 @@ REXCVAR_DEFINE_BOOL(mk9_practice_record, true, "MK9",
                     "Practice: the opponent recorded (F5 or BACK + LB: the player's controller drives the dummy) and "
                     "played back on it (F6 or BACK + RB; F7 or BACK + X: in a loop). F2 > Controles");
 
+// mk9-lauta (2026-11-23): a player asked for it: the opponent's strings go one way when they hit and another when they
+// are blocked (pushback, what it can cancel into), so a pressure to escape from is recorded against a block
+REXCVAR_DEFINE_STRING(mk9_practice_record_guard, "none", "MK9",
+                      "Practice: player 1's fighter while the opponent is recorded: none (stands still), stand (blocks "
+                      "standing) or crouch (blocks crouching); the block is the game's own button, RT");
 REXCVAR_DEFINE_STRING(mk9_practice_record_test, "", "MK9",
                       "Tests: the keys pressed at these seconds of the game, \"82:record,88:record,90:play,95:loop\"")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -39,7 +44,7 @@ using i18n::T;
 
 constexpr int kModePractice = 2;  // the game object's +8 (fight_state::Mode)
 // X_INPUT_GAMEPAD's buttons
-constexpr uint16_t kLeft = 0x0004, kRight = 0x0008, kStart = 0x0010, kBack = 0x0020;
+constexpr uint16_t kDown = 0x0002, kLeft = 0x0004, kRight = 0x0008, kStart = 0x0010, kBack = 0x0020;
 constexpr size_t kMaxFrames = 60 * 60;  // 60 s at the game's 60 frames a second
 
 enum class Mode : int { kIdle = 0, kRecording = 1, kPlaying = 2 };
@@ -115,6 +120,11 @@ void Give(uint8_t* out, const uint8_t* pad) {
 
 std::string Seconds(uint32_t frames) { return fmt::format("{:.1f} s", double(frames) / 60.0); }
 
+// mk9-lauta (2026-11-23): player 1's fighter while recording (mk9_practice_record_guard), as the panel says it
+const char* GuardLabel(const std::string& guard) {
+  return guard == "stand" ? "se cubre de pie" : guard == "crouch" ? "se cubre agachado" : "quieto";
+}
+
 // The panel: at the right, under the frame data's.
 class Panel : public renut::gpu::overlay::Dialog {
  public:
@@ -124,6 +134,13 @@ class Panel : public renut::gpu::overlay::Dialog {
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false) || overlay_input::PracticeRecordPressed()) g_request = kRecord;
     if (ImGui::IsKeyPressed(ImGuiKey_F6, false) || overlay_input::PracticePlayPressed()) g_request = kPlay;
     if (ImGui::IsKeyPressed(ImGuiKey_F7, false) || overlay_input::PracticeLoopPressed()) g_request = kLoop;
+    // F8: player 1's fighter while recording, the next of the three (kept in mk9.toml, as F2 does)
+    const std::string guard = REXCVAR_GET(mk9_practice_record_guard);
+    if (ImGui::IsKeyPressed(ImGuiKey_F8, false)) {
+      const char* next = guard == "stand" ? "crouch" : guard == "crouch" ? "none" : "stand";
+      rex::cvar::SetFlagByName("mk9_practice_record_guard", next);
+      options_ui::SaveToConfig({{"mk9_practice_record_guard", next}});
+    }
     const Mode mode = Mode(g_view_mode.load(std::memory_order_relaxed));
     const uint32_t frames = g_view_frames.load(std::memory_order_relaxed);
     const uint32_t pos = g_view_pos.load(std::memory_order_relaxed);
@@ -149,6 +166,7 @@ class Panel : public renut::gpu::overlay::Dialog {
         ImGui::TextColored(red, "%s %s", T("GRABANDO"), Seconds(frames).c_str());
         ImGui::PopFont();
         ImGui::TextColored(text, "%s", T("Tu mando maneja al rival. F5 termina."));
+        ImGui::TextColored(text, "%s %s %s", T("Tu luchador:"), T(GuardLabel(guard)), T("(F8 cambia)"));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * scale);
         ImGui::TextColored(grey, "%s",
                            T("¿El rival no se mueve? Tiene que estar en HUMANA: Pausa > Opciones de IA > Tipo de "
@@ -166,6 +184,7 @@ class Panel : public renut::gpu::overlay::Dialog {
           ImGui::TextColored(text, "%s %s", T("F7 (BACK + X): en bucle:"), T(loop ? "sí" : "no"));
         }
         ImGui::TextColored(text, "%s", T(frames ? "F5 (BACK + LB): grabar de nuevo" : "F5 (BACK + LB): grabar al rival"));
+        ImGui::TextColored(text, "%s %s %s", T("Al grabar, tu luchador:"), T(GuardLabel(guard)), T("(F8 cambia)"));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * scale);
         ImGui::TextColored(grey, "%s",
                            T("El rival tiene que estar en HUMANA: Pausa > Opciones de IA > Tipo de enemigo."));
@@ -277,6 +296,12 @@ void OnPadBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint3
     if (g_mode == Mode::kRecording) {
       std::memcpy(g_live, out + 4, 12);
       std::memset(out + 4, 0, 12);  // player 1's own fighter stands still
+      // mk9-lauta (2026-11-23): or blocks, standing or crouching (mk9_practice_record_guard): the game's block (RT)
+      const std::string guard = REXCVAR_GET(mk9_practice_record_guard);
+      if (guard == "stand" || guard == "crouch") {
+        out[4 + 3] = 0xFF;  // X_INPUT_GAMEPAD's right trigger
+        if (guard == "crouch") PutBe16(out + 4, kDown);
+      }
     }
     return;
   }

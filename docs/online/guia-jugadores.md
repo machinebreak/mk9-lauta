@@ -158,7 +158,8 @@ como "Otra versión" (esta versión los jugaría distinto).
   esperar a que la sesión termine sola.
 - Cerrar la ventana (la X o Alt+F4) pregunta antes: "Seguir jugando" o "Cerrar el juego". Si cerrás en una sala o en
   una sesión, los demás se enteran al momento (no se quedan esperando).
-- Al volver al lobby el juego se abre de nuevo sin los logos de WB y NetherRealm.
+- Al volver al lobby el juego se abre de nuevo sin los logos de WB y NetherRealm, y su ventana pasa al frente (igual al
+  abrir el juego): con un mando solo no hace falta Alt+Tab.
 
 ## Controles
 
@@ -215,6 +216,9 @@ ENEMIGO: HUMANA**. Después:
   se queda quieto. **F5** otra vez (o START) termina. Graba hasta 60 segundos.
 - **F6** (**BACK + RB**, R1) hace que el rival repita la grabación; F6 otra vez o START lo frenan.
 - **F7** (**BACK + X**, cuadrado) la pone en bucle o la vuelve a una sola vez.
+- Mientras grabás, tu luchador puede quedarse quieto, **cubrirse de pie** o **cubrirse agachado** (**F8** cambia entre
+  las tres, o **F2 > Controles > Tu luchador mientras grabás al rival**): las presiones del rival siguen distinto si
+  le pegan o si las cubren, así que grabalas contra lo que quieras practicar.
 
 Adelante y atrás se respetan: si grabaste con el rival a la derecha y ahora está a la izquierda, igual camina hacia
 vos. Abajo a la derecha, un cartel muestra qué está pasando. La grabación dura mientras el juego esté abierto y no
@@ -343,6 +347,9 @@ En **F2 > Acerca de > Abrir la carpeta de logs** está todo lo que pasó: mandá
 `crash_*.dmp` de la misma hora si el juego se cerró de golpe) en "Reportar un problema". Si en una partida online
 los dos vieron cosas distintas, cada uno tiene su `session_<fecha>_p1.mk9net` o `_p2.mk9net` de esa sesión: con los
 dos archivos se ve en qué cuadro se separaron los juegos.
+
+**Si el sonido se corta** (se desconectaron los auriculares o el parlante Bluetooth, Windows cambió el dispositivo):
+el juego sigue sin sonido y vuelve a buscar un dispositivo cada 2 segundos; antes se quedaba congelado.
 
 **No se escuchan el locutor ni las presentaciones de los personajes, o las voces suenan bajas**: tu PC le dice al
 juego que tiene parlantes 5.1 o 7.1 y el juego manda las voces al parlante del centro. Elegí

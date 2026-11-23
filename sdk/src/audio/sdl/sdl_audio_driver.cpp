@@ -45,6 +45,17 @@ REXCVAR_DEFINE_INT32(audio_dump_output_from_s, 0, "Audio",
 // mk9-lauta (2026-11-22): a player heard no announcer and no fighters' intros in a fight and the voices low: what a
 // device that says 5.1 or 7.1 (Windows' speaker setup) with two speakers or headphones behind it does to a game that
 // puts its voices in the center channel. "stereo" folds the game's 5.1 to two channels whatever the device says.
+// mk9-lauta (2026-11-23): a player's sound cut and then the game hung. See SDLAudioDriver::Watch.
+REXCVAR_DEFINE_BOOL(audio_watch_device, true, "Audio",
+                    "A device that stops taking the sound for 0.4 s while the game has some for it (unplugged, "
+                    "taken, its driver reset) is let go: the sound goes on in time, played nowhere, and the device is "
+                    "opened again every 2 s. Off: the game's audio waits for it (and the game with it)");
+REXCVAR_DEFINE_BOOL(audio_test_fake_device, false, "Audio",
+                    "Diagnostic: a device of the driver's own instead of SDL's, taking the frames in time and playing "
+                    "them nowhere (the audio watch's tests on a PC without one); audio_test_stall_s stops it");
+REXCVAR_DEFINE_INT32(audio_test_stall_s, 0, "Audio",
+                     "Diagnostic: at this second after the start the device's stream is paused, as a device that "
+                     "stops taking the sound (0: never)");
 REXCVAR_DEFINE_STRING(audio_output, "auto", "Audio",
                       "The sound's channels: auto (as the device says: 5.1 through to a device of more than two "
                       "channels, folded to stereo otherwise) or stereo (always folded to two channels, the center's "
@@ -143,6 +154,14 @@ SDLAudioDriver::SDLAudioDriver(memory::Memory* memory, rex::thread::Semaphore* s
     : AudioDriver(memory), semaphore_(semaphore) {}
 
 SDLAudioDriver::~SDLAudioDriver() {
+  if (watch_.joinable()) {
+    active_watch_ = false;
+    watch_.join();
+  }
+  if (fake_.joinable()) {
+    active_fake_ = false;
+    fake_.join();
+  }
   if (no_device_.joinable()) {
     active_no_device_ = false;
     no_device_.join();
@@ -173,6 +192,10 @@ bool SDLAudioDriver::Initialize() {
     active_no_device_ = true;
     no_device_ = std::thread([this]() { NoDevice(); });
   }
+  if (REXCVAR_GET(audio_watch_device) || REXCVAR_GET(audio_test_stall_s) > 0) {
+    active_watch_ = true;
+    watch_ = std::thread([this]() { Watch(); });
+  }
 
   if (REXCVAR_GET(audio_sdl_pump)) {
     active_pump_ = true;
@@ -181,6 +204,64 @@ bool SDLAudioDriver::Initialize() {
   }
 
   return true;
+}
+
+// mk9-lauta (2026-11-23): the device that stopped taking the sound. The game's audio thread waits for each frame it
+// submits to be taken (the callback's release), and the game waits on its audio: a device that no longer calls back
+// (headphones or a Bluetooth speaker gone with no other device, the device taken, a driver reset) left the sound cut and
+// then the game hung. Every 100 ms: frames waiting and none taken for 0.4 s, the device is let go and the no-device
+// thread takes the frames in time (and opens the device again every 2 s).
+void SDLAudioDriver::Watch() {
+  using Clock = std::chrono::steady_clock;
+  const auto start = Clock::now();
+  const int32_t stall_s = REXCVAR_GET(audio_test_stall_s);
+  bool stalled = false;
+  while (active_watch_.load(std::memory_order_relaxed)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto now = Clock::now();
+    if (stall_s > 0 && !stalled && now - start >= std::chrono::seconds(stall_s)) {
+      stalled = true;
+      std::lock_guard<std::mutex> lock(device_mutex_);
+      if (active_fake_.load(std::memory_order_relaxed)) {
+        fake_stalled_ = true;
+        REXAPU_WARN("[audio] audio_test_stall_s: the fake device stopped taking the sound at {} s", stall_s);
+      } else if (sdl_stream_ && SDL_PauseAudioStreamDevice(sdl_stream_)) {
+        REXAPU_WARN("[audio] audio_test_stall_s: the device's stream paused at {} s", stall_s);
+      }
+    }
+    if (!REXCVAR_GET(audio_watch_device) || active_no_device_.load(std::memory_order_relaxed) ||
+        active_pump_.load(std::memory_order_relaxed)) {
+      continue;
+    }
+    size_t waiting = 0;
+    {
+      std::unique_lock<std::mutex> guard(frames_mutex_);
+      waiting = frames_queued_.size();
+    }
+    const int64_t last = last_taken_ns_.load(std::memory_order_relaxed);
+    const int64_t now_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+    if (waiting < 2 || last == 0 || now_ns - last < 400'000'000 || REXCVAR_GET(audio_sdl_burst_frames) > 1) {
+      continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(device_mutex_);
+      if (sdl_stream_) {
+        SDL_DestroyAudioStream(sdl_stream_);
+        sdl_stream_ = nullptr;
+      }
+      if (fake_.joinable()) {
+        active_fake_ = false;
+        fake_.join();
+      }
+    }
+    REXAPU_WARN("[audio] the device took no sound for {} ms with {} frames waiting (unplugged, taken or reset): the "
+                "sound goes on played nowhere, and the device is opened again every 2 s",
+                (now_ns - last) / 1'000'000, waiting);
+    if (no_device_.joinable()) no_device_.join();
+    active_no_device_ = true;
+    no_device_ = std::thread([this]() { NoDevice(); });
+  }
 }
 
 void SDLAudioDriver::NoDevice() {
@@ -193,7 +274,12 @@ void SDLAudioDriver::NoDevice() {
     if (now >= next_look) {
       next_look = now + std::chrono::seconds(2);
       // the device's callback takes the frames from the moment it opens; this thread then stops taking them
-      if (sdl_initialized_ && OpenDevice()) {
+      bool opened = false;
+      if (sdl_initialized_) {
+        std::lock_guard<std::mutex> lock(device_mutex_);
+        opened = OpenDevice();
+      }
+      if (opened) {
         REXAPU_INFO("[audio] an audio device is there now: the sound plays on it");
         active_no_device_ = false;
         return;
@@ -226,7 +312,50 @@ void SDLAudioDriver::NoDevice() {
   }
 }
 
+// audio_test_fake_device: the frames taken in time, with their releases, as SDL's callback takes them, until the test
+// stalls it (a device that stops taking the sound) or the watch lets it go.
+void SDLAudioDriver::FakeDevice() {
+  using Clock = std::chrono::steady_clock;
+  const auto interval = std::chrono::nanoseconds(1'000'000'000ll * channel_samples_ / frame_frequency_);
+  auto deadline = Clock::now() + interval;
+  while (active_fake_.load(std::memory_order_relaxed)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (fake_stalled_.load(std::memory_order_relaxed)) continue;
+    const auto now = Clock::now();
+    while (deadline <= now) {
+      last_taken_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count(),
+                           std::memory_order_relaxed);
+      bool taken = false;
+      {
+        std::unique_lock<std::mutex> guard(frames_mutex_);
+        if (!frames_queued_.empty()) {
+          frames_unused_.push(frames_queued_.front());
+          frames_queued_.pop();
+          taken = true;
+        }
+      }
+      if (taken) semaphore_->Release(1, nullptr);
+      deadline += interval;
+    }
+  }
+}
+
 bool SDLAudioDriver::OpenDevice() {
+  if (REXCVAR_GET(audio_test_fake_device)) {
+    if (fake_.joinable()) {
+      active_fake_ = false;
+      fake_.join();
+    }
+    fake_stalled_ = false;
+    active_fake_ = true;
+    last_taken_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count(),
+                         std::memory_order_relaxed);
+    fake_ = std::thread([this]() { FakeDevice(); });
+    REXAPU_INFO("audio endpoint 'audio_test_fake_device': the frames taken in time, played nowhere");
+    return true;
+  }
   // Tried again every 2 s while there is no device: only the first failure is logged.
   static bool failure_logged = false;
   const auto fail = [&](const char* what) {
@@ -293,6 +422,11 @@ bool SDLAudioDriver::OpenDevice() {
   if (!SDL_ResumeAudioDevice(sdl_device)) {
     return fail("SDL_ResumeAudioDevice()");
   }
+  // mk9-lauta (2026-11-23): the watch counts from here until the first callback
+  last_taken_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count(),
+                       std::memory_order_relaxed);
   return true;
 }
 
@@ -355,6 +489,14 @@ void SDLAudioDriver::SubmitFrame(uint32_t frame_ptr) {
 }
 
 void SDLAudioDriver::Shutdown() {
+  if (watch_.joinable()) {
+    active_watch_ = false;
+    watch_.join();
+  }
+  if (fake_.joinable()) {
+    active_fake_ = false;
+    fake_.join();
+  }
   if (no_device_.joinable()) {
     active_no_device_ = false;
     no_device_.join();
@@ -390,6 +532,11 @@ void SDLAudioDriver::SDLCallback(void* userdata, SDL_AudioStream* stream, int ad
     return;
   }
   const auto driver = static_cast<SDLAudioDriver*>(userdata);
+  // mk9-lauta (2026-11-23): for the watch (Watch): the device calls back, it is alive
+  driver->last_taken_ns_.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count(),
+                               std::memory_order_relaxed);
   const int sample_count =
       static_cast<int>(channel_samples_ * std::max<uint8_t>(driver->sdl_device_channels_, 1));
   const int len = static_cast<int>(sizeof(float) * sample_count);

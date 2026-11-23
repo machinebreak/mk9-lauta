@@ -139,6 +139,8 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
   std::vector<wchar_t> buffer(line.begin(), line.end());
   buffer.push_back(L'\0');
   if (CreateProcessW(exe, buffer.data(), nullptr, nullptr, FALSE, 0, nullptr, dir.c_str(), &startup, &process)) {
+    // mk9-lauta (2026-11-23): the new game may come to the front (this one is there now): its window raises itself
+    AllowSetForegroundWindow(process.dwProcessId);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
     REXLOG_INFO("[session] {}: the game starts again", what);
