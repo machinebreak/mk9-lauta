@@ -236,6 +236,14 @@ const Option kRecordGuardOption = {
     "Las presiones del rival siguen distinto si te pegan o si las cubrís: grabalas contra lo que quieras practicar. "
     "En Práctica también cambia con F8."};
 
+// mk9-lauta (2026-11-23): where Practice's reset (BACK) leaves the fighters (mk9_practice_record.cpp)
+const Option kPracticeResetOption = {
+    "mk9_practice_reset", "Reiniciar la posición en Práctica (BACK)",
+    {{"middle", "Al medio (como el juego)"}, {"left", "Esquina izquierda (vos contra la pared)"},
+     {"right", "Esquina derecha (el rival contra la pared)"}},
+    "Dónde quedan los dos al apretar BACK en Práctica. BACK + izquierda o derecha elige esa esquina para ese "
+    "reinicio, sin cambiar esta opción."};
+
 const std::vector<Option>& OnlineOptions() {
   static const std::vector<Option> options = {
       {"mk9_net_rollback_delay", "Retraso de entrada en las peleas",
@@ -847,6 +855,7 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
           T(record ? "Grabación del rival activada" : "Grabación del rival desactivada"));
     }
     if (record) DrawOption(kRecordGuardOption);
+    DrawOption(kPracticeResetOption);
     // mk9-lauta (2026-11-21): the PS Vita costumes (mk9_vita_costumes.h), at the next start
     if (rex::cvar::GetFlagInfo("mk9_vita_costumes")) {
       bool vita = Current("mk9_vita_costumes") != "false";

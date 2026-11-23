@@ -217,6 +217,25 @@ bool Position(uint8_t* base, int player, float out[3]) {
   return true;
 }
 
+bool SetPosition(uint8_t* base, int player, const float in[3]) {
+  float now[3];
+  if (!Position(base, player, now)) return false;  // the actor there and readable (its heap's page is the game's)
+  uint32_t object = 0, actor = 0;
+  if (!Read32(base, kGameInfo + kObject + uint32_t(player) * kPlayerStride, &object) || !Read32(base, object + 8, &actor)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < 3; ++i) {
+    uint32_t word;
+    std::memcpy(&word, &in[i], 4);
+    uint8_t* p = Raw(base, actor + 0xDC + 4 * i);
+    p[0] = uint8_t(word >> 24);
+    p[1] = uint8_t(word >> 16);
+    p[2] = uint8_t(word >> 8);
+    p[3] = uint8_t(word);
+  }
+  return true;
+}
+
 void Report(uint8_t* base, int me) {
   Result r;
   r.me = me;

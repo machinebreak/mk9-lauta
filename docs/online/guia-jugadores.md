@@ -216,6 +216,9 @@ ENEMIGO: HUMANA**. Después:
   se queda quieto. **F5** otra vez (o START) termina. Graba hasta 60 segundos.
 - **F6** (**BACK + RB**, R1) hace que el rival repita la grabación; F6 otra vez o START lo frenan.
 - **F7** (**BACK + X**, cuadrado) la pone en bucle o la vuelve a una sola vez.
+- **BACK** reinicia la posición (como en el juego original); **BACK + izquierda** los deja en la esquina izquierda,
+  vos contra la pared, y **BACK + derecha** en la esquina derecha, el rival contra la pared. En **F2 > Controles >
+  Reiniciar la posición en Práctica** se elige dónde quedan con BACK solo (al medio, como el juego, viene de fábrica).
 - Mientras grabás, tu luchador puede quedarse quieto, **cubrirse de pie** o **cubrirse agachado** (**F8** cambia entre
   las tres, o **F2 > Controles > Tu luchador mientras grabás al rival**): las presiones del rival siguen distinto si
   le pegan o si las cubren, así que grabalas contra lo que quieras practicar.

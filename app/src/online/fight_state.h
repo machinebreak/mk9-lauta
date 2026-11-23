@@ -40,6 +40,9 @@ bool ReadFighter(uint8_t* base, int player, FighterFrame* out);
 // mk9-lauta (2026-11-18): a fighter's position, its actor's location (+0xDC, +0xE0, +0xE4: x, y, z). False with no
 // fighter (or it cannot be read).
 bool Position(uint8_t* base, int player, float out[3]);
+// mk9-lauta (2026-11-23): a fighter put somewhere else (Practice's reset in a corner): its actor's location written.
+// Game thread, at a frame's boundary. False with no fighter.
+bool SetPosition(uint8_t* base, int player, const float in[3]);
 
 // A match decided (the fight's mode over: netplay.cpp), as both games see it.
 struct Result {

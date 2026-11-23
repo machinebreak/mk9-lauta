@@ -155,6 +155,19 @@
       {"Logos al iniciar", {"Startup logos", "Logos ao iniciar"}},
       {"Cinemáticas", {"Cutscenes", "Cinemáticas"}},
       {"Sonido", {"Sound", "Som"}},
+      {"Reiniciar la posición en Práctica (BACK)", {"Practice's position reset (BACK)", "Reiniciar a posição no Treino (BACK)"}},
+      {"Al medio (como el juego)", {"In the middle (as the game does)", "No meio (como o jogo)"}},
+      {"Esquina izquierda (vos contra la pared)", {"Left corner (you against the wall)", "Canto esquerdo (você contra a parede)"}},
+      {"Esquina derecha (el rival contra la pared)", {"Right corner (the opponent against the wall)",
+                                                      "Canto direito (o rival contra a parede)"}},
+      {"Dónde quedan los dos al apretar BACK en Práctica. BACK + izquierda o derecha elige esa esquina para ese "
+       "reinicio, sin cambiar esta opción.",
+       {"Where both fighters end up when you press BACK in Practice. BACK + left or right picks that corner for that "
+        "reset, without changing this option.",
+        "Onde os dois ficam ao apertar BACK no Treino. BACK + esquerda ou direita escolhe esse canto para esse reinício, "
+        "sem mudar esta opção."}},
+      {"BACK + izquierda o derecha: reiniciar en esa esquina", {"BACK + left or right: reset in that corner",
+                                                                "BACK + esquerda ou direita: reiniciar nesse canto"}},
       {"Tu luchador mientras grabás al rival", {"Your fighter while you record the opponent",
                                                 "Seu lutador enquanto você grava o rival"}},
       {"Quieto", {"Stands still", "Parado"}},

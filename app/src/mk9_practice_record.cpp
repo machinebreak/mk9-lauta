@@ -6,6 +6,8 @@
 #include <chrono>
 #include <climits>
 #include <cmath>
+#include <cstdio>
+#include <sstream>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -33,6 +35,11 @@ REXCVAR_DEFINE_BOOL(mk9_practice_record, true, "MK9",
 REXCVAR_DEFINE_STRING(mk9_practice_record_guard, "none", "MK9",
                       "Practice: player 1's fighter while the opponent is recorded: none (stands still), stand (blocks "
                       "standing) or crouch (blocks crouching); the block is the game's own button, RT");
+// mk9-lauta (2026-11-23): a player asked for it: Practice's reset (the game's own, BACK) in a corner
+REXCVAR_DEFINE_STRING(mk9_practice_reset, "middle", "MK9",
+                      "Practice: where BACK's reset leaves the fighters: middle (the game's own), left (the left corner, "
+                      "player 1 against the wall) or right (the right corner, the opponent against the wall). BACK + "
+                      "left or right on the pad chooses for that reset");
 REXCVAR_DEFINE_STRING(mk9_practice_record_test, "", "MK9",
                       "Tests: the keys pressed at these seconds of the game, \"82:record,88:record,90:play,95:loop\"")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -72,6 +79,20 @@ float g_sign = 1.0f;
 bool g_oriented = false;
 
 // The keys' requests (UI thread) and what the panel shows.
+// mk9-lauta (2026-11-23): the reset in a corner (the game's own reset first, then the pair carried to the wall). The
+// game stops a fighter at the stage's wall (±1300 on the Courtyard; each stage its own), so the pair goes 200 units a
+// frame toward the corner, the same distance apart, until the one in front stops short of where it was put: that is
+// the wall. Then the one in front at the wall and the other the reset's 250 away. Two at the wall in one frame would
+// end one on the other and change sides. Game thread.
+enum Corner : int { kCornerMiddle = 0, kCornerLeft = 1, kCornerRight = 2 };
+bool g_practice_fight = false;  // a Practice fight's frame (the recording on or not)
+int g_corner_request = -1;     // a reset was asked (BACK): its corner, -1 none
+int g_corner = kCornerMiddle;  // the reset under way
+int g_corner_frames = 0;       // frames since the BACK
+int g_corner_steps = 0;        // steps toward the wall
+float g_corner_put = 0.0f;     // where the one in front was put the frame before (on the axis)
+constexpr float kCornerStep = 200.0f, kResetApart = 250.0f;
+
 std::atomic<int> g_request{kNone};
 std::atomic<bool> g_loop{false};
 std::atomic<int> g_view_mode{0};
@@ -88,6 +109,17 @@ void PutBe32(uint8_t* p, uint32_t v) {
   p[1] = uint8_t(v >> 16);
   p[2] = uint8_t(v >> 8);
   p[3] = uint8_t(v);
+}
+
+// mk9-lauta (2026-11-23): the corner a BACK asks for (X_INPUT_GAMEPAD as the guest has it): left or right held on the
+// d-pad or the stick, else mk9_practice_reset's
+int CornerAsked(const uint8_t* pad) {
+  const uint16_t buttons = Be16(pad);
+  const int16_t lx = int16_t(Be16(pad + 4));
+  const bool left = (buttons & kLeft) || lx < -16000, right = (buttons & kRight) || lx > 16000;
+  if (left != right) return left ? kCornerLeft : kCornerRight;
+  const std::string chosen = REXCVAR_GET(mk9_practice_reset);
+  return chosen == "left" ? kCornerLeft : chosen == "right" ? kCornerRight : kCornerMiddle;
 }
 
 void SetMode(Mode mode, const char* why) {
@@ -185,6 +217,7 @@ class Panel : public renut::gpu::overlay::Dialog {
         }
         ImGui::TextColored(text, "%s", T(frames ? "F5 (BACK + LB): grabar de nuevo" : "F5 (BACK + LB): grabar al rival"));
         ImGui::TextColored(text, "%s %s %s", T("Al grabar, tu luchador:"), T(GuardLabel(guard)), T("(F8 cambia)"));
+        ImGui::TextColored(text, "%s", T("BACK + izquierda o derecha: reiniciar en esa esquina"));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 260.0f * scale);
         ImGui::TextColored(grey, "%s",
                            T("El rival tiene que estar en HUMANA: Pausa > Opciones de IA > Tipo de enemigo."));
@@ -225,6 +258,53 @@ void OnFrame(uint8_t* base) {
         REXLOG_INFO("[practice] the dummy now on the {} of player 1", g_dummy_right ? "right" : "left");
       }
     }
+  }
+  // (tests: MK9_TEST_LOG_POSITIONS: the fighters' places in the log four times a second)
+  static const bool log_positions = std::getenv("MK9_TEST_LOG_POSITIONS") != nullptr;
+  static uint32_t log_count = 0;
+  // mk9-lauta (2026-11-23): the reset in a corner, a step a frame (see g_corner)
+  g_practice_fight = fight;
+  if (!fight) {
+    g_corner_request = -1;
+    g_corner = kCornerMiddle;
+  }
+  if (g_corner_request >= 0) {
+    g_corner = g_corner_request;
+    g_corner_request = -1;
+    g_corner_frames = 0;
+    g_corner_steps = 0;
+  }
+  if (g_corner != kCornerMiddle && placed && g_oriented) {
+    ++g_corner_frames;
+    // the one in front (player 1 toward its own side, the opponent toward the other) and the way there
+    const bool p1_front = g_corner == kCornerLeft;
+    const float way = (p1_front ? -1.0f : 1.0f) * g_sign;
+    float* front = p1_front ? p1 : p2;
+    float* back = p1_front ? p2 : p1;
+    if (g_corner_frames > 2) {  // the game's reset done (it puts them back the frame after BACK)
+      const bool stopped = g_corner_steps > 0 && way * (g_corner_put - front[g_axis]) > 20.0f;
+      if (stopped || g_corner_steps >= 30) {
+        const float wall = front[g_axis];
+        front[g_axis] = wall;
+        back[g_axis] = wall - way * kResetApart;
+        fight_state::SetPosition(base, p1_front ? 0 : 1, front);
+        fight_state::SetPosition(base, p1_front ? 1 : 0, back);
+        REXLOG_INFO("[practice] reset in the {} corner: the wall at {:.1f} ({} steps)", p1_front ? "left" : "right", wall,
+                    g_corner_steps);
+        g_corner = kCornerMiddle;
+      } else {
+        front[g_axis] += way * kCornerStep;
+        back[g_axis] = front[g_axis] - way * kResetApart;
+        g_corner_put = front[g_axis];
+        fight_state::SetPosition(base, p1_front ? 0 : 1, front);
+        fight_state::SetPosition(base, p1_front ? 1 : 0, back);
+        ++g_corner_steps;
+      }
+    }
+  }
+  if (log_positions && placed && (++log_count % 15) == 0) {
+    REXLOG_INFO("[practice] pos p1 ({:.1f}, {:.1f}, {:.1f}) p2 ({:.1f}, {:.1f}, {:.1f})", p1[0], p1[1], p1[2], p2[0], p2[1],
+                p2[2]);
   }
   if (!practice) {
     if (g_practice) SetMode(Mode::kIdle, "out of a Practice fight: the recording kept, stopped");
@@ -281,12 +361,26 @@ void OnFrame(uint8_t* base) {
 }
 
 void OnPadBlock(uint8_t* base, uint32_t tag, uint32_t data, uint32_t size, uint32_t user, uint32_t r1) {
-  if (!g_practice || !data) return;
+  if (!g_practice_fight || !data) return;
+  if (!g_practice) {
+    // the recording off: only BACK's reset in a corner
+    if (tag == 0x00FF0002 && size == 16 && user == 0) {
+      const uint8_t* pad = base + data + 4;
+      const uint16_t buttons = Be16(pad);
+      if ((buttons & kBack) && !(g_prev_buttons & kBack)) g_corner_request = CornerAsked(pad);
+      g_prev_buttons = buttons;
+    }
+    return;
+  }
   uint8_t* out = base + data;
   if (tag == 0x00FF0002 && size == 16 && user == 0) {
     // player 1: START's press ends a recording or a playback (and goes on to the game: the pause is the player's)
     const uint16_t buttons = Be16(out + 4);
     const bool start = (buttons & kStart) && !(g_prev_buttons & kStart);
+    // mk9-lauta (2026-11-23): BACK resets the fight's places (the game's own); with left or right held, in that corner
+    if ((buttons & kBack) && !(g_prev_buttons & kBack) && g_mode != Mode::kRecording) {
+      g_corner_request = CornerAsked(out + 4);
+    }
     g_prev_buttons = buttons;
     if (g_mode == Mode::kIdle) return;
     if (start) {
