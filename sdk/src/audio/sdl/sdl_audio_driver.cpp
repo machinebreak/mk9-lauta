@@ -329,7 +329,16 @@ void SDLAudioDriver::FakeDevice() {
       {
         std::unique_lock<std::mutex> guard(frames_mutex_);
         if (!frames_queued_.empty()) {
-          frames_unused_.push(frames_queued_.front());
+          float* buffer = frames_queued_.front();
+          // mk9-lauta (2026-11-23): audio_dump_output_s with no device too, what a stereo one would have got (the
+          // tests' way to hear the game: the select screen's voices were checked so)
+          if (REXCVAR_GET(audio_dump_output_s) > 0) {
+            std::vector<float> stereo(size_t(channel_samples_) * 2);
+            conversion::sequential_6_BE_to_interleaved_2_LE(stereo.data(), buffer, channel_samples_, GetStereoFold(),
+                                                            GetOutputGain());
+            RecordOutput(stereo.data(), int(stereo.size() * sizeof(float)), 2);
+          }
+          frames_unused_.push(buffer);
           frames_queued_.pop();
           taken = true;
         }

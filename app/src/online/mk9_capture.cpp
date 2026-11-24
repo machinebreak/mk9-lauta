@@ -24,7 +24,9 @@
 //   mk9_native_log=<file>     the script natives called in the frames of mk9_native_log_frames (a-b): "<frame> <native
 //                             address> <the VM's result register after it>", one per call (the MKO VM's native call,
 //                             sub_82A12118: the native is the word after the instruction, VM at [0x8342CDF0], its pc
-//                             at +60, the result register at +28)
+//                             at +60, the result register at +28); with mk9_native_log_args, the six words after the
+//                             native's (its arguments) and the text each shows (the select screen's 3D preview was
+//                             found this way: mk9_select_preview.cpp)
 //   mk9_state_hash=<file>     per frame: "<frame> <xxh3 of each range>" for mk9_state_ranges; with
 //                             mk9_state_hash_pages one hash per 4 KB page instead (two runs' files say which pages
 //                             differ: the way to find the state that is deterministic)
@@ -49,6 +51,7 @@
 #include <utility>
 #include <vector>
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
@@ -56,6 +59,7 @@
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
 
+#include "mk9_select_preview.h"
 #include "online/fight_state.h"
 #include "online/guest_memory.h"
 #include "online/host_stack.h"
@@ -103,6 +107,9 @@ REXCVAR_DEFINE_STRING(mk9_script_log, "", "MK9 Online",
 REXCVAR_DEFINE_STRING(mk9_native_log, "", "MK9 Online",
                       "Write the MKO script natives called in the frames of mk9_native_log_frames to this file");
 REXCVAR_DEFINE_STRING(mk9_native_log_frames, "", "MK9 Online", "mk9_native_log: the frames, a-b");
+REXCVAR_DEFINE_BOOL(mk9_native_log_args, false, "MK9 Online",
+                    "mk9_native_log writes each native's six argument words (with their text) instead of the first one "
+                    "and the result");
 REXCVAR_DEFINE_BOOL(mk9_script_trace, false, "MK9 Online",
                     "mk9_native_log also writes the scripts' own calls and conditions, and each native's line and "
                     "second argument (test)");
@@ -419,6 +426,7 @@ constexpr uint32_t kScriptVm = 0x8342CDF0;
 thread_local uint32_t t_native_arg = 0;
 thread_local uint32_t t_native_arg2 = 0;
 thread_local uint32_t t_native_line = 0;
+thread_local uint32_t t_native_pc = 0;
 
 uint32_t NativeAboutToRun(const uint8_t* base) {
   if (!g_native_file || g_frame < g_native_from || g_frame > g_native_to) return 0;
@@ -427,6 +435,7 @@ uint32_t NativeAboutToRun(const uint8_t* base) {
   t_native_arg = GuestPointer(pc) ? Load32(base, pc + 8) : 0;
   t_native_arg2 = GuestPointer(pc) ? Load32(base, pc + 12) : 0;
   t_native_line = GuestPointer(pc) ? Load32(base, pc) >> 16 : 0;
+  t_native_pc = GuestPointer(pc) ? pc : 0;  // (mk9_native_log_args)
   return GuestPointer(pc) ? Load32(base, pc + 4) : 0;
 }
 
@@ -516,6 +525,22 @@ void CaptureNative(const uint8_t* base, uint32_t native) {
   const std::string text = ArgText(base, arg);
   char line[256];
   int n = 0;
+  // mk9_native_log_args: "<frame> <native> <result register> L<line>" and the six words after the native's (its
+  // arguments: constants, variable slots, pointers), each with the text it shows
+  if (REXCVAR_GET(mk9_native_log_args) && t_native_pc) {
+    std::string more;
+    for (uint32_t k = 2; k < 8; ++k) {
+      const uint32_t w = Load32(base, t_native_pc + 4 * k);
+      more += fmt::format(" {:08x}", w);
+      const std::string t = ArgText(base, w);
+      if (!t.empty()) more += "'" + t + "'";
+    }
+    const std::string l = fmt::format("{} {:08x} {:x} L{}{}\n", g_frame, native,
+                                      GuestPointer(vm) ? Load32(base, vm + 28) : 0u, t_native_line, more);
+    std::lock_guard lock(g_mutex);
+    std::fwrite(l.data(), 1, l.size(), g_native_file);
+    return;
+  }
   if (REXCVAR_GET(mk9_script_trace)) {
     n = std::snprintf(line, sizeof(line), "%llu %08x %x %08x %s | L%u %08x %s\n",
                       static_cast<unsigned long long>(g_frame), native,
@@ -701,6 +726,7 @@ REX_HOOK_RAW(sub_829D5230) {
   mk9::fight_state::DumpFighters(base);    // tests: the fighters' state after it (mk9_fighter_dump)
   mk9::frame_data::OnFrame(base);          // Practice: each attack's frames measured from it (mk9_frame_data.h)
   mk9::practice_record::OnFrame(base);     // Practice: the opponent's recording (mk9_practice_record.h)
+  mk9::select_preview::OnFrame(ctx, base);  // the character select's fighters in 3D (mk9_select_preview.h)
   mk9::script_input::OnFrame(base);        // tests: the scripted gamepad's "@fight" anchor (mk9_script_input.h)
   mk9::profile::OnFrame(base);             // once at the main menu: the profile's saves loaded (mk9_profile_prompt.h)
   mk9::overlay_input::OnFrame();  // the controllers for the overlay's windows (and the combos' frames kept from the game)

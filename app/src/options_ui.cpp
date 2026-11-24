@@ -856,6 +856,13 @@ class OptionsWindow : public renut::gpu::overlay::Dialog {
     }
     if (record) DrawOption(kRecordGuardOption);
     DrawOption(kPracticeResetOption);
+    // mk9-lauta (2026-11-23): the character select's fighters in 3D (mk9_select_preview.h)
+    bool select3d = rex::cvar::GetFlagByName("mk9_select_preview") == "true";
+    if (ImGui::Checkbox(Tid("Personajes en 3D en la selección (con su traje, animados y con voz)").c_str(),
+                        &select3d)) {
+      Set({{"mk9_select_preview", select3d ? "true" : "false"}},
+          T(select3d ? "Personajes en 3D activados" : "Personajes en 3D desactivados"));
+    }
     // mk9-lauta (2026-11-21): the PS Vita costumes (mk9_vita_costumes.h), at the next start
     if (rex::cvar::GetFlagInfo("mk9_vita_costumes")) {
       bool vita = Current("mk9_vita_costumes") != "false";

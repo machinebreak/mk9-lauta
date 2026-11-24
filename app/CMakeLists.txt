@@ -95,6 +95,8 @@ set(MK9_SOURCES
     # mk9-lauta (2026-11-17): frame data in Practice: each attack's startup and advantage (mk9_frame_data.h).
     src/mk9_frame_data.cpp
     src/mk9_practice_record.cpp
+    # mk9-lauta (2026-11-23): the character select's fighters in 3D (mk9_select_preview.h)
+    src/mk9_select_preview.cpp
     # mk9-lauta (2026-11-21): the PS Vita version's extra costumes, made from the player's files (mk9_vita_costumes.h).
     src/mk9_vita_costumes.cpp
     src/mk9_controls.cpp

@@ -275,3 +275,82 @@ de después.
   el guion del mando que pone HUMANA (pausa, OPCIONES DE IA, RB RB, A) y mueve al muñeco. Visto en video: mientras
   graba, Sub-Zero camina y pega y Scorpion queda quieto; al reproducir repite lo mismo; con Scorpion saltando por
   encima antes de reproducir, Sub-Zero camina hacia la derecha (grabado hacia la izquierda) y lo alcanza.
+
+## La selección en 3D (2026-11-24, `mk9_select_preview.cpp`)
+
+F2 > Controles, "Personajes en 3D en la selección" (`mk9_select_preview`, apagada de fábrica, se prende y se apaga en
+vivo): en la selección de personaje (estado 7) cada lado muestra a su luchador en 3D en vez de su ilustración, con el
+traje que se está eligiendo, en guardia, y al elegirlo se burla de su rival. Sólo offline.
+
+- **La escena**: la selección es la película de Scaleform `ui_ps_vs` sobre un mundo vacío (`empty_map`) con la cámara
+  en el origen mirando +X. Las ilustraciones son `_root.ps.characters_team<N>.bodies_1`; el fondo, opaco, es el primer
+  clip sin nombre de `_root.ps` (`instance241`: se encuentra probando nombres). Las dos se ocultan con
+  `GFxMovieView::SetVariable` (vtable 16: ruta, `GFxValue{0, 2 = bool, valor}`, 0; da 1 si el clip existe). La vista sale
+  del envoltorio del clip: `sub_82A375A0` da la raíz, su +88 la vista.
+- **Qué luchador y qué traje**: `SetImage` (`sub_82A3B6C0`, la ruta del clip es el FString +8 del envoltorio: TCHAR de
+  un byte) recibe `...BD_<luchador>[_f].jpeg` (`dlc`, `random`, `locked*` no son luchadores; los DLC traen la suya en
+  `<Luchador>_ui`). El menú de trajes (START) localiza el paquete del traje en la sección `PlayerSelect`
+  (`sub_82A235B0`, "CHAR_Scorpion_B"; el de fábrica es `char_<luchador>`) y escribe el texto en
+  `_root.ps.AltCostumeSide<N>` (`sub_82A38648`).
+- **El luchador**: el paquete con `UObject::LoadPackageAsync` (`sub_82730F70(FString*, 0, 0, 0)`), entero cuando
+  `GObjAsyncPackages.Num` (`0x834162A8`) es 0. Nunca uno que el sistema de archivos no tenga: el juego se cierra
+  (0xC0000409). La malla como la busca el armado del luchador (`sub_823CC2E8`): `Meshes.<luchador>` del traje, si no
+  `SourceAsset`/`MeshName` de su sección del ini (GConfig `[0x833D9064]` vtable 7); los retro se visten con las MIC
+  del traje (`<traje>.Materials.<nombre de la del aspecto>`, `SetMaterial`: vtable 124 del componente). El objeto MK
+  1021 de los guiones (nativa `824826F8`): `sub_829DB018(464)` y `sub_829F69E0(this, malla, 0x7FFFF, 0, 0, 0)`; su
+  actor en +8, su componente en +268; vtable 1 lo borra (1: libera), 29 toca una animación (anim, f1, f2 0.9 como el
+  visor de biografías, f3, flags 2). Sin `bUseMKDynamicShader` (+0x120, bit 0x00100000) las luces de MK lo dejan
+  negro; también `LightEnvironment` (+0x114) 0 y `MKOpaqueDetailCategory` (+0x130) 4. Tres luces propias
+  `PointLightMovableSpawnable` (`UWorld::SpawnActor` `sub_828FEA18`; `PointLightMovable` es bNoDelete) con
+  `AffectCharacters` (LightComponent +0x10C, 0x40000000), brillo +0x100, color +0x104, radio +0x194. El lugar en el
+  componente (Translation +0x200, Rotation +0x20C, Scale3D +0x21C); el jugador 2 espejado (Scale3D Y -1).
+- **El juego borra sus objetos MK** al terminar la selección (antes de cambiar de estado): el hook del destructor
+  (`sub_829F6D98`) suelta los nuestros, que no se tocan más.
+- **Memoria**: lo que se muestra queda en el root set (flags +12, 0x4000) y una recolección se pide como la Kripta (el
+  +64 del objeto de estado `[0x833848D4]`) cuando nada carga; después las cargas esperan 20 cuadros. Sin eso, un
+  paquete recién cargado perdía sus animaciones antes de mostrarse; sin recolección, recorrer la selección llenaba la
+  memoria.
+- **La elección**: el trace de los guiones "Player %d: selected" (`sub_82479280`) sale también con START, que abre el
+  menú de trajes sin elegir. Elegir es `this._parent.SelectionHighlight<N>.gotoAndPlay` del sprintf de los guiones
+  (`sub_8246E430`: sus argumentos en el +60 de la VM `[0x8342CDF0]`, el primero el buffer del texto) con el trace en el
+  mismo cuadro (A sobre un luchador: el jugador del trace; N no es el jugador: el 2 marca el 4) o seguido de
+  `ps.AltCostumeSide<lado>.gotoAndPlay` (A en el menú de trajes).
+- **Las actuaciones** (`mk9_select_performances.inc`, hecha por `tools/select3d/perf_tables.py` con las cinemáticas
+  del juego): las transiciones del modo Historia (`NIS_MK<nnn>_PRE` y `_PST`: antes y después de cada pelea uno le
+  habla al otro; quién es lo dice su animación de cara, `..._<Quién>_FO`; su cuerpo y su cara salen de las claves de
+  `CinemaTrackBlendAnim` y su frase, `snd_vo_storytrans.vo_mk9_<nnn>_<pre|pst>`, de las de `InterpTrackSound`) y las
+  presentaciones de antes de la pelea (`<Luchador>_CharIntro`: cuerpo, cara, cada evento de sonido y las voces del
+  personaje de `CinemaTrackCharacterSound`, como `@vo_spatk`). Las propiedades de esta versión: la etiqueta de un
+  BoolProperty lleva un UBOOL de 32 bits y la de un ByteProperty no lleva enum. Al mostrarse, una al azar entre todas
+  las del luchador (y su `EndOfRound_Taunt` con una frase de su voz) carga su paquete; al elegirlo, el cuerpo, los
+  sonidos y las frases a su tiempo desde el comienzo del cuerpo, y la guardia otra vez al final.
+- **Las frases**: `SND_VO_StoryTrans` viene en inglés y en `_spa`, `_fra`, `_ger`, `_ita`: la del idioma con que
+  arrancó el juego (`user_language` 5, 4, 3, 6; los demás en inglés); `SND_VO_CharIntro` sólo en inglés. Se cargan al
+  abrir la selección y quedan en el root set mientras dura (FMOD las lee del archivo: "FMOD streams ... from the
+  host"). Suenan por el sistema de sonido de MK (`sub_82A30268`, vtable 9) con la referencia {nombre del paquete, FName
+  del evento, 0, -1, nombre}, como el guion toca al locutor. Comprobado grabando la salida (`audio_test_fake_device` y
+  `audio_dump_output_s`): con la frase, 5 a 7 veces más energía en los segundos que dura.
+- **Mirando al rival**: las transiciones miran a la cámara de su cinemática (el rival al costado) y las presentaciones
+  están hechas para la pelea (de perfil, mirando al otro lado): mientras actúa, el luchador gira 45° o 135° hacia su
+  rival (5° por cuadro) con la Rotation del componente y su actualización (`sub_828CB1E0`, como
+  `UPrimitiveComponent::execSetRotation`, `0x82739398`), y vuelve al terminar.
+- **Las que se van de su lugar**: algunas terminan lejos de donde empezó la guardia (la animación mueve la cadera: se
+  irían y después volverían de un salto a la guardia). `mk9_select_preview_test_survey` toca una por una en el
+  jugador 1 y mide la cadera sobre el piso desde su lugar en la guardia
+  (`USkeletalMeshComponent::GetBoneLocation`, `sub_82924108(out, componente, FName, 0)`; los nombres de los huesos
+  son el `TArray<FName>` +0x90 de la malla: Reference, Hips, Spine, ...; la raíz no se mueve: todo está en la
+  cadera; `mk9_select_preview_test_survey_from` empieza en otra). Las presentaciones y algunas escenas entran desde
+  fuera de cuadro (Scorpion a 187 unidades, Mileena a 381) y terminan en su lugar: ésas quedan. Muchas de después
+  de la pelea terminan a 40-55 unidades, casi todo hacia la cámara (vuelven a la guardia sin salto visible).
+  `perf_tables.py --survey <log> --max-end 55 --max-length 16` deja fuera las que terminan más lejos (10: la
+  presentación de Baraka termina a 406) o duran más de 16 s (2: una de Kabal dura 41 s). Quedan 133: 103 frases de
+  Historia (24 luchadores) y 30 presentaciones; los 31 luchadores tienen al menos una, además de su burla.
+- **La cara no se mueve al hablar**: las pistas de cara usan la subpista "Face Only" con los huesos `F_*`, y las
+  mallas sólo tienen las subesqueletos FullSkeleton, ArmCloth, WaistCloth y DamageCloth (datos MK del componente +656:
+  +168 entradas de 40 bytes {FName, máscara de 256 huesos}, +172 cuántas, +176 lugar: 4 de 4). El slot 34 del objeto
+  MK toca en una por nombre (el 29 lo llama con "FullSkeleton"); una de cara obligaría a agrandar ese arreglo.
+- **Pruebas**: `mk9_select_preview_perform` (el paquete de una actuación, `taunt` o `none`),
+  `mk9_select_preview_test_pick=2:600` (una elección en ese cuadro de la selección, sin la del juego),
+  `mk9_select_preview_test_toggle=600,900` (la opción dada vuelta en esos cuadros), `mk9_select_preview_turn`,
+  `mk9_select_preview_place`, `mk9_select_preview_lights`, `mk9_select_preview_test_survey`. El registro de nativas con
+  sus argumentos (`mk9_native_log_args`) mostró la elección y el menú de trajes.

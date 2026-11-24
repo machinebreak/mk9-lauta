@@ -56,7 +56,9 @@ foto, y la opción de mirar en vivo las partidas de los demás.
 PC, la Torre de desafíos, Práctica, la Kripta y todos los luchadores de la Komplete Edition. Kratos, el invitado de la
 versión de PlayStation 3, se descarga solo la primera vez que abrís el juego, y también están los trajes extra de la
 versión de PS Vita (los retro de MK2 y de MK3 de los ninjas, Mileena y Skarlet, y los alternativos de Kenshi y de
-Skarlet), cada uno con su Babality. En Práctica, cada golpe muestra su frame
+Skarlet), cada uno con su Babality. Si querés, la selección de personaje los muestra en 3D (**F2 > Controles**): con el
+traje que elijas, en guardia, y al elegirlo cada uno se burla de su rival mirándolo, con una de sus frases del modo
+Historia (en el idioma del juego) o con su presentación de antes de la pelea. En Práctica, cada golpe muestra su frame
 data (arranque y ventaja al golpear o al bloquear), y podés grabar al rival con tu mando para que después repita lo que
 hiciste, una vez o en bucle (F5, F6 y F7). En cualquier pelea podés ver tus entradas en pantalla. Las
 cinemáticas se saltean con START o A (también la primera vez), y si copiás los videos `.bik` de la versión de PC (por

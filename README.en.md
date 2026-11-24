@@ -60,7 +60,9 @@ the ninjas, Mileena and Skarlet, and Kenshi's and Skarlet's alternate ones), eac
 few seconds at the first start from your own game files (about 600 MB in `cache/costumes`; the game files are not
 touched), nine of them with the PS Vita's own models and textures, from a separate pack of about 15 MB the game
 downloads by itself ([mk9-lauta-vita-costumes](https://github.com/machinebreak/mk9-lauta-vita-costumes)), and
-**F2 > Controls** turns them off. In
+**F2 > Controls** turns them off. If you like, the character select shows the fighters in 3D (**F2 > Controls**): in
+the costume you choose, in their stance, and when picked each one taunts its rival, looking at it, with one of its
+Story lines (in the game's language) or its pre-fight intro. In
 Practice each attack shows its frame data (startup and advantage on hit or on block),
 and you can record the opponent with your controller and have it repeat what you did, once or in a loop (F5, F6 and
 F7). In any fight your inputs can show on screen. Cutscenes can be skipped with START or A (the first time too), and if

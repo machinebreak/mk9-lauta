@@ -254,7 +254,8 @@ de los botones** se fija uno; se aplica al volver a abrir el juego.
   abrir el juego), **Cinemáticas** (con "Se saltean con START o A", las del Modo Historia se pueden saltear también
   la primera vez, cosa que el juego original no deja) y **Videos de las cinemáticas** (los .bik de la versión de PC si
   los copiaste, ver abajo).
-- **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando y los íconos de los botones. Abajo,
+- **Controles**: las teclas, qué jugador maneja el teclado, la vibración del mando, los íconos de los botones y los
+  **personajes en 3D en la selección** (ver abajo). Abajo,
   **Botones en el online**: qué botón de tu mando hace cada golpe en tus peleas online. Cada partida online arranca
   con los botones de fábrica (así las dos PC juegan igual) aunque los hayas cambiado en OPCIONES > MANDO; lo que elijas
   acá vale en todas tus peleas online, y tu rival no se entera.
@@ -305,6 +306,21 @@ apagados, esa carpeta se puede borrar).
 
 Para jugar online, los dos tienen que tener los mismos (o apagados los dos): si no, la sala lo avisa, dice qué hacer y
 la pelea no arranca. Lo mismo para mirar una partida o un replay.
+
+## Personajes en 3D en la selección
+
+En **F2 > Controles**, **Personajes en 3D en la selección** (apagada de fábrica) cambia la ilustración de cada lado de
+la selección de personaje por el luchador en 3D: con el traje que estés eligiendo en el menú de trajes (START), también
+los retro y los de PS Vita, y en guardia. Cuando lo elegís se da vuelta hacia su rival y se burla de él, al azar entre
+todo lo que tiene:
+
+- una de sus frases del modo Historia, con el gesto que hace en esa escena, en el idioma del juego (español, inglés,
+  francés, alemán o italiano);
+- su presentación de antes de la pelea, con sus efectos de sonido y su frase (ésta en inglés);
+- o su burla de fin de ronda con una frase de su voz.
+
+Se prende y se apaga en cualquier momento, también con la selección en pantalla, y vale para todos los luchadores
+(los de DLC también). Sólo offline: en el online la selección queda como siempre. La boca no se mueve cuando hablan.
 
 ## Videos HQ de las cinemáticas
 
