@@ -29,8 +29,10 @@
 //   - the art's clip and the movie's background hidden while a fighter is shown or loading (GFxMovieView::SetVariable
 //     "_visible"); the art comes back for one that cannot be shown
 // What it shows stays in the root set (the mesh, the animations, the voices; the lines' packages while the select
-// screen is shown) and a garbage collection is asked for
-// when the cursor rests, so browsing does not fill the memory. The game deletes its MK objects when the select screen
+// screen is shown) and a garbage collection is asked for when the cursor rests, so browsing does not fill the memory:
+// one that takes only the fighters it showed and shows no more, and its cinematics (HoldTheRest). Every collection on
+// the select screen (the game's DLC manager's as well) waits for the packages loading to finish (FlushAsyncLoading)
+// and keeps what the preview loads or shows (HoldThePreviews). The game deletes its MK objects when the select screen
 // ends (the destructor's hook lets ours go); leaving it (or the option turned off) destroys the lights and shows the
 // art again. A package the game's file system does not have is never asked for (a missing package ends the game).
 // docs/online/engine-map.md, "La selección en 3D", has the addresses and how each was found.
@@ -48,6 +50,7 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <fmt/format.h>
@@ -88,6 +91,9 @@ REXCVAR_DEFINE_BOOL(mk9_select_preview_test_survey, false, "MK9",
                     "far each one moves its hips (tools/select3d/perf_tables.py leaves out the ones that walk)");
 REXCVAR_DEFINE_INT32(mk9_select_preview_test_survey_from, 0, "MK9",
                      "(tests) mk9_select_preview_test_survey: the performance it starts at (kPerformances' index)");
+REXCVAR_DEFINE_BOOL(mk9_select_preview_test_gc_report, false, "MK9",
+                    "(tests) each garbage collection the preview asks for is followed (30 frames later) by the packages "
+                    "it took objects from, and how many");
 REXCVAR_DEFINE_STRING(mk9_select_preview_test_toggle, "", "MK9",
                       "(tests) the select screen's frames at which mk9_select_preview is turned over (on to off, off to "
                       "on), comma-separated: the F2 option's checkbox while the select is shown");
@@ -166,6 +172,7 @@ bool StartsNoCase(std::string_view s, std::string_view prefix) {
 constexpr uint32_t kObjects = 0x83416274;           // UObject::GObjObjects (TArray<UObject*>)
 constexpr uint32_t kNames = 0x834161DC;             // FName::Names (TArray<FNameEntry*>)
 constexpr uint32_t kAsyncPackagesNum = 0x834162A4 + 4;  // UObject::GObjAsyncPackages.Num
+constexpr uint32_t kFlushAsyncLoading = 0x8272EC30;       // UObject::FlushAsyncLoading() (ProcessAsyncLoading, no limit)
 constexpr uint32_t kGWorld = 0x8341ECF4;            // GWorld
 constexpr uint32_t kGConfig = 0x833D9064;           // GConfig (FConfigCacheIni*)
 constexpr uint32_t kGGameIni = 0x833DD318;          // GGameIni (the game ini's file name, TCHARs)
@@ -222,6 +229,29 @@ bool IsObject(const uint8_t* base, uint32_t v) {
   const uint32_t i = L32(base, v + 4);
   return i < ObjectCount(base) && ObjectAt(base, i) == v;
 }
+// mk9-lauta (2026-11-24): an object a collection let go (UE3 2010's flags, the 64-bit word at +8: RF_Unreachable
+// 0x2_00000000, RF_PendingKill 0x20000000_00000000; RF_BeginDestroyed 0x8000, RF_FinishDestroyed 0x10000 in the low
+// half, by RF_RootSet 0x4000 and the RF_Native 0x04000000_00000000 the game's collection keeps), or one not loaded yet
+// (RF_NeedLoad 0x200_00000000, RF_AsyncLoading 0x400_00000000). A collection destroys what it lets go over the next
+// frames (IncrementalPurgeGarbage): until then it is still among GObjObjects and found by its name, and so is its
+// package, which LoadPackageAsync then takes as loaded. The preview's lookups and roots take living objects only, and a
+// fighter whose package is still going is asked for again (a guard: the tests of 2026-11-24 found none used so; what
+// broke the fights was the DLC manager's collection, see sub_826DD740's hook).
+constexpr uint32_t kDyingHigh = 0x00000002u | 0x20000000u | 0x00000200u | 0x00000400u;
+constexpr uint32_t kDyingLow = 0x00008000u | 0x00010000u;
+uint32_t g_dying_seen = 0;
+bool Dying(const uint8_t* base, uint32_t o) {
+  return (L32(base, o + 8) & kDyingHigh) != 0 || (L32(base, o + 12) & kDyingLow) != 0;
+}
+// A living object (among GObjObjects, not let go nor still loading); one found dying is said (the first few)
+bool Alive(const uint8_t* base, uint32_t o, const char* what = nullptr) {
+  if (!IsObject(base, o)) return false;
+  if (!Dying(base, o)) return true;
+  if (what && g_dying_seen++ < 24)
+    REXLOG_WARN("[select3d] {} {}: being destroyed or not loaded (flags {:08X} {:08X}): left alone", what,
+                ObjName(base, o), L32(base, o + 8), L32(base, o + 12));
+  return false;
+}
 // A native class's object by its name ("SkeletalMesh"): native classes stay for the whole run, so it is kept
 uint32_t ClassObject(const uint8_t* base, const char* name) {
   static std::vector<std::pair<std::string, uint32_t>> known;
@@ -237,14 +267,18 @@ uint32_t ClassObject(const uint8_t* base, const char* name) {
   return 0;
 }
 
-// An object by its path ("CHAR_Scorpion.Meshes.Scorpion"; any case) and its class (the class's object; 0: any)
+// An object by its path ("CHAR_Scorpion.Meshes.Scorpion"; any case) and its class (the class's object; 0: any): a
+// living one (g_found_dying: one there but dying)
+bool g_found_dying = false;
 uint32_t FindObject(const uint8_t* base, const std::string& path, uint32_t cls) {
   const size_t dot = path.rfind('.');
   const std::string leaf = dot == std::string::npos ? path : path.substr(dot + 1);
   for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
     const uint32_t o = ObjectAt(base, i);
     if (!o || (cls && L32(base, o + 48) != cls) || !EqualNoCase(ObjName(base, o), leaf)) continue;
-    if (EqualNoCase(Path(base, o), path)) return o;
+    if (!EqualNoCase(Path(base, o), path)) continue;
+    if (Alive(base, o, "the object")) return o;
+    g_found_dying = true;
   }
   return 0;
 }
@@ -259,7 +293,9 @@ uint32_t FindAnim(const uint8_t* base, const std::string& package, const char* s
     const uint32_t o = ObjectAt(base, i);
     if (!o || L32(base, o + 48) != cls || NameText(base, L32(base, o + 0x38)) != sequence) continue;
     const std::string top = ObjName(base, Outermost(base, o));
-    if (StartsNoCase(top, package) && (top.size() == package.size() || top[package.size()] == '-')) return o;
+    if (StartsNoCase(top, package) && (top.size() == package.size() || top[package.size()] == '-') &&
+        Alive(base, o, "the animation"))
+      return o;
   }
   return 0;
 }
@@ -323,6 +359,8 @@ struct Side {
   enum class State { kNone, kLoading, kShown, kFailed, kGone } state = State::kNone;
   std::string package;  // shown or loading
   uint64_t load_frame = 0;
+  uint32_t retries = 0;   // loads asked for again while its package was still being destroyed
+  uint64_t retry_at = 0;  // the frame the next is asked for (0: none waiting)
   uint32_t object = 0, actor = 0, component = 0;
   bool art_hidden = false;
   uint32_t lights[3] = {0, 0, 0};
@@ -362,6 +400,10 @@ Side g_sides[2] = {{0}, {1}};
 uint64_t g_frame = 0;
 uint64_t g_gc_frame = 0;
 bool g_gc_due = false;
+// (the collection the preview asks for, see HoldTheRest)
+std::vector<std::string> g_loaded_fighters;  // the fighters ("scorpion") the preview loaded on this select screen
+bool g_gc_ours = false;                      // the collection under way is the preview's
+std::vector<std::string> g_gc_fighters;      // the fighters that collection may take
 uint64_t g_load_block_until = 0;  // no load starts before this frame (a collection asked for is under way)
 bool g_was_select = false;
 uint64_t g_select_frames = 0;  // the frames of this select screen (mk9_select_preview_test_toggle)
@@ -439,6 +481,15 @@ std::string IniString(const PPCContext& ctx, uint8_t* base, const std::string& s
 
 // The fighter's mesh as its setup finds it (sub_823CC2E8): the costume's own Meshes.<fighter>, else the look the
 // ini names ([<costume>] SourceAsset, MeshName)
+// A package (an object with no outer) of that name that a collection let go and its purge has not destroyed yet
+bool PackageDying(const uint8_t* base, const std::string& package) {
+  for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
+    const uint32_t o = ObjectAt(base, i);
+    if (o && !L32(base, o + 36) && EqualNoCase(ObjName(base, o), package)) return Dying(base, o);
+  }
+  return false;
+}
+
 uint32_t MeshFor(const PPCContext& ctx, uint8_t* base, const std::string& package) {
   const std::string own = package.substr(5);  // without "char_"
   if (const uint32_t m = FindObject(base, package + ".Meshes." + own, "SkeletalMesh")) return m;
@@ -585,7 +636,8 @@ void ShowArt(const PPCContext& ctx, uint8_t* base, Side& s, bool show) {
 constexpr uint32_t kRootSet = 0x4000;
 
 void Root(uint8_t* base, Side& s, uint32_t o) {
-  if (!IsObject(base, o) || (L32(base, o + 12) & kRootSet)) return;  // already a root: not ours to let go
+  // (already a root: not ours to let go; dying: going whatever the root set says)
+  if (!IsObject(base, o) || Dying(base, o) || (L32(base, o + 12) & kRootSet)) return;
   S32(base, o + 12, L32(base, o + 12) | kRootSet);
   s.rooted.push_back(o);
 }
@@ -668,6 +720,7 @@ uint32_t FindVoice(const uint8_t* base, const std::string& fighter) {
     if (!o || L32(base, o + 48) != cls) continue;
     const std::string top = ObjName(base, Outermost(base, o));
     if (!EqualNoCase(top, "SND_SFX_" + fighter) && !EqualNoCase(top, "SND_VO_" + fighter)) continue;
+    if (Dying(base, o)) continue;
     const std::string name = Lower(ObjName(base, o));
     int kind = name.rfind("taunt", 0) == 0 ? 0 : name == "vo_victory" || name == "vo_vict_laugh" ? 1
                : name == "vo_laugh" ? 2 : -1;
@@ -724,7 +777,7 @@ uint32_t FindEvent(const uint8_t* base, std::string_view package, std::string_vi
     const uint32_t o = ObjectAt(base, i);
     if (!o || L32(base, o + 48) != cls || !EqualNoCase(ObjName(base, o), event)) continue;
     for (uint32_t outer = L32(base, o + 36), d = 0; outer && d < 8; outer = L32(base, outer + 36), ++d)
-      if (EqualNoCase(ObjName(base, outer), package)) return o;
+      if (EqualNoCase(ObjName(base, outer), package) && Alive(base, o, "the sound")) return o;
   }
   return 0;
 }
@@ -736,7 +789,7 @@ uint32_t FindOwnVoice(const uint8_t* base, const std::string& fighter, std::stri
     const uint32_t o = ObjectAt(base, i);
     if (!o || L32(base, o + 48) != cls || !EqualNoCase(ObjName(base, o), event)) continue;
     const std::string top = Lower(ObjName(base, Outermost(base, o)));
-    if (top.rfind("snd_vo_", 0) == 0 && top.find(fighter) != std::string::npos) return o;
+    if (top.rfind("snd_vo_", 0) == 0 && top.find(fighter) != std::string::npos && Alive(base, o, "the sound")) return o;
   }
   return 0;
 }
@@ -746,7 +799,9 @@ uint32_t FindSequence(const uint8_t* base, std::string_view sequence) {
   const uint32_t cls = ClassObject(base, "AnimSequence");
   for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
     const uint32_t o = ObjectAt(base, i);
-    if (o && L32(base, o + 48) == cls && EqualNoCase(NameText(base, L32(base, o + 0x38)), sequence)) return o;
+    if (o && L32(base, o + 48) == cls && EqualNoCase(NameText(base, L32(base, o + 0x38)), sequence) &&
+        Alive(base, o, "the animation"))
+      return o;
   }
   return 0;
 }
@@ -794,7 +849,7 @@ void HoldLines(const PPCContext& ctx, uint8_t* base) {
     if (!o) continue;
     const std::string top = ObjName(base, Outermost(base, o));
     if (!EqualNoCase(top, kIntroLines) && !EqualNoCase(top, StoryPackage())) continue;
-    if (L32(base, o + 12) & kRootSet) continue;
+    if ((L32(base, o + 12) & kRootSet) || Dying(base, o)) continue;
     S32(base, o + 12, L32(base, o + 12) | kRootSet);
     g_lines_rooted.push_back(o);
   }
@@ -814,6 +869,7 @@ void ReleaseLines(uint8_t* base) {
 
 constexpr int kTaunt = kTauntIndex;  // its EndOfRound_Taunt and a line of its voice (FindVoice)
 constexpr int kNothing = -3;  // (tests) none
+constexpr uint32_t kLoadRetries = 6;  // a package still being destroyed: asked for again this many times at most
 constexpr uint64_t kPickWaitFrames = 120;  // a pick waits this long for its cinematic's package, then the taunt
 constexpr uint64_t kIdleEvery = 420;       // another pose at most every 7 s (and up to 6 s more), the stance between
 constexpr float kStoryTurn = 45.0f, kIntroTurn = 135.0f;  // degrees toward the rival (mk9_select_preview_turn)
@@ -1216,10 +1272,22 @@ void Step(const PPCContext& ctx, uint8_t* base, Side& s) {
     ShowArt(ctx, base, s, false);
     s.state = Side::State::kLoading;
     s.load_frame = g_frame;
+    s.retries = 0;
+    s.retry_at = 0;
+    if (const std::string f = Lower(s.fighter);
+        !f.empty() && std::find(g_loaded_fighters.begin(), g_loaded_fighters.end(), f) == g_loaded_fighters.end())
+      g_loaded_fighters.push_back(f);
     LoadPackage(ctx, base, want);
     return;
   }
   if (s.state == Side::State::kLoading) {
+    if (s.retry_at) {  // its package was still being destroyed: asked for again now
+      if (g_frame < s.retry_at) return;
+      s.retry_at = 0;
+      s.load_frame = g_frame;
+      LoadPackage(ctx, base, s.package);
+      return;
+    }
     if (L32(base, kAsyncPackagesNum) != 0) {  // its objects are made over frames: whole once nothing is loading
       if (g_frame - s.load_frame > kLoadTimeout) {
         REXLOG_WARN("[select3d] side {}: {} still loading after {} s: the art stays", s.index + 1, s.package,
@@ -1229,7 +1297,17 @@ void Step(const PPCContext& ctx, uint8_t* base, Side& s) {
       }
       return;
     }
+    g_found_dying = false;
     const uint32_t mesh = MeshFor(ctx, base, s.package);
+    // mk9-lauta (2026-11-24): a collection let its package go and the purge is not through (LoadPackageAsync took it
+    // as loaded): asked for again in half a second, a few times
+    if (!mesh && (g_found_dying || PackageDying(base, s.package)) && s.retries < kLoadRetries) {
+      ++s.retries;
+      s.retry_at = g_frame + 30;
+      REXLOG_INFO("[select3d] side {}: {} still being destroyed by a collection: asked for again", s.index + 1,
+                  s.package);
+      return;
+    }
     if (!mesh) {
       REXLOG_WARN("[select3d] side {}: {} loaded but no mesh found: the art stays", s.index + 1, s.package);
       s.state = Side::State::kFailed;
@@ -1304,7 +1382,126 @@ void TearDown(const PPCContext& ctx, uint8_t* base, bool movie) {
 
 // A garbage collection asked for (the game's own way: the state object's +64, as the Krypt's code asks) a while
 // after previews went, so the packages nobody shows any more leave memory
+// mk9-lauta (2026-11-24): the collection the preview asks for takes only what the preview loaded and shows no more.
+// The game itself collects on the select screen only as the cursor reaches the DLC fighters (its DLC manager, see
+// sub_826DD740's hook), with nothing of its own loading; the preview's collection of everything took, besides its
+// fighters, what the game had there and keeps (the menus' movies, ui_s_mainmenu, ui_s_options, ui_s_dlcBillboard) and
+// what every fighter shares, the effects (FX_Blood, FX_Impact, FX_Global, FX_Character, PFX_Xray; mk9_select_preview_
+// test_gc_report's lists), loaded again with the next fighter. Now, for the length of each collection of the
+// preview's, everything else is held in the root set: what may go is the packages named after a fighter it showed and
+// shows no more on either side (CHAR_Scorpion-<hash>, CHAR_Scorpion, Scorpion_XRAY, FX_Scorpion, SND_SFX_Scorpion,
+// Anims_XRay_Scorpion_...) and the cinematics it loaded for performances (NIS_MK..., ANIM_MK..., SND_MOV_MK...), whose
+// objects in use are its roots. The rest stays as the game left it, and the shared effects load once.
+
+bool NamedAfter(const std::string& lower_package, const std::string& fighter) {
+  return lower_package.rfind(fighter, 0) == 0 || lower_package.find("_" + fighter) != std::string::npos;
+}
+bool Collectable(const std::string& lower_package) {
+  for (const char* prefix : {"nis_mk", "anim_mk", "snd_mov_mk"})
+    if (lower_package.rfind(prefix, 0) == 0) return true;
+  for (const std::string& f : g_gc_fighters)
+    if (NamedAfter(lower_package, f)) return true;
+  return false;
+}
+
+// The objects whose outermost package 'keep' says to keep, held in the root set for the length of a collection
+// (returned, to be let go after); the ones already roots, and the ones dying or still loading, left as they are
+template <typename Keep>
+std::vector<uint32_t> HoldWhere(uint8_t* base, Keep keep) {
+  std::vector<uint32_t> held;
+  std::unordered_map<uint32_t, bool> by_package;
+  for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
+    const uint32_t o = ObjectAt(base, i);
+    if (!o) continue;
+    const uint32_t flags = L32(base, o + 12);
+    if ((flags & kRootSet) || Dying(base, o)) continue;
+    const uint32_t top = Outermost(base, o);
+    auto it = by_package.find(top);
+    if (it == by_package.end()) it = by_package.emplace(top, keep(Lower(ObjName(base, top)))).first;
+    if (!it->second) continue;
+    S32(base, o + 12, flags | kRootSet);
+    held.push_back(o);
+  }
+  return held;
+}
+// Before the preview's collection: every object a collection of its may not take
+std::vector<uint32_t> HoldTheRest(uint8_t* base) {
+  return HoldWhere(base, [](const std::string& package) { return !Collectable(package); });
+}
+// Before the game's own (the DLC manager's, sub_8260C268, as the cursor reaches the DLC fighters): what the preview
+// loads or shows (its fighters' packages, its performances' cinematics), which nothing else holds yet
+std::vector<uint32_t> HoldThePreviews(uint8_t* base) {
+  std::vector<std::string> fighters, cinematics;
+  for (const Side& s : g_sides) {
+    if (!s.fighter.empty() && !s.package.empty()) fighters.push_back(Lower(s.fighter));
+    if (s.perf >= 0 && (s.perf_loading || s.perf_ready)) cinematics.push_back(Lower(PerfPackage(kPerformances[s.perf])));
+  }
+  if (fighters.empty() && cinematics.empty()) return {};
+  return HoldWhere(base, [&](const std::string& package) {
+    for (const std::string& f : fighters)
+      if (NamedAfter(package, f)) return true;
+    for (const std::string& c : cinematics)
+      if (package.rfind(c, 0) == 0) return true;
+    return false;
+  });
+}
+
+// (tests, mk9_select_preview_test_gc_report) the objects there when a collection was asked for, and the report of what
+// it took 30 frames later, by package
+std::vector<std::pair<uint32_t, uint32_t>> g_gc_before;  // (object, its outermost)
+std::vector<uint32_t> g_gc_before_class;                 // (its class)
+std::unordered_map<uint32_t, std::string> g_gc_outer_names;
+uint64_t g_gc_report_at = 0;
+
+void GcSnapshot(const uint8_t* base) {
+  g_gc_before.clear();
+  g_gc_before_class.clear();
+  g_gc_outer_names.clear();
+  for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
+    const uint32_t o = ObjectAt(base, i);
+    if (!o) continue;
+    const uint32_t top = Outermost(base, o);
+    g_gc_before.emplace_back(o, top);
+    g_gc_before_class.push_back(L32(base, o + 48));
+    if (const uint32_t c = L32(base, o + 48); c && !g_gc_outer_names.count(c)) g_gc_outer_names[c] = ObjName(base, c);
+    if (!g_gc_outer_names.count(top)) g_gc_outer_names[top] = ObjName(base, top);
+  }
+  g_gc_report_at = g_frame + 30;
+}
+
+void GcReport(const uint8_t* base) {
+  if (!g_gc_report_at || g_frame < g_gc_report_at) return;
+  g_gc_report_at = 0;
+  std::unordered_map<std::string, uint32_t> gone, classes;
+  uint32_t total = 0;
+  for (size_t k = 0; k < g_gc_before.size(); ++k) {
+    const auto& [o, top] = g_gc_before[k];
+    if (IsObject(base, o) && !Dying(base, o)) continue;
+    ++gone[g_gc_outer_names[top]];
+    ++classes[g_gc_outer_names[g_gc_before_class[k]]];
+    ++total;
+  }
+  {
+    std::vector<std::pair<uint32_t, std::string>> by_class;
+    for (const auto& [name, n] : classes) by_class.emplace_back(n, name);
+    std::sort(by_class.rbegin(), by_class.rend());
+    std::string text;
+    for (size_t k = 0; k < by_class.size() && k < 16; ++k)
+      text += (k ? ", " : "") + by_class[k].second + " " + std::to_string(by_class[k].first);
+    REXLOG_INFO("[select3d] (test) by class: {}", text);
+  }
+  std::vector<std::pair<uint32_t, std::string>> list;
+  for (const auto& [name, n] : gone) list.emplace_back(n, name);
+  std::sort(list.rbegin(), list.rend());
+  std::string text;
+  for (size_t k = 0; k < list.size() && k < 24; ++k)
+    text += (k ? ", " : "") + list[k].second + " " + std::to_string(list[k].first);
+  REXLOG_INFO("[select3d] (test) the collection took {} objects of {} packages: {}", total, list.size(), text);
+  g_gc_before.clear();
+}
+
 void MaybeCollect(uint8_t* base) {
+  if (REXCVAR_GET(mk9_select_preview_test_gc_report)) GcReport(base);
   if (!g_gc_due || g_frame - g_gc_frame < 180) return;
   // only with nothing loading nor about to (it would take a package nobody holds yet), and no new load for a while
   for (const Side& s : g_sides)
@@ -1313,6 +1510,11 @@ void MaybeCollect(uint8_t* base) {
   if (L32(base, kAsyncPackagesNum) != 0) return;
   const uint32_t state = L32(base, kGameState);
   if (!Readable(state, 68)) return;
+  g_gc_fighters.clear();
+  for (const std::string& f : g_loaded_fighters)
+    if (!EqualNoCase(f, g_sides[0].fighter) && !EqualNoCase(f, g_sides[1].fighter)) g_gc_fighters.push_back(f);
+  g_gc_ours = true;
+  if (REXCVAR_GET(mk9_select_preview_test_gc_report)) GcSnapshot(base);
   S32(base, state + 64, 1);
   REXLOG_INFO("[select3d] a garbage collection asked for ({} objects)", ObjectCount(base));
   g_load_block_until = g_frame + 20;
@@ -1333,6 +1535,8 @@ void OnFrame(PPCContext& ctx, uint8_t* base) {
       g_background = 0;
       g_was_select = false;
       g_gc_due = false;  // the fight's load collects as it goes: none asked for outside the select screen
+      g_gc_ours = false;
+      g_loaded_fighters.clear();
     }
     g_select_frames = 0;
     return;
@@ -1536,4 +1740,38 @@ REX_HOOK_RAW(sub_829F6D98) {
     }
   }
   __imp__sub_829F6D98(ctx, base);
+}
+
+
+// mk9-lauta (2026-11-24, diagnostic): UObject::CollectGarbage (sub_826DD740: KeepFlags, bPerformFullPurge), whoever
+// asks for it, logged while the select screen is up: when the game's own run against the preview's loads and picks
+extern "C" REX_FUNC(__imp__sub_826DD740);
+REX_HOOK_RAW(sub_826DD740) {
+  std::vector<uint32_t> held;
+  const bool ours = g_gc_ours && g_was_select;
+  g_gc_ours = false;
+  uint32_t flushed = 0;
+  if (g_was_select) {
+    // mk9-lauta (2026-11-24): the packages the preview is loading, finished before anything is collected. The game's
+    // DLC manager (sub_8260C268) collects as the select screen's cursor reaches a DLC fighter (Skarlet, Kenshi, Rain,
+    // Freddy), without UObject::FlushAsyncLoading first as UE3 asks (sub_82700150 does it): on the console nothing is
+    // loading then. The preview was, that very fighter: the collection took the package half made ("loaded but no
+    // mesh found" in the logs) and the loader went on writing into what it had freed, memory the fight then gave to
+    // its textures (the orange blocks over the HUD and the effects, players' screenshots of 1.4.3).
+    flushed = L32(base, kAsyncPackagesNum);
+    if (flushed) {
+      Caller call(ctx, base);
+      call.Call(kFlushAsyncLoading, {});
+    }
+    held = ours ? HoldTheRest(base) : HoldThePreviews(base);
+  }
+  static uint32_t logged = 0;
+  if (g_was_select && logged++ < 64)
+    REXLOG_INFO("[select3d] a garbage collection runs ({}; {} objects, {} held for it; {} packages that were loading "
+                "finished first)",
+                ours ? "the preview's: its fighters shown no more and its cinematics" : "the game's: the preview's held",
+                ObjectCount(base), held.size(), flushed);
+  __imp__sub_826DD740(ctx, base);
+  for (uint32_t o : held)
+    if (IsObject(base, o)) S32(base, o + 12, L32(base, o + 12) & ~kRootSet);
 }

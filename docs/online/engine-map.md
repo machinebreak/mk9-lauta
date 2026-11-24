@@ -307,9 +307,30 @@ traje que se está eligiendo, en guardia, y al elegirlo se burla de su rival. S�
 - **El juego borra sus objetos MK** al terminar la selección (antes de cambiar de estado): el hook del destructor
   (`sub_829F6D98`) suelta los nuestros, que no se tocan más.
 - **Memoria**: lo que se muestra queda en el root set (flags +12, 0x4000) y una recolección se pide como la Kripta (el
-  +64 del objeto de estado `[0x833848D4]`) cuando nada carga; después las cargas esperan 20 cuadros. Sin eso, un
-  paquete recién cargado perdía sus animaciones antes de mostrarse; sin recolección, recorrer la selección llenaba la
-  memoria.
+  +64 del objeto de estado `[0x833848D4]`, que `sub_82382E40` atiende en el mismo cuadro con
+  `UObject::CollectGarbage` `sub_826DD740(RF_Native, +68)`) cuando nada carga; después las cargas esperan 20 cuadros.
+  Sin eso, un paquete recién cargado perdía sus animaciones antes de mostrarse; sin recolección, recorrer la selección
+  llenaba la memoria.
+- **Las recolecciones en la selección** (2026-11-24, el bug de los cuadros naranjas sobre el HUD y los efectos en la
+  pelea, capturas de jugadores de la 1.4.3):
+  - El juego sólo recolecta en la selección cuando el cursor llega a los luchadores DLC: su administrador de DLC
+    (`sub_8260C268`) llama a `CollectGarbage(RF_Native, TRUE)` **sin** `UObject::FlushAsyncLoading` (`sub_8272EC30`,
+    que `sub_82700150` sí llama antes); en la consola no hay nada cargando ahí. La vista previa estaba cargando ese
+    mismo luchador: la recolección se llevaba el paquete a medio hacer ("loaded but no mesh found" con Skarlet, Kenshi,
+    Rain, Freddy) y el cargador seguía escribiendo en lo liberado. Ahora el hook de `sub_826DD740` termina las cargas
+    pendientes (`FlushAsyncLoading`) antes de toda recolección en la selección y guarda en el root set, mientras dura,
+    lo que la vista previa carga o muestra.
+  - La recolección de la vista previa se llevaba también lo del juego (los menús `ui_s_mainmenu`, `ui_s_options`,
+    `ui_s_dlcBillboard`) y los efectos que comparten todos los luchadores (`FX_Blood`, `FX_Impact`, `FX_Global`,
+    `FX_Character`, `PFX_Xray`). Ahora, mientras dura, todo lo demás queda en el root set: sólo se van los paquetes con
+    el nombre de un luchador que ya no se muestra (`CHAR_Scorpion-<hash>`, `Scorpion_XRAY`, `FX_Scorpion`,
+    `SND_SFX_Scorpion`...) y las cinemáticas (`NIS_MK`, `ANIM_MK`, `SND_MOV_MK`).
+  - Banderas de UE3 de esta versión (las 64 bits en +8): `RF_RootSet` 0x4000 y `RF_BeginDestroyed` 0x8000,
+    `RF_FinishDestroyed` 0x10000 en la mitad baja; `RF_Unreachable` 0x2, `RF_NeedLoad` 0x200, `RF_AsyncLoading` 0x400,
+    `RF_PendingKill` 0x20000000, `RF_Native` 0x04000000 en la alta. Las búsquedas de la vista previa saltean los que se
+    están destruyendo o cargando.
+  - Pruebas: `mk9_select_preview_test_gc_report` (qué se llevó cada recolección, por paquete y por clase); el log dice
+    de quién es cada recolección en la selección.
 - **La elección**: el trace de los guiones "Player %d: selected" (`sub_82479280`) sale también con START, que abre el
   menú de trajes sin elegir. Elegir es `this._parent.SelectionHighlight<N>.gotoAndPlay` del sprintf de los guiones
   (`sub_8246E430`: sus argumentos en el +60 de la VM `[0x8342CDF0]`, el primero el buffer del texto) con el trace en el
