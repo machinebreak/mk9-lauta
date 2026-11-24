@@ -175,6 +175,16 @@ REXCVAR_DEFINE_BOOL(mk9_texture_gamma, true, "MK9/Renderer",
                     "Textures the game fetches with the gamma sign on red, green and blue are read linearised (an sRGB "
                     "host format: DXT1/3/5), as the Xbox 360 reads them (false: the raw values, as before 1.2)");
 
+// mk9-lauta (2026-11-24): a resolve destination's content is the GPU's (Renut writes nothing back to guest memory), kept
+// for good (banjo_renut_keep_gpu_written) and given to any texture of the same memory, format and size (ResolvedAlias,
+// and its own header's): one the game made later over the same memory of its pool, filled by the CPU, was drawn with
+// what was resolved there before. Those writes mark the memory's store cards after the last resolve: such a resolve
+// destination is dropped and the texture made from guest memory, as the console's GPU would read it.
+REXCVAR_DEFINE_BOOL(mk9_texture_stale_resolves, false, "MK9/Renderer",
+                    "A resolve destination whose memory the CPU wrote after its last resolve (the game reused it for "
+                    "another texture) is dropped, and the texture made from guest memory (false: kept, as before; the "
+                    "[stale] lines say when it happens)");
+
 bool GammaRgb(const TextureFetch &fetch) {
   return fetch.Sign(0) == TextureSign::Gamma && fetch.Sign(1) == TextureSign::Gamma &&
          fetch.Sign(2) == TextureSign::Gamma;
@@ -349,6 +359,32 @@ bool ExtentClean(HostTexture &t, uint64_t proven) {
       clean &= GuestRangeCardsClean(GuestPhysicalPtr<const u8>(t.sample_pages[i] << 12), t.sample_sizes[i], proven);
   }
   return clean;
+}
+
+// mk9-lauta (2026-11-24): a resolve destination ('t', its extent known at its resolve) whose memory the CPU wrote after
+// its last resolve: the game reused the memory (mk9_texture_stale_resolves). Logged; true when it is to be dropped.
+bool StaleResolve(HostTexture &t, u32 sampled_va) {
+  if (!t.gpu_written || t.resolve_interval == UINT64_MAX || !t.sample_known || !banjo::renut_gpu::StoreCardsOn())
+    return false;
+  bool clean = true;
+  for (u32 i = 0; i < 2; ++i) {
+    if (t.sample_pages[i] && t.sample_sizes[i])
+      clean &= GuestRangeOwnPagesClean(GuestPhysicalPtr<const u8>(t.sample_pages[i] << 12), t.sample_sizes[i],
+                                       t.resolve_interval);
+  }
+  if (clean)
+    return false;
+  const bool drop = REXCVAR_GET(mk9_texture_stale_resolves);
+  static uint32_t logged = 0;
+  if (logged++ < 48) {
+    RGPU_WARN("[stale] frame {}: texture {:08X} sampled over resolve destination {:08X} ({}x{} format {}, memory "
+              "{:08X}, resolved at frame {}), whose memory the CPU wrote since: {}",
+              g_frame, sampled_va, t.guest_va, t.width, t.height, u32(t.guest_format), t.sample_pages[0] << 12,
+              t.resolve_frame, drop ? "dropped, made from guest memory" : "kept (mk9_texture_stale_resolves off)");
+  }
+  if (!drop)
+    t.resolve_interval = UINT64_MAX;  // said once for this resolve
+  return drop;
 }
 
 // The content check's hash (SampleHash of a tiled texture, ContentHash of a linear one), or the last one taken when
@@ -774,7 +810,14 @@ HostTexture *ResolvedAlias(u32 texture_va, const TextureFetch &fetch, const u32 
   HostTexture *resolved = it->second;
   if (resolved->guest_va == texture_va || !resolved->texture)
     return nullptr;
-  return SameData(resolved->desc, desc) ? resolved : nullptr;
+  if (!SameData(resolved->desc, desc))
+    return nullptr;
+  // mk9-lauta (2026-11-24): the game made this texture over memory a resolve went to, and wrote it since
+  if (StaleResolve(*resolved, texture_va)) {
+    ReleaseHostTextureLocked(resolved->guest_va);  // (its Retire takes it out of g_resolve_targets)
+    return nullptr;
+  }
+  return resolved;
 }
 
 // The depth resolve whose words a texture described by 'fetch' reads: a
@@ -892,6 +935,18 @@ HostTexture *ResolveTarget(u32 texture_va, plume::RenderFormat format, RenderSca
   slot->gpu_written = true;
   slot->uploaded = true;
   slot->used_frame = g_frame;
+  // mk9-lauta (2026-11-24, StaleResolve): its memory's cards read now, so that what the CPU wrote there before this
+  // resolve does not count as written after it
+  if (banjo::renut_gpu::StoreCardsOn()) {
+    KnowGuestExtent(fetch, *slot);
+    for (u32 i = 0; i < 2; ++i) {
+      if (slot->sample_pages[i] && slot->sample_sizes[i])
+        GuestRangeOwnPagesClean(GuestPhysicalPtr<const u8>(slot->sample_pages[i] << 12), slot->sample_sizes[i],
+                                UINT64_MAX);
+    }
+    slot->resolve_interval = CardsInterval() + 1;
+    slot->resolve_frame = g_frame;
+  }
   HostTexture *&entry = g_resolve_targets[fetch.BasePage()];
   if (entry != slot.get()) {
     entry = slot.get();
@@ -1366,6 +1421,11 @@ TextureBinding BindTextureLocked(u32 texture_va, const TextureFetch &device_fetc
                   slot->desc[1], slot->desc[2], slot->desc[3], slot->desc[4], slot->desc[5], desc[0], desc[1], desc[2],
                   desc[3], desc[4], desc[5]);
     }
+    Retire(*slot);
+    slot.reset();
+  }
+  // mk9-lauta (2026-11-24): a resolve destination of this header whose memory the CPU wrote since its last resolve
+  if (slot && slot->gpu_written && StaleResolve(*slot, texture_va)) {
     Retire(*slot);
     slot.reset();
   }

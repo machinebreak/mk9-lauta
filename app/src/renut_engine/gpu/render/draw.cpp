@@ -6264,6 +6264,32 @@ bool GuestRangeCardsClean(const u8 *data, size_t bytes, uint64_t proven) {
   return PagesClean(data, bytes, proven);
 }
 
+// mk9-lauta (2026-11-24): see draw.h. PagesClean's reading and clearing, from the range's first page.
+bool GuestRangeOwnPagesClean(const u8 *data, size_t bytes, uint64_t proven) {
+  u8 *cards = StoreCards();
+  const u32 offset = cards && bytes ? PhysicalOf(data) : UINT32_MAX;
+  if (offset == UINT32_MAX || bytes > 0x20000000u - offset)
+    return false;
+  const u32 serial = u32(g_flush_serial);
+  const u32 last = u32((uint64_t(offset) + bytes - 1) >> 12);
+  bool clean = proven != UINT64_MAX;
+  for (u32 page = offset >> 12; page <= last; ++page) {
+    u8 *a = cards + 0xA0000u + page, *c = cards + 0xC0000u + page;
+    u8 *e = page ? cards + 0xE0000u + page - 1 : a, *f = page < 0x1000u ? cards + 0x7F000u + page : a;
+    if (!__atomic_load_n(a, __ATOMIC_RELAXED) || !__atomic_load_n(c, __ATOMIC_RELAXED) ||
+        !__atomic_load_n(e, __ATOMIC_RELAXED) || !__atomic_load_n(f, __ATOMIC_RELAXED)) {
+      __atomic_store_n(a, u8(1), __ATOMIC_RELAXED);
+      __atomic_store_n(c, u8(1), __ATOMIC_RELAXED);
+      __atomic_store_n(e, u8(1), __ATOMIC_RELAXED);
+      __atomic_store_n(f, u8(1), __ATOMIC_RELAXED);
+      g_page_serial[page] = serial;
+    }
+    if (proven != UINT64_MAX && g_page_serial[page] >= u32(proven))
+      clean = false;
+  }
+  return clean;
+}
+
 uint64_t CardsInterval() {
   return g_flush_serial;
 }

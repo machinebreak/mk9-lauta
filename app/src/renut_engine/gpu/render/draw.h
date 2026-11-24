@@ -27,6 +27,10 @@ namespace renut::gpu {
 // reading and clearing its cards as the vertex copies' proof does; and the current interval (one per kick).
 bool GuestRangeCardsClean(const u8 *data, size_t bytes, uint64_t proven);
 uint64_t CardsInterval();
+// mk9-lauta (2026-11-24): the same for the range's own pages only (not the page before its first, which a store that
+// runs over a page's end leaves clean): a resolve destination's memory, whose neighbour in the game's texture pool is
+// written on its own.
+bool GuestRangeOwnPagesClean(const u8 *data, size_t bytes, uint64_t proven);
 
 struct DrawCall {
   u32 primitive = 0;  // D3DPRIMITIVETYPE (Xenos primitive type)
