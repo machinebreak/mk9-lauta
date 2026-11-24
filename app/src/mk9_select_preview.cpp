@@ -18,8 +18,11 @@
 //     sprintf native's hook), a performance at random among all of its own (mk9_select_performances.inc, made from
 //     the game's cinematics by tools/select3d/perf_tables.py): one of its Story transitions (it speaks to its rival
 //     before or after a Story fight: the line in the game's language, SND_VO_StoryTrans in English, Spanish, French,
-//     German or Italian), its intro as before a fight (its line in English, its effects' sounds, its grunts) or its
-//     EndOfRound_Taunt with a line of its voice (its taunt's, its victory's or its laugh). The cinematic's package
+//     German or Italian), one of its Story cutscenes' lines (SND_MOV_MK<nnn>, the same dubs) with its EndOfRound_Taunt,
+//     its intro as before a fight (its line in English, its effects' sounds, its grunts) or its EndOfRound_Taunt with
+//     a line of its voice (its taunt's, its victory's or its laugh). What it says is in the game's language: in another
+//     than English, without the English-only lines (the intros', the taunts'). Between its stances, now and then one
+//     of its other poses (Stance_Alt01-05, Idle1). The cinematic's package
 //     loads while the fighter is shown; its animations and sounds come at their times (played as the select script
 //     plays the announcer's), the fighter turned toward its rival meanwhile (the cinematics face their camera, the
 //     rival beside it); the stance again at its end
@@ -349,6 +352,10 @@ struct Side {
   uint64_t perform_end = 0;
   // its turn from the stance's facing (1/65536 of a turn, toward the rival positive), and where it is going
   int32_t turn_now = 0, turn_to = 0;
+  // mk9-lauta (2026-11-24): its other poses while it waits (its package's Stance_Alt01-05 and Idle1, with their
+  // lengths), one now and then between its stances, and the frame the next may come
+  std::vector<std::pair<uint32_t, float>> idles;
+  uint64_t idle_next = 0;
 };
 
 Side g_sides[2] = {{0}, {1}};
@@ -610,6 +617,7 @@ void Drop(const PPCContext& ctx, uint8_t* base, Side& s, bool art) {
   s.perf_loading = s.perf_ready = false;
   s.perf_body.clear();
   s.due.clear();
+  s.idles.clear();
   s.perform_end = s.pick_wait = 0;
   s.turn_now = s.turn_to = 0;
   Unroot(base, s);
@@ -632,8 +640,25 @@ void DressInCostume(const PPCContext& ctx, uint8_t* base, Side& s, uint32_t mesh
   }
 }
 
+// mk9-lauta (2026-11-24): the voices' language, the game's (the user_language it started with: XGetLanguage's 5, 4, 3,
+// 6 have the dubbed lines, _spa, _fra, _ger, _ita; the others English): what is said in the select is said in it. The
+// fighters' fight voices and the intros' lines exist in English only: in another language they are left out (a
+// player asked: "las voces se ponen en inglés cuando deberían estar según lo tengas configurado")
+std::string g_lang_suffix;
+bool g_lang_known = false;
+const std::string& LangSuffix() {
+  if (!g_lang_known) {
+    g_lang_known = true;
+    const std::string lang = rex::cvar::GetFlagByName("user_language");
+    g_lang_suffix = lang == "5" ? "_spa" : lang == "4" ? "_fra" : lang == "3" ? "_ger" : lang == "6" ? "_ita" : "";
+  }
+  return g_lang_suffix;
+}
+bool EnglishVoices() { return LangSuffix().empty(); }
+
 // Its voice for the pick: an event of its own sound packages (SND_SFX_<fighter>, SND_VO_<fighter>), the first kind
-// it has of: its taunt's ("taunt", "taunt01", ...), its victory line, its laugh (every fighter has "vo_laugh")
+// it has of: its taunt's ("taunt", "taunt01", ...), its victory line, its laugh (every fighter has "vo_laugh"); in
+// another language than English its laugh only (the others are said in English)
 uint32_t FindVoice(const uint8_t* base, const std::string& fighter) {
   uint32_t best[3] = {0, 0, 0};
   int found[3] = {0, 0, 0};
@@ -644,8 +669,9 @@ uint32_t FindVoice(const uint8_t* base, const std::string& fighter) {
     const std::string top = ObjName(base, Outermost(base, o));
     if (!EqualNoCase(top, "SND_SFX_" + fighter) && !EqualNoCase(top, "SND_VO_" + fighter)) continue;
     const std::string name = Lower(ObjName(base, o));
-    const int kind = name.rfind("taunt", 0) == 0 ? 0 : name == "vo_victory" || name == "vo_vict_laugh" ? 1
-                     : name == "vo_laugh" ? 2 : -1;
+    int kind = name.rfind("taunt", 0) == 0 ? 0 : name == "vo_victory" || name == "vo_vict_laugh" ? 1
+               : name == "vo_laugh" ? 2 : -1;
+    if (!EnglishVoices()) kind = name == "vo_laugh" || name == "vo_vict_laugh" ? 2 : -1;
     if (kind < 0) continue;
     // one of the kind's, by a draw of our own (not the game's generator)
     ++found[kind];
@@ -690,13 +716,15 @@ void PlayVoice(const PPCContext& ctx, uint8_t* base, Side& s) {
               ObjName(base, s.voice), handle);
 }
 
-// An FmodEvent by its package (the outermost: "SND_SFX_Scorpion") and its name ("taunt02"), any group's
+// An FmodEvent by its package ("SND_SFX_Scorpion": one of its outers, the outermost or one inside it: a cutscene's
+// dub, SND_MOV_MK006_spa, holds its lines in SND_MOV_MK006) and its name ("taunt02"), any group's
 uint32_t FindEvent(const uint8_t* base, std::string_view package, std::string_view event) {
   const uint32_t cls = ClassObject(base, "FmodEvent");
   for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
     const uint32_t o = ObjectAt(base, i);
     if (!o || L32(base, o + 48) != cls || !EqualNoCase(ObjName(base, o), event)) continue;
-    if (EqualNoCase(ObjName(base, Outermost(base, o)), package)) return o;
+    for (uint32_t outer = L32(base, o + 36), d = 0; outer && d < 8; outer = L32(base, outer + 36), ++d)
+      if (EqualNoCase(ObjName(base, outer), package)) return o;
   }
   return 0;
 }
@@ -743,11 +771,7 @@ bool LoadPackage(const PPCContext& ctx, uint8_t* base, const std::string& packag
 // English for the others), loaded on the select screen and held in the root set while it is shown
 std::string g_story_package;
 const std::string& StoryPackage() {
-  if (g_story_package.empty()) {
-    const std::string lang = rex::cvar::GetFlagByName("user_language");
-    const char* suffix = lang == "5" ? "_spa" : lang == "4" ? "_fra" : lang == "3" ? "_ger" : lang == "6" ? "_ita" : "";
-    g_story_package = std::string("SND_VO_StoryTrans") + suffix;
-  }
+  if (g_story_package.empty()) g_story_package = "SND_VO_StoryTrans" + LangSuffix();
   return g_story_package;
 }
 constexpr char kIntroLines[] = "SND_VO_CharIntro";
@@ -759,7 +783,7 @@ void HoldLines(const PPCContext& ctx, uint8_t* base) {
   if (!g_lines_asked) {
     g_lines_asked = true;
     if (!PackageExists(StoryPackage())) g_story_package = "SND_VO_StoryTrans";  // game files without that dub
-    LoadPackage(ctx, base, kIntroLines);
+    if (EnglishVoices()) LoadPackage(ctx, base, kIntroLines);  // (the intros' lines: English only)
     LoadPackage(ctx, base, StoryPackage());
     return;
   }
@@ -774,8 +798,8 @@ void HoldLines(const PPCContext& ctx, uint8_t* base) {
     S32(base, o + 12, L32(base, o + 12) | kRootSet);
     g_lines_rooted.push_back(o);
   }
-  REXLOG_INFO("[select3d] the lines' packages held ({} and {}: {} objects)", kIntroLines, StoryPackage(),
-              g_lines_rooted.size());
+  REXLOG_INFO("[select3d] the lines' packages held ({}{}: {} objects)", StoryPackage(),
+              EnglishVoices() ? std::string(" and ") + kIntroLines : std::string(), g_lines_rooted.size());
 }
 
 void ReleaseLines(uint8_t* base) {
@@ -791,6 +815,7 @@ void ReleaseLines(uint8_t* base) {
 constexpr int kTaunt = kTauntIndex;  // its EndOfRound_Taunt and a line of its voice (FindVoice)
 constexpr int kNothing = -3;  // (tests) none
 constexpr uint64_t kPickWaitFrames = 120;  // a pick waits this long for its cinematic's package, then the taunt
+constexpr uint64_t kIdleEvery = 420;       // another pose at most every 7 s (and up to 6 s more), the stance between
 constexpr float kStoryTurn = 45.0f, kIntroTurn = 135.0f;  // degrees toward the rival (mk9_select_preview_turn)
 constexpr int32_t kTurnStep = 65536 / 72;  // 5 degrees a frame
 
@@ -821,10 +846,31 @@ void Choose(Side& s) {
   s.perf_ready = s.perf < 0;
 }
 
-// Its animations, found once its package is whole, held in the root set with the fighter's
+// The package a performance loads: its cinematic's, or a cutscene's line's in the game's language (SND_MOV_MK<nnn>_spa;
+// the English one where the game's files lack that dub)
+std::string PerfPackage(const PerfDef& d) {
+  if (d.kind != 'L' || EnglishVoices()) return d.package;
+  const std::string dubbed = d.package + LangSuffix();
+  return PackageExists(dubbed) ? dubbed : std::string(d.package);
+}
+
+// Its animations, found once its package is whole, held in the root set with the fighter's (a cutscene's line: the
+// fighter's EndOfRound_Taunt, and its package's objects, the line's sound with them)
 void Resolve(uint8_t* base, Side& s) {
   const PerfDef& d = kPerformances[s.perf];
   s.perf_loading = false;
+  if (d.kind == 'L') {
+    const std::string file = PerfPackage(d);
+    for (uint32_t i = 0, n = ObjectCount(base); i < n; ++i) {
+      const uint32_t o = ObjectAt(base, i);
+      if (!o) continue;
+      const std::string top = ObjName(base, Outermost(base, o));
+      if (EqualNoCase(top, d.package) || EqualNoCase(top, file)) Root(base, s, o);
+    }
+    if (s.taunt || s.stance) s.perf_body.push_back({s.taunt ? s.taunt : s.stance, 0.0f});
+    s.perf_ready = true;
+    return;
+  }
   for (const Timed& t : ParseTimed(d.body, '|', '@', false)) {
     const uint32_t anim = FindSequence(base, t.name);
     if (!anim) continue;
@@ -858,7 +904,9 @@ void Cue(const PPCContext& ctx, uint8_t* base, Side& s, const std::string& sound
     const size_t dot = sound.find('.');
     if (dot == std::string::npos) return;
     std::string package = sound.substr(0, dot);
-    line = EqualNoCase(package, "snd_vo_storytrans") || EqualNoCase(package, kIntroLines);
+    if (EqualNoCase(package, kIntroLines) && !EnglishVoices()) return;  // (said in English only)
+    line = EqualNoCase(package, "snd_vo_storytrans") || EqualNoCase(package, kIntroLines) ||
+           StartsNoCase(package, "SND_MOV_");
     if (EqualNoCase(package, "snd_vo_storytrans")) package = StoryPackage();
     event = FindEvent(base, package, std::string_view(sound).substr(dot + 1));
   }
@@ -892,7 +940,7 @@ void Perform(const PPCContext& ctx, uint8_t* base, Side& s) {
   // rival beside it), an intro as in a fight (in profile, toward the other side)
   float story = kStoryTurn, intro = kIntroTurn;
   ReadFloats(REXCVAR_GET(mk9_select_preview_turn), {&story, &intro});
-  s.turn_to = int32_t((d.kind == 'S' ? story : intro) * 65536.0f / 360.0f);
+  s.turn_to = d.kind == 'L' ? 0 : int32_t((d.kind == 'S' ? story : intro) * 65536.0f / 360.0f);
   const float t0 = s.perf_body[0].second;
   const auto when = [&](float t) { return g_frame + uint64_t(std::max(0.0f, t - t0) * 60.0f + 0.5f); };
   float length = 0;
@@ -913,7 +961,8 @@ void Perform(const PPCContext& ctx, uint8_t* base, Side& s) {
   s.anim_end = s.perform_end;
   s.taunting = true;
   REXLOG_INFO("[select3d] side {}: picked: {} {} ({:.1f} s, {} animations, {} sounds)", s.index + 1,
-              d.kind == 'S' ? "the Story transition" : "its intro", d.package, length, s.perf_body.size(), sounds);
+              d.kind == 'S' ? "the Story transition" : d.kind == 'I' ? "its intro" : "a cutscene's line",
+              PerfPackage(d), length, s.perf_body.size(), sounds);
 }
 
 // The fighters' mesh's subskeletons (MK's mesh data, the component's +656: +168 its entries, 40 bytes each with the
@@ -983,6 +1032,15 @@ bool Show(const PPCContext& ctx, uint8_t* base, Side& s, uint32_t mesh) {
   s.voice = FindVoice(base, s.fighter);
   s.voice_frame = 0;
   for (uint32_t o : {mesh, s.stance, s.taunt, s.voice}) Root(base, s, o);
+  s.idles.clear();
+  for (const char* pose : {"Stance_Alt01", "Stance_Alt02", "Stance_Alt03", "Stance_Alt04", "Stance_Alt05", "Idle1"}) {
+    const uint32_t anim = FindAnim(base, s.package, pose);
+    const float length = anim ? AnimLength(base, anim) : 0;
+    if (length <= 0) continue;
+    Root(base, s, anim);
+    s.idles.push_back({anim, length});
+  }
+  s.idle_next = g_frame + kIdleEvery + g_frame % 180;
   PlayAnim(ctx, base, s, s.stance, s.stance_length, kStanceBlend, kLoopFlags);
   s.taunting = false;
   Choose(s);
@@ -1120,13 +1178,20 @@ void Animate(const PPCContext& ctx, uint8_t* base, Side& s) {
     }
   }
   if (g_frame < s.anim_end) return;
-  // the stance again at its end (and after a performance: then the next one is chosen, for another pick)
-  PlayAnim(ctx, base, s, s.stance, s.stance_length, kStanceBlend, kLoopFlags);
+  // the stance again at its end (and after a performance: then the next one is chosen, for another pick); now and
+  // then one of its other poses instead (not right after a performance)
   if (s.taunting) {
     s.taunting = false;
     s.turn_to = 0;
+    s.idle_next = std::max(s.idle_next, g_frame + kIdleEvery);
     Choose(s);
+  } else if (!s.idles.empty() && g_frame >= s.idle_next) {
+    const auto& [anim, length] = s.idles[std::uniform_int_distribution<size_t>(0, s.idles.size() - 1)(Rng())];
+    PlayAnim(ctx, base, s, anim, length, kStanceBlend, kOnceFlags);
+    s.idle_next = s.anim_end + kIdleEvery + std::uniform_int_distribution<uint64_t>(0, 360)(Rng());
+    return;
   }
+  PlayAnim(ctx, base, s, s.stance, s.stance_length, kStanceBlend, kLoopFlags);
 }
 
 void Step(const PPCContext& ctx, uint8_t* base, Side& s) {
@@ -1183,7 +1248,7 @@ void Step(const PPCContext& ctx, uint8_t* base, Side& s) {
   if (REXCVAR_GET(mk9_select_preview_test_survey) && s.index == 0) {
     if (s.perf >= 0 && !s.perf_ready) {
       if (!s.perf_loading && g_frame >= g_load_block_until) {
-        s.perf_loading = LoadPackage(ctx, base, kPerformances[s.perf].package);
+        s.perf_loading = LoadPackage(ctx, base, PerfPackage(kPerformances[s.perf]));
         if (!s.perf_loading) s.perf_ready = true;  // no package: "not found"
       } else if (s.perf_loading && L32(base, kAsyncPackagesNum) == 0) {
         Resolve(base, s);
@@ -1195,9 +1260,10 @@ void Step(const PPCContext& ctx, uint8_t* base, Side& s) {
   // its performance's cinematic: asked for (not while a collection asked for is under way), then its animations
   if (s.perf >= 0 && !s.perf_ready) {
     if (!s.perf_loading && g_frame >= g_load_block_until) {
-      s.perf_loading = LoadPackage(ctx, base, kPerformances[s.perf].package);
+      s.perf_loading = LoadPackage(ctx, base, PerfPackage(kPerformances[s.perf]));
       if (!s.perf_loading) {
-        REXLOG_WARN("[select3d] side {}: no package {}: its taunt instead", s.index + 1, kPerformances[s.perf].package);
+        REXLOG_WARN("[select3d] side {}: no package {}: its taunt instead", s.index + 1,
+                    PerfPackage(kPerformances[s.perf]));
         s.perf = kTaunt;
         s.perf_ready = true;
       }

@@ -315,13 +315,16 @@ la pelea no arranca. Lo mismo para mirar una partida o un replay.
 
 En **F2 > Controles**, **Personajes en 3D en la selección** (apagada de fábrica) cambia la ilustración de cada lado de
 la selección de personaje por el luchador en 3D: con el traje que estés eligiendo en el menú de trajes (START), también
-los retro y los de PS Vita, y en guardia. Cuando lo elegís se da vuelta hacia su rival y se burla de él, al azar entre
-todo lo que tiene:
+los retro y los de PS Vita, en guardia, y de vez en cuando con otras de sus poses. Cuando lo elegís se da vuelta hacia su
+rival y se burla de él, al azar entre todo lo que tiene:
 
-- una de sus frases del modo Historia, con el gesto que hace en esa escena, en el idioma del juego (español, inglés,
-  francés, alemán o italiano);
-- su presentación de antes de la pelea, con sus efectos de sonido y su frase (ésta en inglés);
-- o su burla de fin de ronda con una frase de su voz.
+- una de sus frases de las escenas del modo Historia, con el gesto que hace en esa escena o con su burla;
+- su presentación de antes de la pelea, con sus efectos de sonido;
+- o su burla de fin de ronda.
+
+Todo lo que dicen está en el idioma del juego (español, inglés, francés, alemán o italiano). Las frases de las
+presentaciones y las burlas habladas sólo existen en inglés: con el juego en otro idioma se hacen sin esa frase (con su
+risa en la burla).
 
 Se prende y se apaga en cualquier momento, también con la selección en pantalla, y vale para todos los luchadores
 (los de DLC también). Sólo offline: en el online la selección queda como siempre. La boca no se mueve cuando hablan.

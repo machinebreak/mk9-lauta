@@ -324,6 +324,18 @@ traje que se está eligiendo, en guardia, y al elegirlo se burla de su rival. S�
   BoolProperty lleva un UBOOL de 32 bits y la de un ByteProperty no lleva enum. Al mostrarse, una al azar entre todas
   las del luchador (y su `EndOfRound_Taunt` con una frase de su voz) carga su paquete; al elegirlo, el cuerpo, los
   sonidos y las frases a su tiempo desde el comienzo del cuerpo, y la guardia otra vez al final.
+- **Más frases: las de las escenas de Historia** (`SND_MOV_MK<nnn>` y sus doblajes `_spa`, `_fra`, `_ger`, `_ita`): un
+  evento por frase con el nombre de quién la dice (`vo_mk006_sony02`: Sonya; `vo_mk9_020_scor02`: Scorpion; los
+  códigos como en `SND_VO_CharIntro`: `cyrh` Cyrax, `sekh`/`sekt` Sektor, `sub` Sub-Zero; `shay` y `goro` no están en
+  la selección). 96 frases de 20 luchadores, dichas con el `EndOfRound_Taunt` del luchador. Los eventos del doblaje
+  están dentro del paquete `SND_MOV_MK<nnn>` del archivo `_spa`: `FindEvent` busca el paquete en cualquier nivel de
+  los outers. El sistema de sonido los toca con el nombre del archivo (`SND_MOV_MK006_spa`).
+- **El idioma de lo que dicen**: el del juego (`user_language` con que arrancó: 5, 4, 3, 6 doblados; los demás inglés).
+  Las frases de las presentaciones (`SND_VO_CharIntro`) y las burlas habladas del luchador sólo existen en inglés: con
+  otro idioma, la presentación va sin su frase y la burla con su risa (`vo_laugh`). Un jugador lo pidió: "las voces se
+  ponen en inglés cuando deberían estar según lo tengas configurado".
+- **Otras poses**: el paquete del luchador trae `Stance_Alt01`-`05` (no todos) e `Idle1`; mientras se muestra, una cada
+  7 a 13 s entre sus guardias.
 - **Las frases**: `SND_VO_StoryTrans` viene en inglés y en `_spa`, `_fra`, `_ger`, `_ita`: la del idioma con que
   arrancó el juego (`user_language` 5, 4, 3, 6; los demás en inglés); `SND_VO_CharIntro` sólo en inglés. Se cargan al
   abrir la selección y quedan en el root set mientras dura (FMOD las lee del archivo: "FMOD streams ... from the
