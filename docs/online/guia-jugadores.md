@@ -80,7 +80,11 @@ en la pelea.
   **"Empezar la pelea"**: pelean el host y el primero que entró, y los demás miran esa misma pelea en vivo desde su
   PC. El que gana se queda; el que pierde va al final de la fila y entra el siguiente, que maneja el **CONTINUAR?**
   del juego (REVANCHA con ese luchador, o ELEGIR OTRO para elegir el suyo). En F1 se ve quién pelea, la fila y cuántas
-  seguidas lleva el rey. Sólo cuentan para tu récord las peleas que jugaste.
+  seguidas lleva el rey. Sólo cuentan para tu récord las peleas que jugaste. **Para mirar sin pelear** (por ejemplo,
+  para transmitir un torneo), marcá **"Estoy AFK: miro sin pelear (para transmitir)"** en la sala o en F1 durante la
+  sesión: la fila te saltea mientras esté marcado y en la lista aparecés con **AFK**. Si lo marcás antes de empezar,
+  aunque seas el host, la primera pelea es de los dos primeros que no están AFK; si lo marcás peleando, dejás tu lugar
+  cuando termina esa pelea (aunque la ganes). Si quedan menos de dos sin AFK, se sigue peleando como estaba.
 - **Dos contra dos con cuatro PCs** (cada uno en su casa): uno crea la sala con **"Sala de 2 contra 2 (cuatro
   personas)"** marcado (pública, o privada para pasarles el código a los otros tres), o todos tocan **"Partida rápida
   2 contra 2"**, que entra a una sala de 2 contra 2 que esté esperando o abre una. En la sala se ve quién está y quién

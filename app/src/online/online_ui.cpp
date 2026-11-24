@@ -630,6 +630,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
                                                     : Tf("en la fila ({}°)", int(at - koth_info.koth_line.begin()) + 1);
           }
           if (machine >= 0 && machine == koth_info.koth_king) place += Tf(" · rey, {} seguidas", koth_info.koth_streak);
+          if (machine >= 0 && (koth_info.koth_afk & (1u << machine))) place += " · AFK";
           ImGui::TextColored(side >= 0 ? kGold : kGrey, "%s", place.c_str());
         } else {
           ImGui::TextColored(m.ready ? kGreen : kGrey, "%s", T(m.ready ? "listo" : "todavía no está listo"));
@@ -657,8 +658,13 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
         ImGui::TextWrapped("%s", T("Rey de la colina: el jugador 1 lleva los menús hasta VERSUS y el jugador 2 se suma "
                                    "con START. Los que esperan miran la pelea en vivo. Cuando termina una pelea, el que "
                                    "perdió va al final de la fila y el siguiente entra en su lugar: le toca el "
-                                   "CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador)."));
-        if (LocalSide(info) < 0) ImGui::TextColored(kGold, "%s", T("Mirás esta pelea: esperá tu turno en la fila."));
+                                   "CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador). Los que están AFK "
+                                   "miran sin pelear: la fila los saltea."));
+        const bool afk = info.koth_afk & (1u << info.player);
+        if (LocalSide(info) < 0) {
+          ImGui::TextColored(kGold, "%s", T(afk ? "Estás AFK: mirás sin pelear." : "Mirás esta pelea: esperá tu turno en la fila."));
+        }
+        AfkCheckbox();
       } else {
         ImGui::TextWrapped("%s", T("El host (jugador 1) lleva los menús hasta VERSUS; el rival se suma con START en la "
                                    "pantalla de 2 jugadores. Después cada uno elige su luchador."));
@@ -692,6 +698,7 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
       if (room.other_players == 2 && room.capacity != 4) {
         ImGui::TextColored(kGold, T("%s y otro jugador juegan desde la misma PC."), room.other.c_str());
       }
+      if (room.koth) AfkCheckbox();  // mk9-lauta (2026-11-24): to stream it without fighting
       if (ImGui::Button(Label(room.my_ready ? "Cancelar listo" : "Estoy listo").c_str())) room::SetReady(!room.my_ready);
       if (room.capacity == 4) {
         // mk9-lauta (2026-11-17): the host starts it, once everyone in it is ready (two to four people)
@@ -865,6 +872,16 @@ class OnlineWindow : public renut::gpu::overlay::Dialog {
   }
   static int LocalSide(const netplay::SessionInfo& info) {
     return info.player == info.koth_seat[0] ? 0 : info.player == info.koth_seat[1] ? 1 : -1;
+  }
+  // mk9-lauta (2026-11-24): King of the Hill's AFK (netplay's mk9_net_afk): watching without fighting, to stream it.
+  // Before the session the session's game takes it from here; in it, it counts from the next change of fighters.
+  static void AfkCheckbox() {
+    bool afk = rex::cvar::GetFlagByName("mk9_net_afk") == "true";
+    if (ImGui::Checkbox(T("Estoy AFK: miro sin pelear (para transmitir)"), &afk)) {
+      rex::cvar::SetFlagByName("mk9_net_afk", afk ? "true" : "false");
+    }
+    ImGui::TextColored(kGrey, "%s", T("La fila te saltea hasta que lo saques. Si estás peleando, dejás tu lugar cuando "
+                                      "termina esa pelea."));
   }
 
   // The people in a room of four (each machine's players).

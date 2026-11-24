@@ -758,15 +758,24 @@
       {" · rey, {} seguidas", {" · king, {} in a row", " · rei, {} seguidas"}},
       {"Rey de la colina: el jugador 1 lleva los menús hasta VERSUS y el jugador 2 se suma con START. Los que esperan "
        "miran la pelea en vivo. Cuando termina una pelea, el que perdió va al final de la fila y el siguiente entra en "
-       "su lugar: le toca el CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador).",
+       "su lugar: le toca el CONTINUAR? (REVANCHA, o ELEGIR OTRO para elegir su luchador). Los que están AFK miran sin "
+       "pelear: la fila los saltea.",
        {"King of the Hill: player 1 takes the menus to VERSUS and player 2 joins with START. Those waiting watch the "
         "fight live. When a fight ends, the loser goes to the end of the line and the next one takes their place: the "
-        "CONTINUE? is theirs (REMATCH, or SELECT A NEW FIGHTER to pick their own).",
+        "CONTINUE? is theirs (REMATCH, or SELECT A NEW FIGHTER to pick their own). Those who are AFK watch without "
+        "fighting: the line skips them.",
         "Rei da colina: o jogador 1 leva os menus até VERSUS e o jogador 2 entra com START. Quem espera assiste à luta "
         "ao vivo. Quando uma luta termina, quem perdeu vai para o fim da fila e o próximo entra no lugar dele: o "
-        "CONTINUAR? é dele (REVANCHE, ou ESCOLHER OUTRO para escolher seu lutador)."}},
+        "CONTINUAR? é dele (REVANCHE, ou ESCOLHER OUTRO para escolher seu lutador). Quem está AFK assiste sem lutar: a "
+        "fila pula essa pessoa."}},
       {"Mirás esta pelea: esperá tu turno en la fila.",
        {"You are watching this fight: wait for your turn in line.", "Você está assistindo a esta luta: espere sua vez na fila."}},
+      {"Estás AFK: mirás sin pelear.", {"You are AFK: you watch without fighting.", "Você está AFK: assiste sem lutar."}},
+      {"Estoy AFK: miro sin pelear (para transmitir)",
+       {"I'm AFK: I watch without fighting (to stream)", "Estou AFK: assisto sem lutar (para transmitir)"}},
+      {"La fila te saltea hasta que lo saques. Si estás peleando, dejás tu lugar cuando termina esa pelea.",
+       {"The line skips you until you turn it off. If you are fighting, you leave your place when that fight ends.",
+        "A fila pula você até você desmarcar. Se estiver lutando, você deixa seu lugar quando essa luta terminar."}},
       {"Cuando estén todos listos, empezá: pelean el host y el primero que entró, y los demás esperan en la fila "
        "mirando. El juego arranca de nuevo ya conectado.",
        {"When everyone is ready, start: the host and the first one who came in fight, and the others wait in line "

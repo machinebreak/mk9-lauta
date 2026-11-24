@@ -1353,9 +1353,14 @@ REX_HOOK_RAW(sub_82A3B6C0) {
         s.picked = false;
         s.wish_frame = g_frame;
       }
-      Caller call(ctx, base);
-      const uint32_t root = call.Call(kClipRoot, {wrapper});
-      const uint32_t view = Readable(root, 92) ? L32(base, root + 88) : 0;
+      // (no call of the game's in an online session: the preview is offline only, and a session's game does only what
+      // the other machines' do)
+      uint32_t view = 0;
+      if (!mk9::netplay::Active() && !mk9::netplay::SessionGame()) {
+        Caller call(ctx, base);
+        const uint32_t root = call.Call(kClipRoot, {wrapper});
+        view = Readable(root, 92) ? L32(base, root + 88) : 0;
+      }
       if (view && view != g_view) {
         g_view = view;
         g_background = 0;

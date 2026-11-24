@@ -112,6 +112,7 @@ std::vector<Arg> OwnOptions(std::initializer_list<const Arg::value_type*> droppi
         a.rfind(MK9_ARG("--mk9_net_replay"), 0) == 0 || a.rfind(MK9_ARG("--mk9_lobby_by_address"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_net_local_players"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_peers"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_net_id"), 0) == 0 || a.rfind(MK9_ARG("--mk9_net_koth"), 0) == 0 ||
+        a.rfind(MK9_ARG("--mk9_net_afk"), 0) == 0 ||
         a.rfind(MK9_ARG("--mk9_skip_logos"), 0) == 0 ||
         std::any_of(std::begin(kTestOutputs), std::end(kTestOutputs),
                     [&](const Arg::value_type* o) { return a.rfind(o, 0) == 0; }) ||
@@ -193,6 +194,8 @@ void Launch(const std::string& room, bool host, const std::string& name, const s
     options.push_back(MK9_ARG("--mk9_net_peers=") + Wide(list));
     if (!host) options.push_back(MK9_ARG("--mk9_net_id=") + Wide(id));
     if (koth) options.push_back(MK9_ARG("--mk9_net_koth=true"));  // King of the Hill (netplay.cpp)
+    // mk9-lauta (2026-11-24): ... with this PC's player AFK from the start (the room's checkbox; F1 changes it there)
+    if (koth && rex::cvar::GetFlagByName("mk9_net_afk") == "true") options.push_back(MK9_ARG("--mk9_net_afk=true"));
   }
   if (host && listed) {
     options.push_back(MK9_ARG("--mk9_net_room_listed=true"));

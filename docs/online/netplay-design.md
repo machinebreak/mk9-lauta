@@ -1132,6 +1132,19 @@ replay) todas lo contestan igual y en el mismo cuadro, como ya hacían con los u
 (`mk9_profile_prompt.cpp`). Una 1.4.1 mostraría el aviso: por eso el protocolo 14 (también el `hi` de las salas,
 `room.cpp` `kProto`), y la 1.4.2 no juega con la 1.4.1.
 
+**AFK en Rey de la colina** (1.4.3). Para transmitir un torneo sin pelear: cada máquina dice si su jugador está AFK
+(`mk9_net_afk`, la casilla de la sala y de F1) en el bit 7 del byte `busy` de sus entradas (`kBusyAfk`; el juego nunca
+lo pregunta). Lo leen todas del mismo cuadro final: la decisión de la pelea mira las entradas del último cuadro de la
+pelea (`AfkAt(mode_change_at)`), y al cambiar los lugares (`KothRotate`) el que está AFK deja su lugar (también el que
+ganó) y cada lugar libre es del primero de la fila que no está AFK; uno AFK en la fila conserva su lugar en ella. Un
+empate sólo cambia lugares por uno AFK. Al empezar la sesión (cuadro 180 de la época 0, todavía en el arranque, en
+lockstep) los primeros lugares son de los dos primeros que no están AFK en el orden de la sala, para que un host que
+transmite no tenga que pelear la primera; los toques de START que saltean los logos son del jugador 1 de entonces. Con
+menos de dos sin AFK no cambia nada. Una 1.4.2 sentaría a los AFK: por eso el protocolo 15 (y `kKothProto` 15 en las
+salas), y la 1.4.3 no juega online con la 1.4.2. Probado con tres juegos (`mesh_test.ps1 -Machines 3`, el host AFK):
+los tres sacan al host en el mismo cuadro, la primera pelea es de las otras dos y al terminar la fila lo saltea, sin
+desync.
+
 **Replays de versiones anteriores** (1.4.2). La 1.4.1 sólo abría los replays de su protocolo y los de la 1.4.0 decían
 "otra versión". Los de 12 y 13 se juegan igual acá (13 y 14 cambiaron en qué se ponen de acuerdo las máquinas, no la
 pelea): `CanWatchProtocol` los acepta desde `kOldestWatchable` (12; subirlo con un cambio en cómo se juega una sesión),

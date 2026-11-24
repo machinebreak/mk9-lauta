@@ -21,6 +21,9 @@ namespace mk9::netplay {
 // Things the game polls that end on each machine's own clock: one bit each in the inputs.
 enum BusyFlag : uint8_t {
   kBusyMovie = 1 << 0,  // a full-screen movie is playing (sub_829CE600)
+  // mk9-lauta (2026-11-24): King of the Hill: this machine's player is AFK (mk9_net_afk): it watches, the line skips
+  // it. Not a poll's: the game never asks for it (netplay.cpp reads it from the inputs)
+  kBusyAfk = 1 << 7,
 };
 
 // Readiness polls (0 = not yet) that end on each machine's own clock: one bit each in the inputs.
@@ -150,6 +153,7 @@ struct SessionInfo {
   std::vector<int> koth_line;
   int koth_king = -1, koth_streak = 0;
   int koth_match_seat[2] = {-1, -1};  // the seats of the match decided last (its result's sides)
+  uint8_t koth_afk = 0;  // mk9-lauta (2026-11-24): the machines AFK now (their last inputs say it), one bit each
   std::vector<std::string> machine_ids;
 };
 SessionInfo Info();

@@ -173,6 +173,10 @@ REXCVAR_DEFINE_STRING(mk9_net_id, "", "MK9 Online", "mk9_net_peers: this guest's
 REXCVAR_DEFINE_BOOL(mk9_net_koth, false, "MK9 Online",
                     "A session of three or four machines as King of the Hill: two machines fight (players 1 and 2), "
                     "the others watch; the winner stays, the loser goes to the end of the line");
+// mk9-lauta (2026-11-24): a player asked to watch a King of the Hill without fighting, to stream its tournaments.
+REXCVAR_DEFINE_BOOL(mk9_net_afk, false, "MK9 Online",
+                    "King of the Hill: this PC's player is AFK: it watches and the line skips it (the room and F1 "
+                    "change it at any time; it counts from the next change of fighters)");
 REXCVAR_DEFINE_INT32(mk9_net_mesh, 0, "MK9 Online",
                      "Tests: a session of mk9_net_machines machines over UDP, machine i's datagrams to machine j going "
                      "from port mk9_net_mesh + 8 i + j to port mk9_net_mesh + 8 j + i of mk9_net_mesh_host (0 = off)");
@@ -298,8 +302,9 @@ constexpr uint16_t kMagic = 0x394D;  // "M9"
 // 1.4.0 machine never sends: its partner would wait forever). 14 from 1.4.2 on: in a session every machine answers the
 // profile prompt of player 1's controller's settings saved mid-session (issue #17, mk9_profile_prompt.cpp), where a
 // 1.4.1 machine shows the SDK's popup and answers it at its own time; and a rollback's frames run again draw the HUD
-// (hidden_draw.cpp).
-constexpr uint8_t kVersion = 14;
+// (hidden_draw.cpp). 15 from 1.4.3 on: King of the Hill's line skips the machines whose inputs say AFK (kBusyAfk),
+// where a 1.4.2 machine would seat them: the two would seat different machines.
+constexpr uint8_t kVersion = 15;
 // The oldest session protocol whose recordings (replays, a spectator's feed) still play back here: 1.4.0's. 13 and 14
 // changed what the machines agree on, not the fights: MovieWaitAgreed keeps 1.4.0's loads. Raise it with a change in
 // how a session plays.
@@ -412,6 +417,12 @@ struct Session {
   int koth_match_seat[2] = {-1, -1};  // the seats of the match decided last (its result's sides)
   uint32_t koth_epoch = 0;            // ... and the frame of that epoch from whose start the seats change
   int64_t koth_at = -1;
+  // mk9-lauta (2026-11-24): AFK (kBusyAfk in a machine's inputs): the machines that said it at the decided match's
+  // last frame (final on every machine), whether the seats change then (a match lost, or an AFK machine seated), and
+  // whether the session's first seats have taken it into account (kKothAfkFrame)
+  uint8_t koth_afk = 0;
+  bool koth_change = false;
+  bool koth_start_seen = false;
   struct KothChange {
     uint32_t epoch = 0, frame = 0;
     int seat[2] = {0, 1};
@@ -601,9 +612,80 @@ void KothReset() {
   g.koth_loser = -1;
   g.koth_king = -1;
   g.koth_streak = 0;
+  g.koth_afk = 0;
+  g.koth_change = false;
+  g.koth_start_seen = false;
 }
 
 void RecordKoth(uint32_t epoch, uint32_t frame);
+
+// mk9-lauta (2026-11-24): AFK. This machine's player says it (King of the Hill only) ...
+bool LocalAfk() { return g.koth && REXCVAR_GET(mk9_net_afk); }
+
+// ... and the machines whose inputs of frame f said it, one bit each (f final on every machine: the same answer on all)
+uint8_t AfkAt(int64_t f) {
+  if (f < 0) return 0;
+  uint8_t mask = 0;
+  if (size_t(f) < g.local.size() && (g.local[size_t(f)].busy & kBusyAfk)) mask |= uint8_t(1u << g.player);
+  ForPeers([&](int m, Peer& p) {
+    if (size_t(f) < p.have.size() && p.have[size_t(f)] && (p.pads[size_t(f)].busy & kBusyAfk)) mask |= uint8_t(1u << m);
+  });
+  return mask;
+}
+
+// ... and the machines that say it now (this one's own, the others' last inputs that came), for the room's list
+// (the game thread; the UI reads g_koth_afk_now)
+std::atomic<uint8_t> g_koth_afk_now{0};
+uint8_t AfkNow() {
+  uint8_t mask = LocalAfk() ? uint8_t(1u << g.player) : 0;
+  ForPeers([&](int m, Peer& p) {
+    if (p.upto >= 0 && size_t(p.upto) < p.pads.size() && (p.pads[size_t(p.upto)].busy & kBusyAfk))
+      mask |= uint8_t(1u << m);
+  });
+  return mask;
+}
+
+// The seats for the machines that are not AFK: each seat whose machine leaves (leave[side]) gets the first machine in
+// line that is not AFK; the machines that leave go to the end of the line (the first seat's first). With no one in line
+// to take a seat, its machine stays (AFK or not: a fight needs two).
+void KothSeat(const bool leave[2], uint8_t afk) {
+  for (int side = 0; side < 2; ++side) {
+    if (!leave[side]) continue;
+    int pick = -1;
+    for (int i = 0; i < g.koth_waiting && pick < 0; ++i)
+      if (!(afk & (1u << g.koth_line[i]))) pick = i;
+    if (pick < 0) continue;
+    const int in = g.koth_line[pick], out = g.koth_seat[side];
+    for (int i = pick + 1; i < g.koth_waiting; ++i) g.koth_line[i - 1] = g.koth_line[i];
+    g.koth_line[g.koth_waiting - 1] = out;
+    g.koth_seat[side] = in;
+  }
+}
+
+// The session's first seats (the host against the first guest) with AFK machines in them: at this frame of the first
+// epoch (the game's boot, lockstep: every machine's inputs of the frame before are there), the first two that are not
+// AFK in the room's order fight, the others wait in that order with the AFK ones last, before anyone reaches the menus
+// (player 1 takes the game to VERSUS). Fewer than two that are not AFK: the seats as they are.
+constexpr int64_t kKothAfkFrame = 180;
+
+void KothStartAfk() {
+  g.koth_start_seen = true;
+  const uint8_t afk = AfkAt(g.frame - 1);
+  if (!(afk & ((1u << g.koth_seat[0]) | (1u << g.koth_seat[1])))) return;
+  int order[kMaxMachines], n = 0;
+  for (int m = 0; m < g.machines; ++m)
+    if (!(afk & (1u << m))) order[n++] = m;
+  if (n < 2) return;
+  for (int m = 0; m < g.machines; ++m)
+    if (afk & (1u << m)) order[n++] = m;
+  g.koth_seat[0] = order[0];
+  g.koth_seat[1] = order[1];
+  g.koth_waiting = 0;
+  for (int i = 2; i < n; ++i) g.koth_line[g.koth_waiting++] = order[i];
+  REXLOG_INFO("[koth] frame {}: AFK machines (mask {:x}) out of the first seats: machine {} against machine {}", g.frame,
+              afk, g.koth_seat[0] + 1, g.koth_seat[1] + 1);
+  RecordKoth(g.epoch, uint32_t(g.frame));
+}
 
 // The match is decided (the fight's mode over, every frame up to it final: the same on every machine): its loser's
 // side, by the fighters' health; a draw changes nothing. The seats change a second after the fight's mode ended, at
@@ -622,6 +704,9 @@ void KothDecided(uint8_t* base) {
   g.koth_match_seat[1] = g.koth_seat[1];
   const float h0 = fight_state::Health(base, 0), h1 = fight_state::Health(base, 1);
   g.koth_loser = h0 > h1 ? 1 : h1 > h0 ? 0 : -1;
+  // mk9-lauta (2026-11-24): the AFK machines as their inputs said at the match's last frame (final on every machine)
+  g.koth_afk = AfkAt(g.mode_change_at);
+  g.koth_change = g.koth_loser >= 0 || (g.koth_afk & ((1u << g.koth_seat[0]) | (1u << g.koth_seat[1])));
   REXLOG_INFO("[koth] the match is decided ({:.3f} vs {:.3f}): {}", h0, h1,
               g.koth_loser < 0 ? "a draw, the same two again"
                                : fmt::format("player {} (machine {}) won", 2 - g.koth_loser,
@@ -631,20 +716,24 @@ void KothDecided(uint8_t* base) {
 // A second after a decided match (a lockstep frame's start: the same frame on every machine; or the next epoch's first
 // frame, a barrier before it): the loser to the end of the line, the first in line to its side; the winner stays.
 // Recorded ('K') for spectators.
+// mk9-lauta (2026-11-24): AFK machines (the decided match's last frame): one seated leaves (the winner too, its run
+// over), the line's first that is not AFK takes each seat, and an AFK one in line keeps its place without fighting.
+// A draw changes seats only for an AFK one.
 void KothRotate() {
   const int side = g.koth_loser;
   g.koth_loser = -1;
-  const int winner = g.koth_seat[1 - side], loser = g.koth_seat[side];
-  g.koth_streak = winner == g.koth_king ? g.koth_streak + 1 : 1;
-  g.koth_king = winner;
-  if (g.koth_waiting > 0) {
-    g.koth_seat[side] = g.koth_line[0];
-    for (int i = 1; i < g.koth_waiting; ++i) g.koth_line[i - 1] = g.koth_line[i];
-    g.koth_line[g.koth_waiting - 1] = loser;
+  g.koth_change = false;
+  const uint8_t afk = g.koth_afk;
+  if (side >= 0) {
+    const int winner = g.koth_seat[1 - side];
+    g.koth_streak = winner == g.koth_king ? g.koth_streak + 1 : 1;
+    g.koth_king = winner;
   }
-  REXLOG_INFO("[koth] frame {} of epoch {}: machine {} stays ({} in a row), machine {} to the line; now machine {} "
-              "against machine {}",
-              g.frame, g.epoch, winner + 1, g.koth_streak, loser + 1, g.koth_seat[0] + 1, g.koth_seat[1] + 1);
+  const bool leave[2] = {side == 0 || (afk & (1u << g.koth_seat[0])) != 0, side == 1 || (afk & (1u << g.koth_seat[1])) != 0};
+  KothSeat(leave, afk);
+  REXLOG_INFO("[koth] frame {} of epoch {}: {}; machine {} against machine {} (AFK mask {:x})", g.frame, g.epoch,
+              side < 0 ? std::string("a draw") : fmt::format("machine {} won ({} in a row)", g.koth_king + 1, g.koth_streak),
+              g.koth_seat[0] + 1, g.koth_seat[1] + 1, afk);
   RecordKoth(g.epoch, uint32_t(g.frame));
 }
 
@@ -2468,10 +2557,12 @@ void LockstepFrame(PPCContext& ctx, uint8_t* base) {
     }
     ReplayPad(g.epoch, target, &mine);  // mk9_net_input_replay (tests)
     mine.busy = SampleBusy(base);
+    if (LocalAfk()) mine.busy |= kBusyAfk;  // mk9-lauta (2026-11-24): King of the Hill's AFK
     // the boot's logo movies, skipped: the host taps START (X_INPUT_GAMEPAD's 0x0010, the buttons' low byte) every 10
     // frames while one plays in the session's first 25 s; the tap is an input, seen by both machines at the same frame
     static const bool skip_logos = REXCVAR_GET(mk9_net_skip_logos);
-    if (skip_logos && g.host && g.epoch == 0 && target < 1500 && (mine.busy & kBusyMovie) && target % 10 == 0) {
+    const bool first_seat = g.koth ? g.koth_seat[0] == g.player : g.host;  // (King of the Hill: AFK hosts too)
+    if (skip_logos && first_seat && g.epoch == 0 && target < 1500 && (mine.busy & kBusyMovie) && target % 10 == 0) {
       mine.bytes[1] |= 0x10;
     }
     mine.ready = g.ready_seen;
@@ -2585,6 +2676,7 @@ void RollbackFrame(PPCContext& ctx, uint8_t* base) {
         pad.bytes2[1] &= uint8_t(~0x10);  // the second player at this machine's too
       }
       pad.sound = sound_sync::AnnounceFor(g.latest + g.delay);
+      if (LocalAfk()) pad.busy |= kBusyAfk;  // mk9-lauta (2026-11-24): King of the Hill's AFK
       g.local[size_t(g.latest + g.delay)] = pad;
       g.local_made_upto = g.latest + g.delay;
     }
@@ -3316,7 +3408,11 @@ void OnFrame(PPCContext& ctx, uint8_t* base, uint64_t game_frame) {
   }
   // mk9-lauta (2026-11-17): King of the Hill: the seats change at their frame's start, the same on every machine (a
   // spectator follows the recording's 'K')
-  if (g.koth && !g.watching && g.koth_loser >= 0 && (g.epoch > g.koth_epoch || g.frame >= g.koth_at)) KothRotate();
+  if (g.koth && !g.watching && g.started && !g.koth_start_seen && g.epoch == 0 && g.frame >= kKothAfkFrame) {
+    KothStartAfk();
+  }
+  if (g.koth && !g.watching && g.koth_change && (g.epoch > g.koth_epoch || g.frame >= g.koth_at)) KothRotate();
+  if (g.koth && !g.watching) g_koth_afk_now.store(AfkNow(), std::memory_order_relaxed);
   if (g.koth && g.watching) KothWatched();
   WatchFrames();
   g_frame_started_us = NowUs();
@@ -3518,6 +3614,7 @@ SessionInfo Info() {
     info.koth_streak = g.koth_streak;
     info.koth_match_seat[0] = g.koth_match_seat[0];
     info.koth_match_seat[1] = g.koth_match_seat[1];
+    info.koth_afk = g_koth_afk_now.load(std::memory_order_relaxed);
   }
   for (int m = 0; m < g.machines; ++m) {
     info.machine_ids.push_back(m == g.player ? std::string(g.host ? "" : REXCVAR_GET(mk9_net_id)) : g.peers[m].id);
