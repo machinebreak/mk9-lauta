@@ -1751,7 +1751,8 @@ REX_HOOK_RAW(sub_826DD740) {
   const bool ours = g_gc_ours && g_was_select;
   g_gc_ours = false;
   uint32_t flushed = 0;
-  if (g_was_select) {
+  // (offline only: an online session's select screen has no preview, and its games do only what the others' do)
+  if (g_was_select && !mk9::netplay::Active() && !mk9::netplay::SessionGame()) {
     // mk9-lauta (2026-11-24): the packages the preview is loading, finished before anything is collected. The game's
     // DLC manager (sub_8260C268) collects as the select screen's cursor reaches a DLC fighter (Skarlet, Kenshi, Rain,
     // Freddy), without UObject::FlushAsyncLoading first as UE3 asks (sub_82700150 does it): on the console nothing is
@@ -1766,7 +1767,7 @@ REX_HOOK_RAW(sub_826DD740) {
     held = ours ? HoldTheRest(base) : HoldThePreviews(base);
   }
   static uint32_t logged = 0;
-  if (g_was_select && logged++ < 64)
+  if (g_was_select && !mk9::netplay::Active() && !mk9::netplay::SessionGame() && logged++ < 64)
     REXLOG_INFO("[select3d] a garbage collection runs ({}; {} objects, {} held for it; {} packages that were loading "
                 "finished first)",
                 ours ? "the preview's: its fighters shown no more and its cinematics" : "the game's: the preview's held",
